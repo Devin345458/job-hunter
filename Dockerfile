@@ -15,7 +15,7 @@ WORKDIR /app
 RUN apk add --no-cache sqlite
 
 COPY --from=builder /app/.output ./.output
-COPY --from=builder /app/server/db/migrations ./server/db/migrations
+COPY --from=builder /app/server/db ./server/db
 
 RUN mkdir -p /app/data /app/data/resumes
 

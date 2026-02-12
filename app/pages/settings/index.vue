@@ -18,9 +18,10 @@ interface SearchConfig {
 const configs = ref<SearchConfig[]>([])
 const loading = ref(false)
 const saving = ref(false)
-const showNewConfig = ref(false)
+const showConfigForm = ref(false)
+const editingConfigId = ref<number | null>(null)
 
-const newConfig = ref({
+const configForm = ref({
   name: '',
   keywords: '',
   excludedKeywords: '',
@@ -29,6 +30,9 @@ const newConfig = ref({
   remoteOnly: false,
   jobSources: [] as string[],
 })
+
+const isEditing = computed(() => editingConfigId.value !== null)
+const formTitle = computed(() => isEditing.value ? 'Edit Config' : 'New Config')
 
 const sourceOptions = [
   { title: 'JSearch (RapidAPI)', value: 'jsearch' },
@@ -85,6 +89,33 @@ async function toggleConfig(config: SearchConfig) {
   }
 }
 
+function resetForm() {
+  editingConfigId.value = null
+  configForm.value = {
+    name: '',
+    keywords: '',
+    excludedKeywords: '',
+    locations: '',
+    salaryMin: null,
+    remoteOnly: false,
+    jobSources: [],
+  }
+}
+
+function editConfig(config: SearchConfig) {
+  editingConfigId.value = config.id
+  configForm.value = {
+    name: config.name,
+    keywords: parseJsonArray(config.keywords).join(', '),
+    excludedKeywords: parseJsonArray(config.excludedKeywords).join(', '),
+    locations: parseJsonArray(config.locations).join(', '),
+    salaryMin: config.salaryMin,
+    remoteOnly: config.remoteOnly ?? false,
+    jobSources: parseJsonArray(config.jobSources),
+  }
+  showConfigForm.value = true
+}
+
 async function deleteConfig(config: SearchConfig) {
   // Deactivate by setting isActive to false (no delete endpoint exists)
   try {
@@ -103,42 +134,46 @@ async function deleteConfig(config: SearchConfig) {
   }
 }
 
-async function addConfig() {
-  if (!newConfig.value.name || !newConfig.value.keywords) return
+async function saveConfig() {
+  if (!configForm.value.name || !configForm.value.keywords) return
 
   saving.value = true
   try {
-    const created = await $fetch<SearchConfig>('/api/search-configs', {
+    const body: Record<string, unknown> = {
+      name: configForm.value.name,
+      keywords: configForm.value.keywords.split(',').map(k => k.trim()).filter(Boolean),
+      excludedKeywords: configForm.value.excludedKeywords
+        ? configForm.value.excludedKeywords.split(',').map(k => k.trim()).filter(Boolean)
+        : [],
+      locations: configForm.value.locations
+        ? configForm.value.locations.split(',').map(l => l.trim()).filter(Boolean)
+        : [],
+      salaryMin: configForm.value.salaryMin,
+      remoteOnly: configForm.value.remoteOnly,
+      jobSources: configForm.value.jobSources.length ? configForm.value.jobSources : ['jsearch', 'adzuna', 'remotive'],
+      isActive: true,
+    }
+
+    if (editingConfigId.value) {
+      body.id = editingConfigId.value
+    }
+
+    const saved = await $fetch<SearchConfig>('/api/search-configs', {
       method: 'POST',
-      body: {
-        name: newConfig.value.name,
-        keywords: newConfig.value.keywords.split(',').map(k => k.trim()).filter(Boolean),
-        excludedKeywords: newConfig.value.excludedKeywords
-          ? newConfig.value.excludedKeywords.split(',').map(k => k.trim()).filter(Boolean)
-          : [],
-        locations: newConfig.value.locations
-          ? newConfig.value.locations.split(',').map(l => l.trim()).filter(Boolean)
-          : [],
-        salaryMin: newConfig.value.salaryMin,
-        remoteOnly: newConfig.value.remoteOnly,
-        jobSources: newConfig.value.jobSources.length ? newConfig.value.jobSources : ['jsearch', 'adzuna', 'remotive'],
-        isActive: true,
-      },
+      body,
     })
 
-    configs.value.push(created)
-    showNewConfig.value = false
-    newConfig.value = {
-      name: '',
-      keywords: '',
-      excludedKeywords: '',
-      locations: '',
-      salaryMin: null,
-      remoteOnly: false,
-      jobSources: [],
+    if (editingConfigId.value) {
+      const idx = configs.value.findIndex(c => c.id === editingConfigId.value)
+      if (idx !== -1) configs.value[idx] = saved
+    } else {
+      configs.value.push(saved)
     }
+
+    showConfigForm.value = false
+    resetForm()
   } catch (e) {
-    console.error('Failed to add config:', e)
+    console.error('Failed to save config:', e)
   } finally {
     saving.value = false
   }
@@ -227,7 +262,7 @@ onMounted(fetchConfigs)
             variant="tonal"
             prepend-icon="mdi-plus"
             size="small"
-            @click="showNewConfig = !showNewConfig"
+            @click="resetForm(); showConfigForm = !showConfigForm"
           >
             Add Config
           </v-btn>
@@ -237,14 +272,17 @@ onMounted(fetchConfigs)
       <v-card-text>
         <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
-        <!-- New Config Form -->
+        <!-- Config Form (Create / Edit) -->
         <v-expand-transition>
-          <v-card v-show="showNewConfig" variant="tonal" color="primary" class="mb-4">
+          <v-card v-show="showConfigForm" variant="tonal" color="primary" class="mb-4">
+            <v-card-item>
+              <v-card-title class="text-subtitle-2">{{ formTitle }}</v-card-title>
+            </v-card-item>
             <v-card-text>
               <v-row>
                 <v-col cols="12" sm="6">
                   <v-text-field
-                    v-model="newConfig.name"
+                    v-model="configForm.name"
                     label="Config name"
                     placeholder="e.g., Senior Frontend Roles"
                     hide-details
@@ -252,7 +290,7 @@ onMounted(fetchConfigs)
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-text-field
-                    v-model="newConfig.keywords"
+                    v-model="configForm.keywords"
                     label="Keywords (comma-separated)"
                     placeholder="e.g., senior developer, staff engineer, tech lead"
                     hide-details
@@ -260,7 +298,7 @@ onMounted(fetchConfigs)
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-text-field
-                    v-model="newConfig.excludedKeywords"
+                    v-model="configForm.excludedKeywords"
                     label="Excluded keywords (comma-separated)"
                     placeholder="e.g., junior, intern, .NET"
                     hide-details
@@ -268,7 +306,7 @@ onMounted(fetchConfigs)
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-text-field
-                    v-model="newConfig.locations"
+                    v-model="configForm.locations"
                     label="Locations (comma-separated)"
                     placeholder="e.g., Remote, United States"
                     hide-details
@@ -276,7 +314,7 @@ onMounted(fetchConfigs)
                 </v-col>
                 <v-col cols="12" sm="3">
                   <v-text-field
-                    v-model.number="newConfig.salaryMin"
+                    v-model.number="configForm.salaryMin"
                     label="Minimum salary"
                     type="number"
                     prefix="$"
@@ -285,7 +323,7 @@ onMounted(fetchConfigs)
                 </v-col>
                 <v-col cols="12" sm="3" class="d-flex align-center">
                   <v-switch
-                    v-model="newConfig.remoteOnly"
+                    v-model="configForm.remoteOnly"
                     label="Remote only"
                     color="primary"
                     hide-details
@@ -293,7 +331,7 @@ onMounted(fetchConfigs)
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-select
-                    v-model="newConfig.jobSources"
+                    v-model="configForm.jobSources"
                     :items="sourceOptions"
                     label="Job sources"
                     multiple
@@ -303,14 +341,14 @@ onMounted(fetchConfigs)
                   />
                 </v-col>
                 <v-col cols="12" class="d-flex justify-end ga-2">
-                  <v-btn variant="text" @click="showNewConfig = false">Cancel</v-btn>
+                  <v-btn variant="text" @click="showConfigForm = false; resetForm()">Cancel</v-btn>
                   <v-btn
                     color="primary"
                     :loading="saving"
-                    :disabled="!newConfig.name || !newConfig.keywords"
-                    @click="addConfig"
+                    :disabled="!configForm.name || !configForm.keywords"
+                    @click="saveConfig"
                   >
-                    Save Config
+                    {{ isEditing ? 'Update Config' : 'Save Config' }}
                   </v-btn>
                 </v-col>
               </v-row>
@@ -336,6 +374,12 @@ onMounted(fetchConfigs)
                 Keywords: {{ parseJsonArray(config.keywords).join(', ') }}
               </v-card-subtitle>
               <template #append>
+                <v-btn
+                  icon="mdi-pencil-outline"
+                  variant="text"
+                  size="small"
+                  @click="editConfig(config)"
+                />
                 <v-btn
                   icon="mdi-delete-outline"
                   variant="text"
