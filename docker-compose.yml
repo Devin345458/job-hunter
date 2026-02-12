@@ -3,15 +3,12 @@ services:
     build: .
     container_name: job-hunter
     restart: unless-stopped
+    entrypoint: ["npm", "run", "dev"]
     ports:
       - "3000:3000"
     volumes:
       - job-hunter-data:/app/data
     environment:
-      - NUXT_ANTHROPIC_API_KEY=${NUXT_ANTHROPIC_API_KEY}
-      - NUXT_JSEARCH_API_KEY=${NUXT_JSEARCH_API_KEY}
-      - NUXT_ADZUNA_APP_ID=${NUXT_ADZUNA_APP_ID}
-      - NUXT_ADZUNA_API_KEY=${NUXT_ADZUNA_API_KEY}
       - NUXT_DATABASE_PATH=/app/data/job-hunter.db
 
 volumes:

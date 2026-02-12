@@ -34,11 +34,12 @@ export default defineEventHandler(async (event) => {
     if (body.id) {
       const configId = Number(body.id)
 
-      const [existing] = await db
+      const existingResult = await db
         .select()
         .from(searchConfigs)
         .where(eq(searchConfigs.id, configId))
 
+      const existing = existingResult?.[0]
       if (!existing) {
         throw createError({
           statusCode: 404,
@@ -61,16 +62,16 @@ export default defineEventHandler(async (event) => {
         })
         .where(eq(searchConfigs.id, configId))
 
-      const [updated] = await db
+      const updatedResult = await db
         .select()
         .from(searchConfigs)
         .where(eq(searchConfigs.id, configId))
 
-      return updated
+      return updatedResult?.[0]
     }
 
     // Otherwise create a new config
-    const [created] = await db
+    const createdResult = await db
       .insert(searchConfigs)
       .values({
         name: body.name,
@@ -85,7 +86,7 @@ export default defineEventHandler(async (event) => {
       })
       .returning()
 
-    return created
+    return createdResult?.[0]
   } catch (error: any) {
     if (error.statusCode) throw error
     throw createError({

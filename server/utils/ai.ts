@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { MODEL } from '#server/utils/model'
 
 let _client: Anthropic | null = null
 
@@ -43,6 +44,77 @@ export interface TailoredResume {
   }>
 }
 
+const matchResultTool: Anthropic.Tool = {
+  name: 'submit_match_result',
+  description: 'Submit the job match scoring result',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      score: { type: 'number', description: 'Match score from 0-100' },
+      reasoning: { type: 'string', description: '2-3 sentence explanation of the score' },
+      missingSkills: { type: 'array', items: { type: 'string' }, description: 'Skills the job needs that the candidate lacks' },
+      keywordOverlap: { type: 'array', items: { type: 'string' }, description: 'Matching keywords between JD and resume' },
+      recommendation: { type: 'string', enum: ['strong_match', 'good_match', 'partial_match', 'weak_match'] },
+    },
+    required: ['score', 'reasoning', 'missingSkills', 'keywordOverlap', 'recommendation'],
+  },
+}
+
+const tailorResumeTool: Anthropic.Tool = {
+  name: 'submit_tailored_resume',
+  description: 'Submit the tailored resume data',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      summary: { type: 'string', description: 'Tailored professional summary, 2-3 sentences' },
+      experience: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            company: { type: 'string' },
+            title: { type: 'string' },
+            period: { type: 'string' },
+            bullets: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['company', 'title', 'period', 'bullets'],
+        },
+      },
+      skills: {
+        type: 'object',
+        additionalProperties: { type: 'array', items: { type: 'string' } },
+        description: 'Skills grouped by category',
+      },
+      education: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            institution: { type: 'string' },
+            degree: { type: 'string' },
+            year: { type: 'string' },
+          },
+          required: ['institution', 'degree', 'year'],
+        },
+      },
+      tailoringNotes: { type: 'string', description: 'What was changed and why' },
+      generatedQuestions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            question: { type: 'string' },
+            context: { type: 'string' },
+            category: { type: 'string', enum: ['technical', 'behavioral', 'preference'] },
+          },
+          required: ['question', 'context', 'category'],
+        },
+      },
+    },
+    required: ['summary', 'experience', 'skills', 'education', 'tailoringNotes', 'generatedQuestions'],
+  },
+}
+
 export async function scoreJobMatch(
   jobDescription: string,
   knowledgeBase: Record<string, string>,
@@ -50,8 +122,10 @@ export async function scoreJobMatch(
   const ai = useAI()
 
   const message = await ai.messages.create({
-    model: 'claude-sonnet-4-5-20250514',
+    model: MODEL,
     max_tokens: 1024,
+    tools: [matchResultTool],
+    tool_choice: { type: 'tool', name: 'submit_match_result' },
     messages: [{
       role: 'user',
       content: `You are a job matching assistant. Score how well this candidate matches the job description.
@@ -62,24 +136,16 @@ ${Object.entries(knowledgeBase).map(([k, v]) => `**${k}:** ${v}`).join('\n')}
 ## Job Description
 ${jobDescription}
 
-Respond in JSON format:
-{
-  "score": <0-100>,
-  "reasoning": "<2-3 sentence explanation>",
-  "missingSkills": ["<skills the job needs that candidate lacks>"],
-  "keywordOverlap": ["<matching keywords between JD and resume>"],
-  "recommendation": "<strong_match|good_match|partial_match|weak_match>"
-}
-
 Focus on: role level match, tech stack overlap, experience relevance. Be realistic - don't inflate scores.`,
     }],
   })
 
-  const text = message.content[0].type === 'text' ? message.content[0].text : ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('Failed to parse AI match response')
+  const toolUse = message.content.find(block => block.type === 'tool_use')
+  if (!toolUse || toolUse.type !== 'tool_use') {
+    throw new Error('AI did not return structured match result')
+  }
 
-  return JSON.parse(jsonMatch[0]) as MatchResult
+  return toolUse.input as MatchResult
 }
 
 export async function tailorResume(
@@ -89,8 +155,10 @@ export async function tailorResume(
   const ai = useAI()
 
   const message = await ai.messages.create({
-    model: 'claude-sonnet-4-5-20250514',
+    model: MODEL,
     max_tokens: 4096,
+    tools: [tailorResumeTool],
+    tool_choice: { type: 'tool', name: 'submit_tailored_resume' },
     messages: [{
       role: 'user',
       content: `You are a resume tailoring expert. Restructure and reframe the candidate's experience for this specific job.
@@ -106,44 +174,14 @@ export async function tailorResume(
 ${Object.entries(knowledgeBase).map(([k, v]) => `**${k}:** ${v}`).join('\n')}
 
 ## Target Job Description
-${jobDescription}
-
-Respond in JSON format:
-{
-  "summary": "<tailored professional summary, 2-3 sentences>",
-  "experience": [
-    {
-      "company": "<company name>",
-      "title": "<job title>",
-      "period": "<date range>",
-      "bullets": ["<achievement bullet points, reordered for relevance>"]
-    }
-  ],
-  "skills": {
-    "<category>": ["<skill1>", "<skill2>"]
-  },
-  "education": [
-    {
-      "institution": "<school>",
-      "degree": "<degree>",
-      "year": "<year>"
-    }
-  ],
-  "tailoringNotes": "<what was changed and why>",
-  "generatedQuestions": [
-    {
-      "question": "<specific question about a gap in the knowledge base>",
-      "context": "<why this question matters for this application>",
-      "category": "<technical|behavioral|preference>"
-    }
-  ]
-}`,
+${jobDescription}`,
     }],
   })
 
-  const text = message.content[0].type === 'text' ? message.content[0].text : ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('Failed to parse AI tailoring response')
+  const toolUse = message.content.find(block => block.type === 'tool_use')
+  if (!toolUse || toolUse.type !== 'tool_use') {
+    throw new Error('AI did not return structured resume result')
+  }
 
-  return JSON.parse(jsonMatch[0]) as TailoredResume
+  return toolUse.input as TailoredResume
 }

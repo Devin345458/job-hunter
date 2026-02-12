@@ -20,7 +20,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const [entry] = await db
+    const entryResult = await db
       .insert(knowledgeEntries)
       .values({
         category: body.category,
@@ -30,7 +30,7 @@ export default defineEventHandler(async (event) => {
       })
       .returning()
 
-    return entry
+    return entryResult?.[0]
   } catch (error) {
     throw createError({
       statusCode: 500,

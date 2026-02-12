@@ -7,19 +7,20 @@ import type { TailoredResume } from './ai'
 const require = createRequire(import.meta.url)
 
 function getPrinter() {
-  const PdfPrinter = require('pdfmake')
+  const PdfPrinterModule = require('pdfmake/js/Printer')
+  const PdfPrinter = PdfPrinterModule.default || PdfPrinterModule
   const fonts = {
-    Helvetica: {
-      normal: 'Helvetica',
-      bold: 'Helvetica-Bold',
-      italics: 'Helvetica-Oblique',
-      bolditalics: 'Helvetica-BoldOblique',
+    Roboto: {
+      normal: require.resolve('pdfmake/fonts/Roboto/Roboto-Regular.ttf'),
+      bold: require.resolve('pdfmake/fonts/Roboto/Roboto-Medium.ttf'),
+      italics: require.resolve('pdfmake/fonts/Roboto/Roboto-Italic.ttf'),
+      bolditalics: require.resolve('pdfmake/fonts/Roboto/Roboto-MediumItalic.ttf'),
     },
   }
   return new PdfPrinter(fonts)
 }
 
-export function generateResumePdf(
+export async function generateResumePdf(
   resume: TailoredResume,
   candidateName: string,
   contactInfo: { email?: string; phone?: string; location?: string; linkedin?: string; github?: string },
@@ -76,7 +77,7 @@ export function generateResumePdf(
     pageSize: 'LETTER',
     pageMargins: [40, 40, 40, 40],
     defaultStyle: {
-      font: 'Helvetica',
+      font: 'Roboto',
       fontSize: 10,
       lineHeight: 1.3,
     },
@@ -92,7 +93,7 @@ export function generateResumePdf(
   }
 
   const printer = getPrinter()
-  const pdfDoc = printer.createPdfKitDocument(docDefinition)
+  const pdfDoc = await printer.createPdfKitDocument(docDefinition)
   const chunks: Buffer[] = []
 
   return new Promise<Buffer>((resolve, reject) => {

@@ -1,17 +1,25 @@
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { jobs, searchConfigs } from '~~/server/db/schema'
 import { jsearchAdapter } from '~~/server/utils/job-sources/jsearch'
 import { adzunaAdapter } from '~~/server/utils/job-sources/adzuna'
 import { remotiveAdapter } from '~~/server/utils/job-sources/remotive'
+import { remoteokAdapter } from '~~/server/utils/job-sources/remoteok'
+import { himalayasAdapter } from '~~/server/utils/job-sources/himalayas'
+import { jobicyAdapter } from '~~/server/utils/job-sources/jobicy'
+import { arbeitnowAdapter } from '~~/server/utils/job-sources/arbeitnow'
 import type { NormalizedJob, SearchParams, JobSourceAdapter } from '~~/server/utils/job-sources/types'
 
 const adapters: Record<string, JobSourceAdapter> = {
   jsearch: jsearchAdapter,
   adzuna: adzunaAdapter,
   remotive: remotiveAdapter,
+  remoteok: remoteokAdapter,
+  himalayas: himalayasAdapter,
+  jobicy: jobicyAdapter,
+  arbeitnow: arbeitnowAdapter,
 }
 
-export default defineEventHandler(async (event) => {
+export default defineEventHandler(async () => {
   const db = useDb()
 
   try {
@@ -22,10 +30,10 @@ export default defineEventHandler(async (event) => {
       .where(eq(searchConfigs.isActive, true))
 
     if (configs.length === 0) {
-      throw createError({
+      return {
         statusCode: 400,
         statusMessage: 'No active search configurations found. Create a search config first.',
-      })
+      }
     }
 
     const allFoundJobs: NormalizedJob[] = []
@@ -46,10 +54,10 @@ export default defineEventHandler(async (event) => {
         : Object.keys(adapters)
 
       // Run all adapters for this config in parallel
+      const validAdapters = sourceNames.filter(name => adapters[name])
       const results = await Promise.allSettled(
-        sourceNames
-          .filter(name => adapters[name])
-          .map(name => adapters[name].search(searchParams)),
+        validAdapters
+          .map(name => adapters[name]!.search(searchParams)),
       )
 
       for (const result of results) {
@@ -71,7 +79,7 @@ export default defineEventHandler(async (event) => {
     // Check which jobs already exist in DB
     let newCount = 0
     for (const job of uniqueJobs) {
-      const [existing] = await db
+      const existingResult = await db
         .select({ id: jobs.id })
         .from(jobs)
         .where(
@@ -81,6 +89,7 @@ export default defineEventHandler(async (event) => {
           ),
         )
 
+      const existing = existingResult?.[0]
       if (!existing) {
         await db.insert(jobs).values({
           source: job.source,
@@ -107,7 +116,7 @@ export default defineEventHandler(async (event) => {
       new: newCount,
     }
   } catch (error: any) {
-    if (error.statusCode) throw error
+    console.error('Job search error:', error)
     throw createError({
       statusCode: 500,
       statusMessage: 'Failed to search for jobs',

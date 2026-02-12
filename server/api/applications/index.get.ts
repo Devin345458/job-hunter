@@ -7,6 +7,7 @@ export default defineEventHandler(async (event) => {
 
   const status = query.status as string | undefined
   const search = query.search as string | undefined
+  const jobId = query.jobId ? Number(query.jobId) : undefined
   const page = Math.max(1, Number(query.page) || 1)
   const limit = Math.min(100, Math.max(1, Number(query.limit) || 20))
   const offset = (page - 1) * limit
@@ -18,6 +19,10 @@ export default defineEventHandler(async (event) => {
       conditions.push(eq(applications.status, status))
     }
 
+    if (jobId) {
+      conditions.push(eq(applications.jobId, jobId))
+    }
+
     if (search) {
       conditions.push(
         sql`(${jobs.company} LIKE ${'%' + search + '%'} OR ${jobs.title} LIKE ${'%' + search + '%'})`,
@@ -26,11 +31,13 @@ export default defineEventHandler(async (event) => {
 
     const where = conditions.length > 0 ? and(...conditions) : undefined
 
-    const [totalResult] = await db
+    const totalResultArray = await db
       .select({ total: count() })
       .from(applications)
       .leftJoin(jobs, eq(applications.jobId, jobs.id))
       .where(where)
+
+    const totalResult = totalResultArray?.[0]
 
     const results = await db
       .select({
@@ -49,7 +56,7 @@ export default defineEventHandler(async (event) => {
         ...r.application,
         job: r.job,
       })),
-      total: totalResult.total,
+      total: totalResult?.total,
       page,
       limit,
     }

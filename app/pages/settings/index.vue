@@ -1,6 +1,9 @@
 <script setup lang="ts">
 definePageMeta({ layout: 'default' })
 
+const snackbar = useSnackbar()
+const router = useRouter()
+
 interface SearchConfig {
   id: number
   name: string
@@ -32,23 +35,24 @@ const configForm = ref({
 })
 
 const isEditing = computed(() => editingConfigId.value !== null)
-const formTitle = computed(() => isEditing.value ? 'Edit Config' : 'New Config')
+const formTitle = computed(() => isEditing.value ? 'Edit Search Config' : 'New Search Config')
 
 const sourceOptions = [
-  { title: 'JSearch (RapidAPI)', value: 'jsearch' },
-  { title: 'Adzuna', value: 'adzuna' },
-  { title: 'Remotive', value: 'remotive' },
-  { title: 'RemoteOK', value: 'remoteok' },
-  { title: 'Himalayas', value: 'himalayas' },
-  { title: 'Jobicy', value: 'jobicy' },
-  { title: 'Arbeitnow', value: 'arbeitnow' },
+  { title: 'JSearch (RapidAPI)', value: 'jsearch', description: 'Comprehensive aggregator — requires API key' },
+  { title: 'Adzuna', value: 'adzuna', description: 'Global job search — requires API key' },
+  { title: 'Remotive', value: 'remotive', description: 'Remote jobs — no API key needed' },
+  { title: 'RemoteOK', value: 'remoteok', description: 'Remote tech jobs — no API key needed' },
+  { title: 'Himalayas', value: 'himalayas', description: 'Remote jobs — no API key needed' },
+  { title: 'Jobicy', value: 'jobicy', description: 'Remote jobs — no API key needed' },
+  { title: 'Arbeitnow', value: 'arbeitnow', description: 'European & remote jobs — no API key needed' },
 ]
 
 function parseJsonArray(val: string | null): string[] {
   if (!val) return []
   try {
     return JSON.parse(val)
-  } catch {
+  }
+  catch {
     return []
   }
 }
@@ -58,16 +62,17 @@ async function fetchConfigs() {
   try {
     const data = await $fetch<SearchConfig[]>('/api/search-configs')
     configs.value = data
-  } catch {
+  }
+  catch {
     configs.value = []
-  } finally {
+  }
+  finally {
     loading.value = false
   }
 }
 
 async function toggleConfig(config: SearchConfig) {
   try {
-    // Use the create/update endpoint with the id to update
     await $fetch('/api/search-configs', {
       method: 'POST',
       body: {
@@ -84,8 +89,11 @@ async function toggleConfig(config: SearchConfig) {
       },
     })
     config.isActive = !config.isActive
-  } catch (e) {
+    snackbar.success(config.isActive ? 'Config enabled' : 'Config disabled')
+  }
+  catch (e) {
     console.error('Failed to toggle config:', e)
+    snackbar.error('Failed to update config')
   }
 }
 
@@ -117,7 +125,6 @@ function editConfig(config: SearchConfig) {
 }
 
 async function deleteConfig(config: SearchConfig) {
-  // Deactivate by setting isActive to false (no delete endpoint exists)
   try {
     await $fetch('/api/search-configs', {
       method: 'POST',
@@ -129,8 +136,11 @@ async function deleteConfig(config: SearchConfig) {
       },
     })
     configs.value = configs.value.filter(c => c.id !== config.id)
-  } catch (e) {
+    snackbar.success('Config removed')
+  }
+  catch (e) {
     console.error('Failed to delete config:', e)
+    snackbar.error('Failed to remove config')
   }
 }
 
@@ -166,15 +176,20 @@ async function saveConfig() {
     if (editingConfigId.value) {
       const idx = configs.value.findIndex(c => c.id === editingConfigId.value)
       if (idx !== -1) configs.value[idx] = saved
-    } else {
+    }
+    else {
       configs.value.push(saved)
     }
 
     showConfigForm.value = false
     resetForm()
-  } catch (e) {
+    snackbar.success(editingConfigId.value ? 'Config updated' : 'Config created')
+  }
+  catch (e) {
     console.error('Failed to save config:', e)
-  } finally {
+    snackbar.error('Failed to save config. Please check your inputs.')
+  }
+  finally {
     saving.value = false
   }
 }
@@ -185,11 +200,16 @@ async function triggerSearch() {
   searching.value = true
   try {
     const result = await $fetch<{ found: number; new: number }>('/api/jobs/search', { method: 'POST' })
-    alert(`Search complete! Found ${result.found} jobs, ${result.new} new.`)
-  } catch (e) {
-    console.error('Search failed:', e)
-    alert('Search failed. Check API key configuration.')
-  } finally {
+    snackbar.success(`Search complete! Found ${result.found} jobs, ${result.new} new.`, {
+      text: 'View Jobs',
+      handler: () => router.push('/jobs'),
+    })
+  }
+  catch (e: any) {
+    const msg = e.data?.message || e.message || 'Search failed'
+    snackbar.error(`Search failed: ${msg}. Check your API key configuration below.`)
+  }
+  finally {
     searching.value = false
   }
 }
@@ -200,11 +220,16 @@ async function triggerScoring() {
   scoring.value = true
   try {
     const result = await $fetch<{ scored: number }>('/api/jobs/match', { method: 'POST' })
-    alert(`Scoring complete! Scored ${result.scored} jobs.`)
-  } catch (e) {
-    console.error('Scoring failed:', e)
-    alert('Scoring failed. Check Anthropic API key.')
-  } finally {
+    snackbar.success(`Scoring complete! Scored ${result.scored} jobs.`, {
+      text: 'View Jobs',
+      handler: () => router.push('/jobs'),
+    })
+  }
+  catch (e: any) {
+    const msg = e.data?.message || e.message || 'Scoring failed'
+    snackbar.error(`Scoring failed: ${msg}. Ensure your Anthropic API key is configured.`)
+  }
+  finally {
     scoring.value = false
   }
 }
@@ -213,39 +238,58 @@ onMounted(fetchConfigs)
 </script>
 
 <template>
-  <div>
-    <div class="d-flex align-center justify-space-between mb-6">
-      <h1 class="text-h4 font-weight-bold">Settings</h1>
+  <div class="fade-in">
+    <!-- Page Header -->
+    <div class="page-header mb-8">
+      <h1 class="text-h4 page-header__title">Settings</h1>
+      <p class="text-body-2 page-header__subtitle">
+        Configure job search profiles, trigger manual actions, and manage API keys. Active search configs run automatically each day.
+      </p>
     </div>
 
     <!-- Manual Actions -->
     <v-card variant="outlined" class="mb-6">
       <v-card-item>
+        <template #prepend>
+          <v-avatar color="primary" variant="tonal" size="36">
+            <v-icon icon="mdi-play-circle-outline" size="20" />
+          </v-avatar>
+        </template>
         <v-card-title class="text-subtitle-1 font-weight-medium">
           Manual Actions
         </v-card-title>
         <v-card-subtitle>
-          Jobs are searched daily at 6 AM and scored at 7 AM. Use these buttons to trigger manually.
+          Jobs are automatically searched daily at 6 AM and scored at 7 AM. Use these to run them on demand.
         </v-card-subtitle>
       </v-card-item>
       <v-card-text>
-        <div class="d-flex ga-3">
-          <v-btn
-            color="primary"
-            prepend-icon="mdi-magnify"
-            :loading="searching"
-            @click="triggerSearch"
-          >
-            Run Job Search Now
-          </v-btn>
-          <v-btn
-            color="secondary"
-            prepend-icon="mdi-brain"
-            :loading="scoring"
-            @click="triggerScoring"
-          >
-            Score Unscored Jobs
-          </v-btn>
+        <div class="d-flex flex-wrap ga-3">
+          <div>
+            <v-btn
+              color="primary"
+              prepend-icon="mdi-magnify"
+              :loading="searching"
+              @click="triggerSearch"
+            >
+              Run Job Search Now
+            </v-btn>
+            <div class="text-caption text-medium-emphasis mt-1 px-1">
+              Searches all active configs and saves new jobs to your feed.
+            </div>
+          </div>
+          <div>
+            <v-btn
+              color="secondary"
+              prepend-icon="mdi-brain"
+              :loading="scoring"
+              @click="triggerScoring"
+            >
+              Score Unscored Jobs
+            </v-btn>
+            <div class="text-caption text-medium-emphasis mt-1 px-1">
+              Uses AI to analyze how well each unscored job matches your profile.
+            </div>
+          </div>
         </div>
       </v-card-text>
     </v-card>
@@ -253,9 +297,17 @@ onMounted(fetchConfigs)
     <!-- Search Configurations -->
     <v-card variant="outlined" class="mb-6">
       <v-card-item>
+        <template #prepend>
+          <v-avatar color="accent" variant="tonal" size="36">
+            <v-icon icon="mdi-tune-variant" size="20" />
+          </v-avatar>
+        </template>
         <v-card-title class="text-subtitle-1 font-weight-medium">
           Search Configurations
         </v-card-title>
+        <v-card-subtitle>
+          Define what jobs to search for. Each config runs independently during the daily search.
+        </v-card-subtitle>
         <template #append>
           <v-btn
             color="primary"
@@ -276,7 +328,7 @@ onMounted(fetchConfigs)
         <v-expand-transition>
           <v-card v-show="showConfigForm" variant="tonal" color="primary" class="mb-4">
             <v-card-item>
-              <v-card-title class="text-subtitle-2">{{ formTitle }}</v-card-title>
+              <v-card-title class="text-subtitle-2 font-weight-bold">{{ formTitle }}</v-card-title>
             </v-card-item>
             <v-card-text>
               <v-row>
@@ -285,7 +337,8 @@ onMounted(fetchConfigs)
                     v-model="configForm.name"
                     label="Config name"
                     placeholder="e.g., Senior Frontend Roles"
-                    hide-details
+                    hint="A descriptive name to identify this search"
+                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" sm="6">
@@ -293,7 +346,8 @@ onMounted(fetchConfigs)
                     v-model="configForm.keywords"
                     label="Keywords (comma-separated)"
                     placeholder="e.g., senior developer, staff engineer, tech lead"
-                    hide-details
+                    hint="Job titles or skills to search for"
+                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" sm="6">
@@ -301,15 +355,17 @@ onMounted(fetchConfigs)
                     v-model="configForm.excludedKeywords"
                     label="Excluded keywords (comma-separated)"
                     placeholder="e.g., junior, intern, .NET"
-                    hide-details
+                    hint="Filter out jobs containing these terms"
+                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" sm="6">
                   <v-text-field
                     v-model="configForm.locations"
                     label="Locations (comma-separated)"
-                    placeholder="e.g., Remote, United States"
-                    hide-details
+                    placeholder="e.g., Remote, United States, New York"
+                    hint="Leave empty for worldwide results"
+                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" sm="3">
@@ -318,7 +374,8 @@ onMounted(fetchConfigs)
                     label="Minimum salary"
                     type="number"
                     prefix="$"
-                    hide-details
+                    hint="Annual minimum"
+                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" sm="3" class="d-flex align-center">
@@ -337,7 +394,8 @@ onMounted(fetchConfigs)
                     multiple
                     chips
                     closable-chips
-                    hide-details
+                    hint="If none selected, defaults to JSearch, Adzuna, and Remotive"
+                    persistent-hint
                   />
                 </v-col>
                 <v-col cols="12" class="d-flex justify-end ga-2">
@@ -369,8 +427,8 @@ onMounted(fetchConfigs)
                   @update:model-value="toggleConfig(config)"
                 />
               </template>
-              <v-card-title class="text-subtitle-2">{{ config.name }}</v-card-title>
-              <v-card-subtitle>
+              <v-card-title class="text-subtitle-2 font-weight-medium">{{ config.name }}</v-card-title>
+              <v-card-subtitle class="text-caption">
                 Keywords: {{ parseJsonArray(config.keywords).join(', ') }}
               </v-card-subtitle>
               <template #append>
@@ -395,7 +453,7 @@ onMounted(fetchConfigs)
                   v-if="config.excludedKeywords"
                   size="x-small"
                   variant="outlined"
-                  prepend-icon="mdi-minus-circle"
+                  prepend-icon="mdi-minus-circle-outline"
                   color="error"
                 >
                   Exclude: {{ parseJsonArray(config.excludedKeywords).join(', ') }}
@@ -404,7 +462,7 @@ onMounted(fetchConfigs)
                   v-if="config.locations"
                   size="x-small"
                   variant="outlined"
-                  prepend-icon="mdi-map-marker"
+                  prepend-icon="mdi-map-marker-outline"
                 >
                   {{ parseJsonArray(config.locations).join(', ') }}
                 </v-chip>
@@ -439,9 +497,12 @@ onMounted(fetchConfigs)
           </v-card>
         </template>
 
-        <div v-else-if="!loading" class="text-center pa-8 text-medium-emphasis">
-          <v-icon icon="mdi-magnify-plus-outline" size="48" class="mb-3" />
-          <p class="text-body-2">No search configurations yet. Add one to start finding jobs.</p>
+        <div v-else-if="!loading" class="text-center pa-8">
+          <v-icon icon="mdi-tune-variant" size="48" class="mb-3" style="opacity: 0.25;" />
+          <p class="text-body-2 text-medium-emphasis mb-1">No search configurations yet</p>
+          <p class="text-caption text-medium-emphasis">
+            Create a search config to define what types of jobs you're looking for. Click "Add Config" above to get started.
+          </p>
         </div>
       </v-card-text>
     </v-card>
@@ -449,23 +510,59 @@ onMounted(fetchConfigs)
     <!-- API Keys Info -->
     <v-card variant="outlined">
       <v-card-item>
+        <template #prepend>
+          <v-avatar color="warning" variant="tonal" size="36">
+            <v-icon icon="mdi-key-outline" size="20" />
+          </v-avatar>
+        </template>
         <v-card-title class="text-subtitle-1 font-weight-medium">
           API Keys
         </v-card-title>
         <v-card-subtitle>
-          API keys are configured as environment variables on the server. Set them in your .env file or Coolify environment settings.
+          API keys are set as environment variables on the server. They are never exposed in the browser.
         </v-card-subtitle>
       </v-card-item>
       <v-card-text>
-        <v-alert type="info" variant="tonal" class="mb-4">
-          <div class="text-body-2">
+        <v-alert type="info" variant="tonal" class="mb-0">
+          <div class="text-body-2 font-weight-medium mb-2">
             Required environment variables:
           </div>
-          <ul class="text-body-2 mt-2">
-            <li><code>NUXT_ANTHROPIC_API_KEY</code> - For AI job matching and resume tailoring</li>
-            <li><code>NUXT_JSEARCH_API_KEY</code> - RapidAPI key for JSearch</li>
-            <li><code>NUXT_ADZUNA_APP_ID</code> / <code>NUXT_ADZUNA_API_KEY</code> - Adzuna credentials</li>
-          </ul>
+          <v-table density="compact" class="bg-transparent">
+            <tbody>
+              <tr>
+                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
+                  <code>NUXT_ANTHROPIC_API_KEY</code>
+                </td>
+                <td class="text-caption text-medium-emphasis">
+                  Powers AI job matching and resume tailoring (required for core features)
+                </td>
+              </tr>
+              <tr>
+                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
+                  <code>NUXT_JSEARCH_API_KEY</code>
+                </td>
+                <td class="text-caption text-medium-emphasis">
+                  RapidAPI key for JSearch job source (optional — other sources work without keys)
+                </td>
+              </tr>
+              <tr>
+                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
+                  <code>NUXT_ADZUNA_APP_ID</code>
+                </td>
+                <td class="text-caption text-medium-emphasis" rowspan="2">
+                  Adzuna credentials (optional — get free keys at adzuna.com)
+                </td>
+              </tr>
+              <tr>
+                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
+                  <code>NUXT_ADZUNA_API_KEY</code>
+                </td>
+              </tr>
+            </tbody>
+          </v-table>
+          <div class="text-caption text-medium-emphasis mt-3">
+            Set these in your <code>.env</code> file or Coolify environment settings. Free sources (Remotive, RemoteOK, Himalayas, Jobicy, Arbeitnow) work without any API keys.
+          </div>
         </v-alert>
       </v-card-text>
     </v-card>

@@ -17,11 +17,12 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Fetch the application
-    const [application] = await db
+    const applicationResult = await db
       .select()
       .from(applications)
       .where(eq(applications.id, applicationId))
 
+    const application = applicationResult?.[0]
     if (!application) {
       throw createError({
         statusCode: 404,

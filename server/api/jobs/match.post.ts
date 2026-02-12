@@ -1,4 +1,4 @@
-import { eq, sql, and, isNull } from 'drizzle-orm'
+import { eq, sql, isNull } from 'drizzle-orm'
 import { jobs, knowledgeEntries } from '~~/server/db/schema'
 import { scoreJobMatch } from '~~/server/utils/ai'
 
@@ -26,18 +26,17 @@ export default defineEventHandler(async (event) => {
 
     // Get jobs to score
     let jobsToScore
-    if (body.jobIds && Array.isArray(body.jobIds) && body.jobIds.length > 0) {
+    if (body?.jobIds && Array.isArray(body.jobIds) && body.jobIds.length > 0) {
       jobsToScore = await db
         .select()
         .from(jobs)
         .where(sql`${jobs.id} IN (${sql.join(body.jobIds.map((id: number) => sql`${id}`), sql`, `)})`)
     } else {
-      // Score all unscored jobs, limit 10
+      // Score all unscored jobs
       jobsToScore = await db
         .select()
         .from(jobs)
         .where(isNull(jobs.matchScore))
-        .limit(10)
     }
 
     if (jobsToScore.length === 0) {

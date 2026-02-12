@@ -17,11 +17,12 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Fetch the application
-    const [application] = await db
+    const applicationResult = await db
       .select()
       .from(applications)
       .where(eq(applications.id, applicationId))
 
+    const application = applicationResult?.[0]
     if (!application) {
       throw createError({
         statusCode: 404,
@@ -30,11 +31,12 @@ export default defineEventHandler(async (event) => {
     }
 
     // Fetch the associated job
-    const [job] = await db
+    const jobResult = await db
       .select()
       .from(jobs)
       .where(eq(jobs.id, application.jobId))
 
+    const job = jobResult?.[0]
     if (!job) {
       throw createError({
         statusCode: 404,

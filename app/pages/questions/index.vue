@@ -3,6 +3,8 @@ definePageMeta({
   layout: 'default',
 })
 
+const snackbar = useSnackbar()
+
 interface Question {
   id: number
   question: string
@@ -29,7 +31,6 @@ async function fetchQuestions() {
     answeredQuestions.value = all.filter(q => q.status === 'answered')
   }
   catch {
-    // Questions API may not be ready yet
     pendingQuestions.value = []
     answeredQuestions.value = []
   }
@@ -56,9 +57,10 @@ async function saveAnswer(question: Question) {
       answeredAt: new Date().toISOString(),
     })
     delete answers.value[question.id]
+    snackbar.success('Answer saved and added to your knowledge base')
   }
   catch {
-    // Handle error silently for now
+    snackbar.error('Failed to save answer. Please try again.')
   }
 }
 
@@ -70,9 +72,10 @@ async function skipQuestion(question: Question) {
     })
 
     pendingQuestions.value = pendingQuestions.value.filter(q => q.id !== question.id)
+    snackbar.info('Question skipped')
   }
   catch {
-    // Handle error silently for now
+    snackbar.error('Failed to skip question')
   }
 }
 
@@ -82,10 +85,16 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
-    <div class="d-flex align-center justify-space-between mb-6">
-      <h1 class="text-h4 font-weight-bold">Daily Questions</h1>
-      <v-chip variant="tonal" color="primary">
+  <div class="fade-in">
+    <!-- Page Header -->
+    <div class="d-flex align-center justify-space-between mb-8">
+      <div class="page-header">
+        <h1 class="text-h4 page-header__title">Daily Questions</h1>
+        <p class="text-body-2 page-header__subtitle">
+          The AI generates questions to fill gaps in your professional profile. Your answers are stored in the Knowledge Base and improve job matching and resume tailoring accuracy.
+        </p>
+      </div>
+      <v-chip v-if="pendingQuestions.length" variant="tonal" color="warning">
         {{ pendingQuestions.length }} pending
       </v-chip>
     </div>
@@ -103,13 +112,13 @@ onMounted(() => {
         <v-card-item>
           <template #prepend>
             <v-avatar color="warning" variant="tonal" size="40">
-              <v-icon icon="mdi-chat-question" />
+              <v-icon icon="mdi-chat-processing-outline" size="20" />
             </v-avatar>
           </template>
-          <v-card-title class="text-subtitle-1">
+          <v-card-title class="text-subtitle-1 font-weight-medium">
             {{ question.question }}
           </v-card-title>
-          <v-card-subtitle v-if="question.context">
+          <v-card-subtitle v-if="question.context" class="text-caption">
             {{ question.context }}
           </v-card-subtitle>
         </v-card-item>
@@ -128,17 +137,21 @@ onMounted(() => {
           <v-textarea
             v-model="answers[question.id]"
             label="Your answer"
+            placeholder="Type your answer here..."
             rows="3"
             auto-grow
             hide-details
           />
+          <div class="text-caption text-medium-emphasis mt-1 px-1">
+            Your answer will be saved to the Knowledge Base and used by the AI for future job matching and resume generation.
+          </div>
         </v-card-text>
 
         <v-card-actions class="px-4 pb-4">
           <v-spacer />
           <v-btn
             variant="text"
-            color="error"
+            size="small"
             prepend-icon="mdi-skip-next"
             @click="skipQuestion(question)"
           >
@@ -162,10 +175,13 @@ onMounted(() => {
       variant="outlined"
       class="text-center pa-12 mb-6"
     >
-      <v-icon icon="mdi-check-circle-outline" size="64" color="success" class="mb-4" />
-      <h3 class="text-h6 mb-2">No Pending Questions</h3>
-      <p class="text-body-2 text-medium-emphasis">
-        Questions will appear when the AI identifies gaps in your profile.
+      <v-icon icon="mdi-check-circle-outline" size="64" color="success" class="mb-4" style="opacity: 0.6;" />
+      <h3 class="text-h6 mb-2">All Caught Up</h3>
+      <p class="text-body-2 text-medium-emphasis mb-1" style="max-width: 400px; margin: 0 auto;">
+        No pending questions right now.
+      </p>
+      <p class="text-caption text-medium-emphasis" style="max-width: 400px; margin: 0 auto;">
+        New questions are generated when the AI identifies gaps in your profile during job matching. The more jobs you review, the more targeted questions you'll receive.
       </p>
     </v-card>
 
@@ -182,7 +198,7 @@ onMounted(() => {
           size="small"
         />
         <span class="text-subtitle-2 text-medium-emphasis">
-          Answered Questions ({{ answeredQuestions.length }})
+          Previously Answered ({{ answeredQuestions.length }})
         </span>
       </div>
 
@@ -196,11 +212,11 @@ onMounted(() => {
           >
             <v-card-item>
               <template #prepend>
-                <v-avatar color="success" variant="tonal" size="36">
-                  <v-icon icon="mdi-check" size="small" />
+                <v-avatar color="success" variant="tonal" size="32">
+                  <v-icon icon="mdi-check" size="16" />
                 </v-avatar>
               </template>
-              <v-card-title class="text-body-1">
+              <v-card-title class="text-body-2 font-weight-medium">
                 {{ question.question }}
               </v-card-title>
             </v-card-item>

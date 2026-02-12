@@ -28,11 +28,12 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const [existing] = await db
+    const existingResult = await db
       .select()
       .from(questions)
       .where(eq(questions.id, id))
 
+    const existing = existingResult?.[0]
     if (!existing) {
       throw createError({
         statusCode: 404,
@@ -54,12 +55,12 @@ export default defineEventHandler(async (event) => {
       .set(updateData)
       .where(eq(questions.id, id))
 
-    const [updated] = await db
+    const updatedResult = await db
       .select()
       .from(questions)
       .where(eq(questions.id, id))
 
-    return updated
+    return updatedResult?.[0]
   } catch (error: any) {
     if (error.statusCode) throw error
     throw createError({

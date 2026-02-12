@@ -1,4 +1,4 @@
-import { eq, like, and, desc, sql, count } from 'drizzle-orm'
+import { eq, and, desc, sql, count } from 'drizzle-orm'
 import { jobs } from '~~/server/db/schema'
 
 export default defineEventHandler(async (event) => {
@@ -37,10 +37,12 @@ export default defineEventHandler(async (event) => {
 
     const where = conditions.length > 0 ? and(...conditions) : undefined
 
-    const [totalResult] = await db
+    const countResult = await db
       .select({ total: count() })
       .from(jobs)
       .where(where)
+
+    const totalResult = countResult[0]
 
     const orderBy = sortBy === 'score'
       ? desc(jobs.matchScore)
@@ -56,7 +58,7 @@ export default defineEventHandler(async (event) => {
 
     return {
       jobs: results,
-      total: totalResult.total,
+      total: totalResult?.total ?? 0,
       page,
       limit,
     }

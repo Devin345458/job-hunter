@@ -1,10 +1,11 @@
 import { eq } from 'drizzle-orm'
 import { applications, jobs, knowledgeEntries, questions } from '~~/server/db/schema'
 import { tailorResume } from '~~/server/utils/ai'
+import { saveResumePdf } from '~~/server/utils/pdf'
 
 export default defineEventHandler(async (event) => {
   const db = useDb()
-  const jobId = Number(getRouterParam(event, 'jobId'))
+  const jobId = Number(getRouterParam(event, 'id'))
 
   if (!jobId || isNaN(jobId)) {
     throw createError({
@@ -15,11 +16,12 @@ export default defineEventHandler(async (event) => {
 
   try {
     // Verify the job exists
-    const [job] = await db
+    const jobResult = await db
       .select()
       .from(jobs)
       .where(eq(jobs.id, jobId))
 
+    const job = jobResult?.[0]
     if (!job) {
       throw createError({
         statusCode: 404,
@@ -28,11 +30,12 @@ export default defineEventHandler(async (event) => {
     }
 
     // Check if an application already exists for this job
-    const [existingApp] = await db
+    const existingAppResult = await db
       .select()
       .from(applications)
       .where(eq(applications.jobId, jobId))
 
+    const existingApp = existingAppResult?.[0]
     if (existingApp) {
       throw createError({
         statusCode: 409,
@@ -57,7 +60,7 @@ export default defineEventHandler(async (event) => {
     )
 
     // Create the application
-    const [newApplication] = await db
+    const applicationResult = await db
       .insert(applications)
       .values({
         jobId,
@@ -66,6 +69,14 @@ export default defineEventHandler(async (event) => {
         status: 'draft',
       })
       .returning()
+
+    const newApplication = applicationResult?.[0]
+    if (!newApplication) {
+      throw createError({
+        statusCode: 500,
+        statusMessage: 'Failed to create application record',
+      })
+    }
 
     // Create any generated questions
     if (tailored.generatedQuestions && tailored.generatedQuestions.length > 0) {
@@ -80,15 +91,33 @@ export default defineEventHandler(async (event) => {
       )
     }
 
+    // Generate the PDF immediately
+    const candidateName = knowledgeBase['profile/Full Name'] || knowledgeBase['profile/name'] || 'Candidate'
+    const contactInfo = {
+      email: knowledgeBase['profile/Email'] || undefined,
+      phone: knowledgeBase['profile/Phone'] || undefined,
+      github: knowledgeBase['profile/GitHub'] || undefined,
+    }
+
+    const pdfPath = `./data/resumes/resume-${newApplication.id}.pdf`
+    await saveResumePdf(tailored, candidateName, contactInfo, pdfPath)
+
+    // Update application with the PDF path
+    await db
+      .update(applications)
+      .set({ tailoredResumePdfPath: pdfPath })
+      .where(eq(applications.id, newApplication.id))
+
     // Update job status to applied
     await db
       .update(jobs)
       .set({ status: 'applied' })
       .where(eq(jobs.id, jobId))
 
-    return newApplication
+    return { ...newApplication, tailoredResumePdfPath: pdfPath }
   } catch (error: any) {
     if (error.statusCode) throw error
+    console.error('Application creation error:', error)
     throw createError({
       statusCode: 500,
       statusMessage: 'Failed to create application',

@@ -1,0 +1,127 @@
+// ── Custom scrollbar ──
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+// ── Page header styling ──
+.page-header {
+  margin-bottom: 32px;
+
+  &__title {
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    line-height: 1.2;
+  }
+
+  &__subtitle {
+    margin-top: 6px;
+    opacity: 0.6;
+    font-weight: 400;
+    line-height: 1.5;
+    max-width: 600px;
+  }
+}
+
+// ── Glow effects for emphasis ──
+.glow-primary {
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.12);
+}
+
+.glow-accent {
+  box-shadow: 0 0 24px rgba(34, 211, 238, 0.12);
+}
+
+.glow-success {
+  box-shadow: 0 0 24px rgba(34, 197, 94, 0.12);
+}
+
+// ── Section dividers with labels ──
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.5;
+
+  &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: currentColor;
+    opacity: 0.15;
+  }
+}
+
+// ── Card hover lift ──
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  }
+}
+
+// ── Info banner for help text ──
+.info-banner {
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(99, 102, 241, 0.12);
+  border-radius: 12px;
+  padding: 16px 20px;
+
+  &__icon {
+    opacity: 0.7;
+  }
+
+  &__text {
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    opacity: 0.7;
+  }
+}
+
+// ── Fade-in animation for page content ──
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// ── Stagger children animation ──
+.stagger-in > * {
+  animation: fadeIn 0.3s ease-out both;
+
+  @for $i from 1 through 12 {
+    &:nth-child(#{$i}) {
+      animation-delay: #{$i * 50}ms;
+    }
+  }
+}

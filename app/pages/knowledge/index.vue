@@ -2,15 +2,16 @@
 definePageMeta({ layout: 'default' })
 
 const { entries, loading, error, fetchEntries, createEntry, updateEntry } = useKnowledge()
+const snackbar = useSnackbar()
 
 const categories = [
-  { title: 'Profile', value: 'profile', icon: 'mdi-account', color: 'primary' },
-  { title: 'Experience', value: 'experience', icon: 'mdi-briefcase', color: 'secondary' },
-  { title: 'Skill', value: 'skill', icon: 'mdi-wrench', color: 'accent' },
-  { title: 'Preference', value: 'preference', icon: 'mdi-heart', color: 'error' },
-  { title: 'Project', value: 'project', icon: 'mdi-rocket-launch', color: 'warning' },
-  { title: 'Education', value: 'education', icon: 'mdi-school', color: 'success' },
-  { title: 'Personal', value: 'personal', icon: 'mdi-account-heart', color: 'info' },
+  { title: 'Profile', value: 'profile', icon: 'mdi-account-outline', color: 'primary', description: 'Name, title, summary, contact info' },
+  { title: 'Experience', value: 'experience', icon: 'mdi-briefcase-outline', color: 'secondary', description: 'Work history and roles' },
+  { title: 'Skill', value: 'skill', icon: 'mdi-wrench-outline', color: 'accent', description: 'Technical and soft skills' },
+  { title: 'Preference', value: 'preference', icon: 'mdi-heart-outline', color: 'error', description: 'Work style, culture, salary' },
+  { title: 'Project', value: 'project', icon: 'mdi-rocket-launch-outline', color: 'warning', description: 'Notable projects and achievements' },
+  { title: 'Education', value: 'education', icon: 'mdi-school-outline', color: 'success', description: 'Degrees and certifications' },
+  { title: 'Personal', value: 'personal', icon: 'mdi-account-heart-outline', color: 'info', description: 'Interests and background' },
 ]
 
 const selectedCategory = ref<string | null>(null)
@@ -41,7 +42,7 @@ const groupedEntries = computed(() => {
   return groups
 })
 
-const categoryMeta = (cat: string) => categories.find(c => c.value === cat) || { title: cat, icon: 'mdi-tag', color: 'grey' }
+const categoryMeta = (cat: string) => categories.find(c => c.value === cat) || { title: cat, icon: 'mdi-tag', color: 'grey', description: '' }
 
 function openEditor(entry?: any) {
   editingEntry.value = entry || null
@@ -49,14 +50,22 @@ function openEditor(entry?: any) {
 }
 
 async function handleSave(data: any) {
-  if (data.id) {
-    await updateEntry(data.id, { key: data.key, value: data.value, category: data.category })
-  } else {
-    await createEntry({ category: data.category, key: data.key, value: data.value, source: data.source || 'user_answer' })
+  try {
+    if (data.id) {
+      await updateEntry(data.id, { key: data.key, value: data.value, category: data.category })
+      snackbar.success('Entry updated')
+    }
+    else {
+      await createEntry({ category: data.category, key: data.key, value: data.value, source: data.source || 'user_answer' })
+      snackbar.success('Entry added to knowledge base')
+    }
+    showEditor.value = false
+    editingEntry.value = null
+    await fetchEntries(selectedCategory.value || undefined)
   }
-  showEditor.value = false
-  editingEntry.value = null
-  await fetchEntries(selectedCategory.value || undefined)
+  catch (e: any) {
+    snackbar.error(e.data?.message || 'Failed to save entry')
+  }
 }
 
 function handleCancel() {
@@ -68,10 +77,16 @@ onMounted(() => fetchEntries())
 </script>
 
 <template>
-  <div>
-    <div class="d-flex align-center justify-space-between mb-6">
-      <h1 class="text-h4 font-weight-bold">Knowledge Base</h1>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openEditor()">
+  <div class="fade-in">
+    <!-- Page Header -->
+    <div class="d-flex align-center justify-space-between mb-8">
+      <div class="page-header">
+        <h1 class="text-h4 page-header__title">Knowledge Base</h1>
+        <p class="text-body-2 page-header__subtitle">
+          Your professional profile in structured form. The AI uses this to match jobs, tailor resumes, and generate interview prep. The more complete your profile, the better the results.
+        </p>
+      </div>
+      <v-btn color="primary" prepend-icon="mdi-plus" @click="openEditor()" class="d-none d-sm-flex">
         Add Entry
       </v-btn>
     </div>
@@ -111,39 +126,70 @@ onMounted(() => fetchEntries())
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 
     <!-- Error -->
-    <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
+    <v-alert v-if="error" type="error" variant="tonal" closable class="mb-4">
+      <v-alert-title class="text-body-2 font-weight-bold">Failed to load knowledge base</v-alert-title>
+      <div class="text-body-2 mt-1">{{ error }}</div>
+      <div class="mt-3">
+        <v-btn variant="outlined" size="small" color="error" prepend-icon="mdi-refresh" @click="fetchEntries()">
+          Try Again
+        </v-btn>
+      </div>
+    </v-alert>
 
     <!-- Empty state -->
     <v-card v-if="!loading && filteredEntries.length === 0" variant="outlined" class="text-center pa-12">
-      <v-icon icon="mdi-brain" size="80" color="secondary" class="mb-4" />
-      <h3 class="text-h6 mb-2">No Knowledge Entries Found</h3>
-      <p class="text-body-2 text-medium-emphasis mb-4">
+      <v-icon icon="mdi-lightbulb-outline" size="64" class="mb-4" style="opacity: 0.3;" />
+      <h3 class="text-h6 mb-2">
+        {{ entries.length === 0 ? 'Build Your Profile' : 'No Matching Entries' }}
+      </h3>
+      <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 440px; margin: 0 auto;">
         {{ entries.length === 0
-          ? 'Your knowledge base is empty. Add entries manually or run the seed script to import from your resume.'
-          : 'No entries match your current filters.'
+          ? 'Your knowledge base powers everything — job matching, resume tailoring, and interview prep. Start by adding entries about your skills, experience, and preferences.'
+          : 'No entries match your current search or filter. Try adjusting your criteria.'
         }}
       </p>
-      <v-btn v-if="entries.length === 0" color="primary" @click="openEditor()">Add First Entry</v-btn>
+
+      <v-btn v-if="entries.length === 0" color="primary" class="mt-4" @click="openEditor()">
+        Add First Entry
+      </v-btn>
+
+      <!-- Category guide for new users -->
+      <div v-if="entries.length === 0" class="mt-8 pt-6" style="border-top: 1px solid rgba(var(--v-border-color), 0.1);">
+        <div class="section-label justify-center" style="max-width: 300px; margin: 0 auto;">
+          Categories explained
+        </div>
+        <v-row justify="center" class="mt-2">
+          <v-col v-for="cat in categories" :key="cat.value" cols="12" sm="6" md="3" class="text-center">
+            <v-icon :icon="cat.icon" :color="cat.color" size="24" class="mb-1" />
+            <div class="text-body-2 font-weight-medium">{{ cat.title }}</div>
+            <div class="text-caption text-medium-emphasis">{{ cat.description }}</div>
+          </v-col>
+        </v-row>
+      </div>
     </v-card>
 
     <!-- Grouped entries -->
     <div v-for="(groupEntries, category) in groupedEntries" :key="category" class="mb-6">
       <div class="d-flex align-center mb-3">
-        <v-icon :icon="categoryMeta(category).icon" :color="categoryMeta(category).color" size="24" class="mr-2" />
-        <h2 class="text-h6 font-weight-medium">{{ categoryMeta(category).title }}</h2>
-        <v-chip size="small" class="ml-2">{{ groupEntries.length }}</v-chip>
+        <v-icon :icon="categoryMeta(category).icon" :color="categoryMeta(category).color" size="20" class="mr-2" />
+        <h2 class="text-subtitle-1 font-weight-medium">{{ categoryMeta(category).title }}</h2>
+        <v-chip size="x-small" class="ml-2" variant="tonal">{{ groupEntries.length }}</v-chip>
       </div>
 
-      <v-row>
+      <v-row class="stagger-in">
         <v-col v-for="entry in groupEntries" :key="entry.id" cols="12" md="6" lg="4">
           <v-card variant="outlined" class="entry-card" @click="openEditor(entry)">
-            <v-card-title class="text-subtitle-1 font-weight-medium pb-1">
+            <v-card-title class="text-subtitle-2 font-weight-medium pb-1">
               {{ entry.key }}
             </v-card-title>
             <v-card-text>
               <p class="text-body-2 entry-value">{{ entry.value }}</p>
-              <div class="d-flex align-center mt-2">
-                <v-chip size="x-small" :color="entry.source === 'resume' ? 'primary' : entry.source === 'inferred' ? 'warning' : 'default'">
+              <div class="d-flex align-center mt-3">
+                <v-chip
+                  size="x-small"
+                  :color="entry.source === 'resume' ? 'primary' : entry.source === 'inferred' ? 'warning' : 'default'"
+                  variant="tonal"
+                >
                   {{ entry.source }}
                 </v-chip>
                 <v-spacer />
@@ -154,6 +200,19 @@ onMounted(() => fetchEntries())
         </v-col>
       </v-row>
     </div>
+
+    <!-- Mobile FAB for adding entries -->
+    <v-btn
+      icon
+      color="primary"
+      size="large"
+      position="fixed"
+      location="bottom end"
+      class="ma-6 d-sm-none"
+      @click="openEditor()"
+    >
+      <v-icon icon="mdi-plus" />
+    </v-btn>
 
     <!-- Editor dialog -->
     <v-dialog v-model="showEditor" max-width="600" persistent>

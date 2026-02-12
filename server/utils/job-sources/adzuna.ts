@@ -10,28 +10,31 @@ export const adzunaAdapter: JobSourceAdapter = {
       return []
     }
 
-    const what = params.keywords.join(' ')
+    // Adzuna uses OR syntax between keyword phrases
+    // Wrap multi-word keywords in quotes for phrase matching
+    const what = params.keywords
+      .map(k => k.includes(' ') ? `"${k}"` : k)
+      .join(' OR ')
     const whatExclude = params.excludedKeywords?.join(' ')
 
     // Search US by default, can expand to other countries
     const country = 'us'
 
     try {
+      const query: Record<string, any> = {
+        app_id: config.adzunaAppId,
+        app_key: config.adzunaApiKey,
+        what,
+        full_time: '1',
+        results_per_page: '50',
+        sort_by: 'date',
+      }
+      if (whatExclude) query.what_exclude = whatExclude
+      if (params.salaryMin) query.salary_min = params.salaryMin
+
       const response = await $fetch<any>(
         `https://api.adzuna.com/v1/api/jobs/${country}/search/1`,
-        {
-          query: {
-            app_id: config.adzunaAppId,
-            app_key: config.adzunaApiKey,
-            what,
-            what_exclude: whatExclude,
-            salary_min: params.salaryMin || undefined,
-            full_time: '1',
-            results_per_page: '50',
-            sort_by: 'date',
-            content_type: 'application/json',
-          },
-        },
+        { query },
       )
 
       if (!response?.results) return []

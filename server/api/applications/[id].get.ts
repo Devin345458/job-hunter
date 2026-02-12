@@ -13,7 +13,7 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const [result] = await db
+    const resultArray = await db
       .select({
         application: applications,
         job: jobs,
@@ -22,6 +22,7 @@ export default defineEventHandler(async (event) => {
       .leftJoin(jobs, eq(applications.jobId, jobs.id))
       .where(eq(applications.id, id))
 
+    const result = resultArray?.[0]
     if (!result) {
       throw createError({
         statusCode: 404,

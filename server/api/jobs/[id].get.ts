@@ -13,11 +13,12 @@ export default defineEventHandler(async (event) => {
   }
 
   try {
-    const [job] = await db
+    const jobResult = await db
       .select()
       .from(jobs)
       .where(eq(jobs.id, id))
 
+    const job = jobResult?.[0]
     if (!job) {
       throw createError({
         statusCode: 404,

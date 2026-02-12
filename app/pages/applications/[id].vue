@@ -8,6 +8,7 @@ definePageMeta({
 const route = useRoute()
 const router = useRouter()
 const { getApplication, updateApplication, loading, error } = useApplications()
+const snackbar = useSnackbar()
 
 const application = ref<ApplicationWithJob | null>(null)
 const activeTab = ref('resume')
@@ -101,6 +102,12 @@ function formatDate(dateStr: string): string {
   })
 }
 
+async function downloadPdf() {
+  if (!application.value) return
+  const url = `/api/resume/pdf/${application.value.id}`
+  window.open(url, '_blank')
+}
+
 async function loadApplication() {
   try {
     application.value = await getApplication(applicationId.value)
@@ -131,9 +138,10 @@ async function saveNotes() {
     application.value = await updateApplication(application.value.id, {
       notes: notes.value,
     })
+    snackbar.success('Notes saved')
   }
   catch {
-    // Error handled by composable
+    snackbar.error('Failed to save notes. Please try again.')
   }
   finally {
     savingNotes.value = false
@@ -147,12 +155,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div>
+  <div class="fade-in">
     <!-- Back button -->
     <v-btn
       variant="text"
       prepend-icon="mdi-arrow-left"
       class="mb-4"
+      size="small"
       @click="router.back()"
     >
       Back to Applications
@@ -164,10 +173,29 @@ onMounted(() => {
       v-if="error"
       type="error"
       variant="tonal"
-      closable
       class="mb-4"
     >
-      {{ error }}
+      <v-alert-title class="text-body-2 font-weight-bold">Failed to load application</v-alert-title>
+      <div class="text-body-2 mt-1">{{ error }}</div>
+      <div class="mt-3 d-flex ga-2">
+        <v-btn
+          variant="outlined"
+          size="small"
+          color="error"
+          prepend-icon="mdi-refresh"
+          @click="loadApplication()"
+        >
+          Retry
+        </v-btn>
+        <v-btn
+          variant="text"
+          size="small"
+          prepend-icon="mdi-arrow-left"
+          @click="router.push('/applications')"
+        >
+          Back to Applications
+        </v-btn>
+      </div>
     </v-alert>
 
     <template v-if="application">
@@ -180,7 +208,7 @@ onMounted(() => {
             </v-avatar>
           </template>
 
-          <v-card-title class="text-h5 font-weight-bold">
+          <v-card-title class="text-h5 font-weight-bold" style="letter-spacing: -0.02em;">
             {{ application.job?.company || 'Unknown Company' }}
           </v-card-title>
           <v-card-subtitle class="text-body-1">
@@ -212,7 +240,7 @@ onMounted(() => {
           <v-chip
             v-if="application.job?.location"
             variant="outlined"
-            prepend-icon="mdi-map-marker"
+            prepend-icon="mdi-map-marker-outline"
             size="small"
           >
             {{ application.job.location }}
@@ -236,22 +264,22 @@ onMounted(() => {
           color="primary"
           bg-color="surface"
         >
-          <v-tab value="resume" prepend-icon="mdi-file-document">
+          <v-tab value="resume" prepend-icon="mdi-file-document-outline">
             Resume
           </v-tab>
-          <v-tab value="cover-letter" prepend-icon="mdi-email-edit">
+          <v-tab value="cover-letter" prepend-icon="mdi-email-edit-outline">
             Cover Letter
           </v-tab>
           <v-tab value="tailoring" prepend-icon="mdi-auto-fix">
             Tailoring Notes
           </v-tab>
-          <v-tab value="timeline" prepend-icon="mdi-timeline-clock">
+          <v-tab value="timeline" prepend-icon="mdi-timeline-clock-outline">
             Timeline
           </v-tab>
-          <v-tab value="notes" prepend-icon="mdi-note-edit">
+          <v-tab value="notes" prepend-icon="mdi-note-edit-outline">
             Notes
           </v-tab>
-          <v-tab value="qa" prepend-icon="mdi-chat-question">
+          <v-tab value="qa" prepend-icon="mdi-chat-processing-outline">
             Q&A
           </v-tab>
         </v-tabs>
@@ -262,28 +290,35 @@ onMounted(() => {
           <!-- Resume Tab -->
           <v-tabs-window-item value="resume">
             <v-card-text>
-              <div v-if="application.tailoredResumePdfPath" class="resume-preview pa-4">
-                <v-icon icon="mdi-file-pdf-box" size="48" color="error" class="mb-3" />
-                <p class="text-body-2 mb-3">Tailored resume generated</p>
+              <div v-if="application.tailoredResumeJson" class="resume-preview pa-6">
+                <v-icon icon="mdi-file-check-outline" size="40" color="success" class="mb-3" />
+                <p class="text-body-2 font-weight-medium mb-1">Tailored resume ready</p>
+                <p class="text-caption text-medium-emphasis mb-4">
+                  Your resume has been customized for this specific role.
+                </p>
                 <v-btn
                   variant="tonal"
                   color="primary"
                   prepend-icon="mdi-download"
+                  @click="downloadPdf"
                 >
                   Download PDF
                 </v-btn>
               </div>
               <div v-else class="resume-preview pa-8 text-center">
-                <v-icon icon="mdi-file-document-outline" size="64" color="secondary" class="mb-3" />
+                <v-icon icon="mdi-file-document-outline" size="48" class="mb-3" style="opacity: 0.25;" />
                 <h3 class="text-h6 mb-2">No Resume Generated</h3>
-                <p class="text-body-2 text-medium-emphasis mb-4">
-                  Generate a tailored resume from the job detail page.
+                <p class="text-body-2 text-medium-emphasis mb-1">
+                  A tailored resume hasn't been generated for this application yet.
+                </p>
+                <p class="text-caption text-medium-emphasis mb-4">
+                  Go to the job detail page to generate one. The AI will customize your resume to match the job requirements.
                 </p>
                 <v-btn
                   v-if="application.jobId"
                   variant="tonal"
                   color="primary"
-                  prepend-icon="mdi-file-document-edit"
+                  prepend-icon="mdi-file-document-edit-outline"
                   :to="`/jobs/${application.jobId}`"
                 >
                   Go to Job
@@ -299,9 +334,10 @@ onMounted(() => {
                 <div class="text-body-1" style="white-space: pre-wrap;">{{ application.coverLetter }}</div>
               </div>
               <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-email-edit-outline" size="48" color="secondary" class="mb-3" />
-                <p class="text-body-2 text-medium-emphasis">
-                  No cover letter generated yet. A cover letter will be created when the resume is tailored.
+                <v-icon icon="mdi-email-edit-outline" size="40" class="mb-3" style="opacity: 0.25;" />
+                <p class="text-body-2 text-medium-emphasis mb-1">No cover letter yet</p>
+                <p class="text-caption text-medium-emphasis">
+                  A cover letter will be generated along with your tailored resume when you apply through the job detail page.
                 </p>
               </div>
             </v-card-text>
@@ -310,13 +346,24 @@ onMounted(() => {
           <!-- Tailoring Notes Tab -->
           <v-tabs-window-item value="tailoring">
             <v-card-text>
-              <div v-if="application.tailoringNotes" class="text-body-2" style="white-space: pre-wrap;">
-                {{ application.tailoringNotes }}
+              <div v-if="application.tailoringNotes">
+                <div class="info-banner mb-4">
+                  <div class="d-flex align-start ga-2">
+                    <v-icon icon="mdi-information-outline" size="16" class="mt-1 info-banner__icon" />
+                    <div class="info-banner__text">
+                      These notes explain how the AI customized your resume for this role — what was emphasized, reworded, or restructured.
+                    </div>
+                  </div>
+                </div>
+                <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.7;">
+                  {{ application.tailoringNotes }}
+                </div>
               </div>
               <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-auto-fix" size="48" color="secondary" class="mb-3" />
-                <p class="text-body-2 text-medium-emphasis">
-                  Tailoring notes will show what the AI emphasized when customizing your resume for this role.
+                <v-icon icon="mdi-auto-fix" size="40" class="mb-3" style="opacity: 0.25;" />
+                <p class="text-body-2 text-medium-emphasis mb-1">No tailoring notes</p>
+                <p class="text-caption text-medium-emphasis">
+                  When a resume is generated, the AI provides notes explaining what it emphasized and why.
                 </p>
               </div>
             </v-card-text>
@@ -339,9 +386,9 @@ onMounted(() => {
                   size="small"
                 >
                   <div class="mb-1">
-                    <strong>{{ event.title }}</strong>
+                    <strong class="text-body-2">{{ event.title }}</strong>
                   </div>
-                  <div class="text-body-2 text-medium-emphasis">
+                  <div class="text-caption text-medium-emphasis">
                     {{ event.subtitle }}
                   </div>
                   <div class="text-caption text-medium-emphasis mt-1">
@@ -351,9 +398,10 @@ onMounted(() => {
               </v-timeline>
 
               <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-timeline-clock-outline" size="48" color="secondary" class="mb-3" />
-                <p class="text-body-2 text-medium-emphasis">
-                  No timeline events to display.
+                <v-icon icon="mdi-timeline-clock-outline" size="40" class="mb-3" style="opacity: 0.25;" />
+                <p class="text-body-2 text-medium-emphasis mb-1">No timeline events yet</p>
+                <p class="text-caption text-medium-emphasis">
+                  Events are added automatically as your application progresses through each stage.
                 </p>
               </div>
             </v-card-text>
@@ -362,6 +410,14 @@ onMounted(() => {
           <!-- Notes Tab -->
           <v-tabs-window-item value="notes">
             <v-card-text>
+              <div class="info-banner mb-4">
+                <div class="d-flex align-start ga-2">
+                  <v-icon icon="mdi-information-outline" size="16" class="mt-1 info-banner__icon" />
+                  <div class="info-banner__text">
+                    Use this space for personal notes about the application — interview prep, follow-up reminders, contact info, or anything else you want to track.
+                  </div>
+                </div>
+              </div>
               <v-textarea
                 v-model="notes"
                 label="Your notes"
@@ -388,6 +444,14 @@ onMounted(() => {
           <v-tabs-window-item value="qa">
             <v-card-text>
               <template v-if="questions.length">
+                <div class="info-banner mb-4">
+                  <div class="d-flex align-start ga-2">
+                    <v-icon icon="mdi-information-outline" size="16" class="mt-1 info-banner__icon" />
+                    <div class="info-banner__text">
+                      These interview questions were generated by AI based on the job requirements and any gaps identified in your profile. Prepare answers for each to strengthen your interview performance.
+                    </div>
+                  </div>
+                </div>
                 <v-card
                   v-for="q in questions"
                   :key="q.id"
@@ -397,15 +461,15 @@ onMounted(() => {
                   <v-card-item>
                     <template #prepend>
                       <v-icon
-                        :icon="q.answer ? 'mdi-check-circle' : 'mdi-help-circle'"
+                        :icon="q.answer ? 'mdi-check-circle' : 'mdi-help-circle-outline'"
                         :color="q.answer ? 'success' : 'warning'"
-                        size="small"
+                        size="20"
                       />
                     </template>
-                    <v-card-title class="text-body-1">
+                    <v-card-title class="text-body-2 font-weight-medium">
                       {{ q.question }}
                     </v-card-title>
-                    <v-card-subtitle v-if="q.category">
+                    <v-card-subtitle v-if="q.category" class="text-caption">
                       {{ q.category }}
                     </v-card-subtitle>
                   </v-card-item>
@@ -418,9 +482,10 @@ onMounted(() => {
               </template>
 
               <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-chat-question-outline" size="48" color="secondary" class="mb-3" />
-                <p class="text-body-2 text-medium-emphasis">
-                  No questions generated for this application yet.
+                <v-icon icon="mdi-chat-processing-outline" size="40" class="mb-3" style="opacity: 0.25;" />
+                <p class="text-body-2 text-medium-emphasis mb-1">No interview questions yet</p>
+                <p class="text-caption text-medium-emphasis">
+                  Interview questions are generated when the AI identifies gaps between your profile and the job requirements during resume tailoring.
                 </p>
               </div>
             </v-card-text>
@@ -433,8 +498,8 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .resume-preview {
-  border: 2px dashed rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 8px;
+  border: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 12px;
   min-height: 300px;
   display: flex;
   flex-direction: column;

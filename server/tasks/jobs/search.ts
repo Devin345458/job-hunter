@@ -1,6 +1,10 @@
 import { jsearchAdapter } from '../../utils/job-sources/jsearch'
 import { adzunaAdapter } from '../../utils/job-sources/adzuna'
 import { remotiveAdapter } from '../../utils/job-sources/remotive'
+import { remoteokAdapter } from '../../utils/job-sources/remoteok'
+import { himalayasAdapter } from '../../utils/job-sources/himalayas'
+import { jobicyAdapter } from '../../utils/job-sources/jobicy'
+import { arbeitnowAdapter } from '../../utils/job-sources/arbeitnow'
 import { searchConfigs, jobs } from '../../db/schema'
 import { eq, and } from 'drizzle-orm'
 import type { SearchParams, NormalizedJob, JobSourceAdapter } from '../../utils/job-sources/types'
@@ -9,6 +13,10 @@ const adapters: Record<string, JobSourceAdapter> = {
   jsearch: jsearchAdapter,
   adzuna: adzunaAdapter,
   remotive: remotiveAdapter,
+  remoteok: remoteokAdapter,
+  himalayas: himalayasAdapter,
+  jobicy: jobicyAdapter,
+  arbeitnow: arbeitnowAdapter,
 }
 
 export default defineTask({
@@ -49,10 +57,10 @@ export default defineTask({
       console.log(`[jobs:search] Running config "${config.name}" with sources: ${sources.join(', ')}`)
 
       // Run all adapters in parallel
+      const validSources = sources.filter(s => adapters[s])
       const results = await Promise.allSettled(
-        sources
-          .filter(s => adapters[s])
-          .map(s => adapters[s].search(params)),
+        validSources
+          .map(s => adapters[s]!.search(params)),
       )
 
       const allJobs: NormalizedJob[] = []
