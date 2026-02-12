@@ -1,0 +1,35 @@
+{
+  "name": "job-hunter",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "npx tsx server/db/seed.ts",
+    "db:studio": "drizzle-kit studio"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@mdi/font": "^7.4.47",
+    "better-sqlite3": "^12.6.2",
+    "drizzle-kit": "^0.31.9",
+    "drizzle-orm": "^0.45.1",
+    "nuxt": "^4.3.1",
+    "pdfmake": "^0.3.3",
+    "sass-embedded": "^1.97.3",
+    "vue": "^3.5.28",
+    "vue-router": "^4.6.4",
+    "vuetify": "^3.11.8",
+    "vuetify-nuxt-module": "^0.19.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/pdfmake": "^0.3.1",
+    "tsx": "^4.21.0"
+  }
+}

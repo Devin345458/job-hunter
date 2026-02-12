@@ -1,0 +1,9 @@
+node_modules
+.nuxt
+.output
+dist
+*.db
+*.db-journal
+.env
+.git
+.DS_Store
