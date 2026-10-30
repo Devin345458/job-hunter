@@ -1,14 +1,17 @@
 services:
   app:
     build: .
-    container_name: job-hunter
     restart: unless-stopped
-    entrypoint: ["npm", "run", "dev"]
     ports:
-      - "3000:3000"
+      - "${NUXT_PORT:-3000}:3000"
     volumes:
       - job-hunter-data:/app/data
+    env_file:
+      - path: .env
+        required: false
+    # These win over .env, so a worktree's port and database path never leak into the container.
     environment:
+      - PORT=3000
       - NUXT_DATABASE_PATH=/app/data/job-hunter.db
 
 volumes:

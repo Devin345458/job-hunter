@@ -87,7 +87,7 @@ Open `http://localhost:3000` and you're running.
 - Copies the main checkout's `data/job-hunter.db`, so nothing done in a worktree touches your real data
 - Runs `npm ci` with your nvm default Node
 
-Run `npm run dev` in the worktree and open the URL printed at the end of setup. Removing the worktree removes its database copy; there is nothing else to clean up.
+Run `npm run dev` in the worktree and open the URL printed at the end of setup. Removing the worktree removes its database copy. If you ran `docker compose up` inside a worktree, run `docker compose down -v` there first, since the container and its volume outlive the directory.
 
 ### Docker Deployment
 
@@ -102,7 +102,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The app will be available at `http://localhost:3000`. The SQLite database is persisted in a Docker volume (`job-hunter-data`).
+The app will be available at `http://localhost:3000` (set `NUXT_PORT` in `.env` to use another host port). The container reads its API keys from `.env`. The SQLite database is persisted in a Docker volume (`job-hunter-data`).
 
 ## Environment Variables
 
