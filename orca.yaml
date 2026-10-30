@@ -1,0 +1,10 @@
+# Orca worktree hooks. Orca only reads this exact filename (orca.yaml, not orca.yml).
+# No archive hook: everything setup creates lives inside the worktree directory.
+scripts:
+  setup: |
+    if [ -f scripts/orca-worktree-setup.sh ]; then
+      bash scripts/orca-worktree-setup.sh
+    else
+      bash "$ORCA_ROOT_PATH/scripts/orca-worktree-setup.sh"
+    fi
+setupAgentStartupPolicy: wait-for-setup

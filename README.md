@@ -52,7 +52,7 @@ Search Configs ──> Job Source APIs ──> Normalize & Deduplicate ──> S
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 20 to 24 (`better-sqlite3` 12.6 does not build on Node 26)
 - An [Anthropic API key](https://console.anthropic.com) for AI features
 
 ### Local Development
@@ -78,6 +78,16 @@ npm run dev
 ```
 
 Open `http://localhost:3000` and you're running.
+
+### Parallel Worktrees (Orca)
+
+`orca.yaml` runs `scripts/orca-worktree-setup.sh` whenever Orca creates a worktree. The script:
+
+- Copies `.env` from the main checkout and gives the worktree its own `NUXT_PORT` (3100 and up; 3000 stays with the main checkout)
+- Copies the main checkout's `data/job-hunter.db`, so nothing done in a worktree touches your real data
+- Runs `npm ci` with your nvm default Node
+
+Run `npm run dev` in the worktree and open the URL printed at the end of setup. Removing the worktree removes its database copy; there is nothing else to clean up.
 
 ### Docker Deployment
 
