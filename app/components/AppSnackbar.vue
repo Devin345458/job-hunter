@@ -1,5 +1,10 @@
 <script setup lang="ts">
+import { useDisplay } from 'vuetify'
+
 const { state } = useSnackbar()
+// Desktop: bottom left, over the navigation, clear of the review card's decision bar.
+// Phone: top, clear of the decision bar and the bottom navigation.
+const { mdAndUp } = useDisplay()
 
 function onAction() {
   if (state.action?.handler) {
@@ -14,9 +19,12 @@ function onAction() {
     v-model="state.show"
     :color="state.color"
     :timeout="state.timeout"
-    location="bottom end"
+    :location="mdAndUp ? 'bottom start' : 'top'"
+    :min-width="mdAndUp ? 280 : undefined"
+    :max-width="mdAndUp ? 340 : undefined"
     rounded="lg"
     class="app-snackbar"
+    :role="state.color === 'error' ? 'alert' : 'status'"
   >
     <div class="d-flex align-center ga-3">
       <v-icon :icon="state.icon" size="20" />
