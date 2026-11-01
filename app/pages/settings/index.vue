@@ -2,7 +2,6 @@
 definePageMeta({ layout: 'default' })
 
 const snackbar = useSnackbar()
-const router = useRouter()
 
 interface SearchConfig {
   id: number
@@ -38,13 +37,13 @@ const isEditing = computed(() => editingConfigId.value !== null)
 const formTitle = computed(() => isEditing.value ? 'Edit Search Config' : 'New Search Config')
 
 const sourceOptions = [
-  { title: 'JSearch (RapidAPI)', value: 'jsearch', description: 'Comprehensive aggregator — requires API key' },
-  { title: 'Adzuna', value: 'adzuna', description: 'Global job search — requires API key' },
-  { title: 'Remotive', value: 'remotive', description: 'Remote jobs — no API key needed' },
-  { title: 'RemoteOK', value: 'remoteok', description: 'Remote tech jobs — no API key needed' },
-  { title: 'Himalayas', value: 'himalayas', description: 'Remote jobs — no API key needed' },
-  { title: 'Jobicy', value: 'jobicy', description: 'Remote jobs — no API key needed' },
-  { title: 'Arbeitnow', value: 'arbeitnow', description: 'European & remote jobs — no API key needed' },
+  { title: 'JSearch (RapidAPI)', value: 'jsearch', description: 'Comprehensive aggregator. Needs an API key.' },
+  { title: 'Adzuna', value: 'adzuna', description: 'Global job search. Needs an API key.' },
+  { title: 'Remotive', value: 'remotive', description: 'Remote jobs. No API key needed.' },
+  { title: 'RemoteOK', value: 'remoteok', description: 'Remote tech jobs. No API key needed.' },
+  { title: 'Himalayas', value: 'himalayas', description: 'Remote jobs. No API key needed.' },
+  { title: 'Jobicy', value: 'jobicy', description: 'Remote jobs. No API key needed.' },
+  { title: 'Arbeitnow', value: 'arbeitnow', description: 'European and remote jobs. No API key needed.' },
 ]
 
 function parseJsonArray(val: string | null): string[] {
@@ -194,46 +193,6 @@ async function saveConfig() {
   }
 }
 
-// Trigger manual search
-const searching = ref(false)
-async function triggerSearch() {
-  searching.value = true
-  try {
-    const result = await $fetch<{ found: number; new: number }>('/api/jobs/search', { method: 'POST' })
-    snackbar.success(`Search complete! Found ${result.found} jobs, ${result.new} new.`, {
-      text: 'View Jobs',
-      handler: () => router.push('/jobs'),
-    })
-  }
-  catch (e: any) {
-    const msg = e.data?.message || e.message || 'Search failed'
-    snackbar.error(`Search failed: ${msg}. Check your API key configuration below.`)
-  }
-  finally {
-    searching.value = false
-  }
-}
-
-// Trigger manual scoring
-const scoring = ref(false)
-async function triggerScoring() {
-  scoring.value = true
-  try {
-    const result = await $fetch<{ scored: number }>('/api/jobs/match', { method: 'POST' })
-    snackbar.success(`Scoring complete! Scored ${result.scored} jobs.`, {
-      text: 'View Jobs',
-      handler: () => router.push('/jobs'),
-    })
-  }
-  catch (e: any) {
-    const msg = e.data?.message || e.message || 'Scoring failed'
-    snackbar.error(`Scoring failed: ${msg}. Ensure your Anthropic API key is configured.`)
-  }
-  finally {
-    scoring.value = false
-  }
-}
-
 onMounted(fetchConfigs)
 </script>
 
@@ -243,54 +202,27 @@ onMounted(fetchConfigs)
     <div class="page-header mb-8">
       <h1 class="text-h4 page-header__title">Settings</h1>
       <p class="text-body-2 page-header__subtitle">
-        Configure job search profiles, trigger manual actions, and manage API keys. Active search configs run automatically each day.
+        Run the pipeline by hand, set what it searches for, and check which API keys it needs. Active searches run every day.
       </p>
     </div>
 
-    <!-- Manual Actions -->
-    <v-card variant="outlined" class="mb-6">
+    <!-- Pipeline -->
+    <v-card id="pipeline" variant="outlined" class="mb-6 settings__pipeline">
       <v-card-item>
         <template #prepend>
-          <v-avatar color="primary" variant="tonal" size="36">
-            <v-icon icon="mdi-play-circle-outline" size="20" />
+          <v-avatar color="primary" variant="tonal" size="36" rounded="lg">
+            <v-icon icon="mdi-pipe" size="20" />
           </v-avatar>
         </template>
         <v-card-title class="text-subtitle-1 font-weight-medium">
-          Manual Actions
+          Pipeline
         </v-card-title>
         <v-card-subtitle>
-          Jobs are automatically searched daily at 6 AM and scored at 7 AM. Use these to run them on demand.
+          Runs every day at 6:00 Central. Start the whole run or any one step here.
         </v-card-subtitle>
       </v-card-item>
       <v-card-text>
-        <div class="d-flex flex-wrap ga-3">
-          <div>
-            <v-btn
-              color="primary"
-              prepend-icon="mdi-magnify"
-              :loading="searching"
-              @click="triggerSearch"
-            >
-              Run Job Search Now
-            </v-btn>
-            <div class="text-caption text-medium-emphasis mt-1 px-1">
-              Searches all active configs and saves new jobs to your feed.
-            </div>
-          </div>
-          <div>
-            <v-btn
-              color="secondary"
-              prepend-icon="mdi-brain"
-              :loading="scoring"
-              @click="triggerScoring"
-            >
-              Score Unscored Jobs
-            </v-btn>
-            <div class="text-caption text-medium-emphasis mt-1 px-1">
-              Uses AI to analyze how well each unscored job matches your profile.
-            </div>
-          </div>
-        </div>
+        <ReviewPipelinePanel />
       </v-card-text>
     </v-card>
 
@@ -542,7 +474,7 @@ onMounted(fetchConfigs)
                   <code>NUXT_JSEARCH_API_KEY</code>
                 </td>
                 <td class="text-caption text-medium-emphasis">
-                  RapidAPI key for JSearch job source (optional — other sources work without keys)
+                  RapidAPI key for the JSearch source. Optional: other sources work without keys.
                 </td>
               </tr>
               <tr>
@@ -550,7 +482,7 @@ onMounted(fetchConfigs)
                   <code>NUXT_ADZUNA_APP_ID</code>
                 </td>
                 <td class="text-caption text-medium-emphasis" rowspan="2">
-                  Adzuna credentials (optional — get free keys at adzuna.com)
+                  Adzuna credentials. Optional: free keys at adzuna.com.
                 </td>
               </tr>
               <tr>
@@ -568,3 +500,16 @@ onMounted(fetchConfigs)
     </v-card>
   </div>
 </template>
+
+<style scoped lang="scss">
+// Card subtitles here are full sentences; let them wrap instead of cutting off on a phone.
+.v-card :deep(.v-card-subtitle),
+.v-card :deep(.v-card-title) {
+  white-space: normal;
+  line-height: 1.45;
+}
+
+.settings__pipeline {
+  scroll-margin-top: 72px;
+}
+</style>
