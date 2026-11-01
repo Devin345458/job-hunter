@@ -308,6 +308,25 @@ export interface DemoProjectView {
   error: string | null
 }
 
+/** GET /api/demos/:id. The demo plus what the detail page needs around it. */
+export interface DemoDetail extends DemoProjectView {
+  applicationId: number
+  jobId: number
+  isSandbox: boolean
+  applicationStatus: ApplicationStatus
+  job: { title: string; company: string }
+  /** https://github.com/<owner>/<repoName>, the URL the repo gets on publish (sandbox publishes go to local bare repos instead). */
+  plannedRepoUrl: string | null
+  costUsd: number | null
+  buildLog: string | null
+  createdAt: string
+  builtAt: string | null
+  publishedAt: string | null
+  gapItem: GapItem | null
+  /** The application's whole gap analysis, for context on the detail page. */
+  gap: GapAnalysis | null
+}
+
 export interface ReviewItem {
   applicationId: number
   status: ApplicationStatus
