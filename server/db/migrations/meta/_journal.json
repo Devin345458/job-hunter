@@ -15,6 +15,13 @@
       "when": 1793543693479,
       "tag": "0001_pipeline_learning_demos",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793545679054,
+      "tag": "0002_learned_rules_sandbox",
+      "breakpoints": true
     }
   ]
 }
