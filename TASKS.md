@@ -21,22 +21,30 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [x] Stage from the working tree, not the stale index (empty `components.scss`, empty `plugins/vuetify.ts`).
 - [x] AGENTS.md corrected (`components.scss`, no MDI middleware claim) and committed.
 - [x] `.dockerignore` excludes `data/`.
-- [ ] Committed on main, pushed, and the deployed image tag matches the commit.
+- [x] Committed on main as a014e13 and deployed (container image `i40g4ock48g0cwwgc4s88okk:a014e13`). Deployed pages probed at 1280 and 390 wide: no band, fields 8px, MDI icons, no horizontal scroll, console clean.
 
 ## Unit 2: foundation (auth, data model, AI client, container)
 
-- [ ] Single-user login. Every page and every `/api/*` route returns 401 or redirects without the session cookie, except the login route and the sandbox form.
-- [ ] Password hash and session secret live in Coolify env. Generated password stored in the macOS keychain item `job-hunter-admin`.
-- [ ] Login rate limit and lockout.
-- [ ] One additive migration with the full data model: job enrichment columns, new application states, decisions, learned_rules, demo_projects, pipeline_runs, score_history, sandbox_submissions, question kinds.
-- [ ] Shared TypeScript types and the review API contract.
-- [ ] Anthropic SDK upgraded, model `claude-opus-5-5`, structured outputs instead of forced tool choice, usage logged.
-- [ ] Daily cost cap on proposals and demo builds.
-- [ ] Dockerfile runs Playwright Chromium on arm64, has git, sets `TZ=America/Chicago`.
-- [ ] Every scheduled task writes a `pipeline_runs` row. A protected manual trigger exists.
-- [ ] Sandbox employer form at `/sandbox/apply/:token` records submissions to `sandbox_submissions`.
-- [ ] Knowledge base reads dedupe the triplicated rows. No prod rows deleted.
-- [ ] Deployed, image tag matches, login works on prod.
+- [x] Single-user login. On prod (86fef3c): `/` and `/jobs` redirect to `/login`, `/api/stats`, `/api/knowledge`, `/api/jobs`, `/api/review/queue` return 401; only `/login`, `/api/health`, and the sandbox are public. http redirects to https.
+- [x] Password hash and session secret live in Coolify env (literal, production only). Generated password stored in the macOS keychain item `job-hunter-admin` (account `devin`). Login on prod: right password 200, wrong 401.
+- [x] Login rate limit and lockout (5 failures per client per 15 minutes, 20 global per hour).
+- [x] One additive migration with the full data model (0001; ALTER ADD and CREATE only). Ran against a copy of the prod DB first; prod DB backed up to `/data/backups/pre-0001-202611010848.db` before deploy.
+- [x] Shared TypeScript types (`shared/types/pipeline.ts`) and the review API contract (queue, detail, approve, reject), tested on a prod DB copy: reject needs a reason, approve returns 202 and runs the approval chain, approving a declined application returns 409.
+- [x] Anthropic SDK 1.3, structured outputs, usage and cost logged to `ai_calls`. Primary `claude-opus-5-5` with automatic fallback to `claude-haiku-4-5`, because the key returns 429 on every model except Haiku 4.5.
+- [x] Daily Claude budget (`NUXT_DAILY_AI_BUDGET_USD`, 10 on prod) enforced before every call.
+- [x] Dockerfile runs Playwright Chromium on arm64, has git, sets `TZ=America/Chicago`. Built and run locally on arm64, then on prod: `POST /api/pipeline/browser-check` launches Chromium 156 inside the production container.
+- [x] Every scheduled task writes a `pipeline_runs` row. Protected manual trigger `POST /api/pipeline/run`. Daily chain at 06:00 Central plus a 15 minute heartbeat.
+- [x] Sandbox employer posting and form at `/sandbox/apply/:token` record submissions (browser-submitted locally: confirmation page, payload and resume file stored).
+- [x] Knowledge base reads dedupe the triplicated rows (133 rows read as 45 on prod). No prod rows deleted. Seed script no longer re-seeds.
+- [x] Deployed (image `86fef3c`, health endpoint reports the same commit), login works on prod.
+
+## Capability agents (Orca worktrees, dispatched 2026-11-01)
+
+- [x] match: `cap-match` worktree, branch `feature/cap-match`
+- [x] apply: `cap-apply`, branch `feature/cap-apply`
+- [x] demos: `cap-demos`, branch `feature/cap-demos`
+- [x] dashboard: `cap-dashboard`, branch `feature/cap-dashboard`
+- [x] learning: `cap-learning`, branch `feature/cap-learning`
 
 ## Capability A: match on skills and total compensation
 
@@ -84,6 +92,12 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [ ] Pass 3: same four checks.
 
 ## Found during the run
+
+- The Anthropic key answers only on `claude-haiku-4-5`. Every other model (Opus 5.5, Sonnet 5.5, Haiku 5.5, Opus 4.x, Sonnet 4.6) returns 429 with the message "Error", although `models.list` shows them. Likely a zero rate or spend limit on the workspace.
+- Coolify passes every env var into the Docker build as a build ARG, so secrets like `NUXT_SESSION_PASSWORD` reach the build stage (Docker warns about it). They are not baked into the final image layers.
+- The first foundation deploy failed: Nitro's trace leaves `playwright-core/cli.js` out of the build output. Fixed by installing Chromium from the builder's node_modules.
+
+- Coolify never auto-deployed: the app uses the public-repo source and the repo had no webhook. Added a GitHub push webhook to `Devin345458/job-hunter` pointing at Coolify's manual GitHub webhook with a new secret on the Coolify app. Ping returned 200. The resume app has the same setup (no webhook), so "deploys on push" is not true there either.
 
 - Mobile production first paint shows only the full-screen navigation drawer before the app hydrates (layout shift 0.31). Present before this run; found by the peer walk.
 - The mobile bottom nav label "Knowledge Base" wraps to two lines at 390px.
