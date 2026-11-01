@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, count } from 'drizzle-orm'
+import { eq, and, desc, sql, count, inArray } from 'drizzle-orm'
 import { jobs } from '~~/server/db/schema'
 
 export default defineEventHandler(async (event) => {
@@ -6,6 +6,7 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
 
   const status = query.status as string | undefined
+  const source = query.source as string | undefined
   const search = query.search as string | undefined
   const remoteType = query.remoteType as string | undefined
   const minScore = query.minScore ? Number(query.minScore) : undefined
@@ -18,7 +19,13 @@ export default defineEventHandler(async (event) => {
     const conditions = []
 
     if (status) {
-      conditions.push(eq(jobs.status, status))
+      // The jobs page sends several statuses joined by commas.
+      const statuses = status.split(',').map(s => s.trim()).filter(Boolean)
+      conditions.push(statuses.length > 1 ? inArray(jobs.status, statuses) : eq(jobs.status, statuses[0]!))
+    }
+
+    if (source) {
+      conditions.push(eq(jobs.source, source))
     }
 
     if (search) {
