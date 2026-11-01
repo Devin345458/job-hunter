@@ -92,9 +92,12 @@ export async function submitApplication(applicationId: number): Promise<Submissi
   if (app.status !== 'submitting') throw new Error(`Refusing to submit application ${applicationId}: status is ${app.status}, not submitting`)
 
   const job = db.select().from(jobs).where(eq(jobs.id, app.jobId)).get()!
-  // The sandbox is recognized by the job's sandbox flag plus this app's own form URL and token,
-  // never by the ATS label alone (enrichment once relabeled the sandbox job as 'other').
-  const sandbox = (job.isSandbox || job.atsType === 'sandbox') && isOwnSandbox(job.applyUrl)
+  // The sandbox is recognized by the job's sandbox flag plus the URL this submit will actually
+  // open being this app's own form with the secret token, never by the ATS label or the stored
+  // link alone (enrichment once relabeled the sandbox job and pointed its link at the posting).
+  const snapshotForTarget = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
+  const target = snapshotForTarget?.finalUrl || job.applyUrl
+  const sandbox = (job.isSandbox || job.atsType === 'sandbox') && isOwnSandbox(target)
 
   if (requiresAccount(job.atsType)) {
     return manual(`${ATS_LABELS[job.atsType as keyof typeof ATS_LABELS] ?? job.atsType} requires an applicant account, which the pipeline never creates`, false)
@@ -127,7 +130,7 @@ export async function submitApplication(applicationId: number): Promise<Submissi
     }
   }
 
-  const opened = await openForm(snapshot.finalUrl || job.applyUrl, snapshot.atsType)
+  const opened = await openForm(target!, snapshot.atsType)
   try {
     const { page, frame } = opened
     const captchaBefore = await detectCaptcha(page, frame)
