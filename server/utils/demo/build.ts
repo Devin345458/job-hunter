@@ -7,7 +7,7 @@ import { applications, demoProjects, jobs } from '../../db/schema'
 import { AiBudgetExceeded, AiOutputTruncated, aiToolTurn } from '../ai'
 import type { DemoFile, GapAnalysis, GapItem } from '#shared/types/pipeline'
 import { attachDemoToResume } from './attach'
-import { availableToolchains, clipOutput, confinedPath, demoEnv, git, primaryLanguage, runProcess, type Toolchain } from './exec'
+import { availableToolchains, clipOutput, confinedPath, demoEnv, git, primaryLanguage, runProcess, runUntrusted, type Toolchain } from './exec'
 import { gapAnalysisIsStale, refreshGapAnalysis } from './gaps'
 import { countPassingTests, undash } from './resume-site'
 import { demoCost, demoItem, demosForApplication, getAppWithJob, getDemo, githubRepoUrl, updateDemo, type DemoRow } from './store'
@@ -316,7 +316,7 @@ async function runTool(root: string, block: Anthropic.Beta.BetaToolUseBlock, log
         const cwd = input.cwd ? confinedPath(root, String(input.cwd)) : root
         const argv = vetCommand(input.argv, root)
         const timeoutMs = Math.min(600, Math.max(5, Number(input.timeout_seconds) || 180)) * 1000
-        const res = await runProcess(argv, { cwd, env: demoEnv(), timeoutMs })
+        const res = await runUntrusted(argv, { root, cwd, env: demoEnv(), timeoutMs })
         log(`run ${JSON.stringify(input.argv)} -> ${res.timedOut ? 'timed out' : `exit ${res.code}`} (${(res.durationMs / 1000).toFixed(1)}s)`)
         const head = res.timedOut ? `Timed out after ${timeoutMs / 1000}s.` : `Exit code ${res.code}.`
         return { content: `${head}\n${clipOutput(res.output.trim(), RESULT_CHARS) || '(no output)'}`, isError: res.code !== 0 }
@@ -336,7 +336,7 @@ async function runTool(root: string, block: Anthropic.Beta.BetaToolUseBlock, log
         }
         const argv = vetCommand(f.test_command, root)
         log(`finish: harness runs ${JSON.stringify(f.test_command)}`)
-        const res = await runProcess(argv, { cwd: root, env: demoEnv(), timeoutMs: 600_000 })
+        const res = await runUntrusted(argv, { root, cwd: root, env: demoEnv(), timeoutMs: 600_000 })
         const output = res.output.trim()
         log(`finish: tests ${res.timedOut ? 'timed out' : `exit ${res.code}`} (${(res.durationMs / 1000).toFixed(1)}s)`)
         if (res.code !== 0 || res.timedOut) {

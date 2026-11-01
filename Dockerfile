@@ -36,6 +36,9 @@ RUN node /opt/playwright-core/cli.js install --with-deps chromium \
 COPY --from=golang:1.27-bookworm /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:$PATH
 
+# Unprivileged user for model-chosen demo build commands (server/utils/demo/exec.ts).
+RUN useradd --system --uid 10001 --user-group --create-home --shell /usr/sbin/nologin demo
+
 RUN mkdir -p /app/data /app/data/resumes
 
 ENV NODE_ENV=production

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { chownSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { delimiter, dirname, isAbsolute, join, normalize, relative, resolve } from 'node:path'
 
 // Process helpers for the demo builder and publisher. Every command runs without a shell,
@@ -72,11 +72,67 @@ export function gitEnv(extra: Record<string, string> = {}): Record<string, strin
     GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_GLOBAL: '/dev/null',
     GIT_TERMINAL_PROMPT: '0',
+    // The harness runs git as root inside directories the unprivileged demo user owns.
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'safe.directory',
+    GIT_CONFIG_VALUE_0: '*',
     ...extra,
   }
 }
 
-export function runProcess(argv: string[], opts: { cwd: string; env: Record<string, string>; timeoutMs: number }): Promise<RunResult> {
+// ── Privilege drop for model-chosen commands ────────────────
+// The builder lets the model run node, npm, and go, which execute code the model wrote from
+// an untrusted job posting. In the container the server runs as root, so those commands run
+// as an unprivileged user (uid NUXT_DEMO_UID, default 10001, created in the Dockerfile) that
+// owns only its project and cache directories. It cannot read the server's environment
+// (/proc/1/environ holds the API keys), the database, backups, resumes, or screenshots.
+
+let sandboxIdentity: { uid: number; gid: number } | null | undefined
+
+/** uid and gid for untrusted commands, or null when not running as root (local dev). */
+export function untrustedIdentity(): { uid: number; gid: number } | null {
+  if (sandboxIdentity !== undefined) return sandboxIdentity
+  sandboxIdentity = null
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return null
+  const uid = Number(useRuntimeConfig().demoUid) || 10001
+  try {
+    const line = readFileSync('/etc/passwd', 'utf8').split('\n').find(l => l.split(':')[2] === String(uid))
+    if (line) sandboxIdentity = { uid, gid: Number(line.split(':')[3]) }
+  }
+  catch {}
+  if (!sandboxIdentity) console.warn(`[demo] running as root but uid ${uid} does not exist; demo commands are not sandboxed`)
+  return sandboxIdentity
+}
+
+/** Recursively hand a directory to the untrusted user (symlinks are left alone). */
+export function chownTree(dir: string, id: { uid: number; gid: number }) {
+  if (!existsSync(dir)) return
+  const walk = (p: string) => {
+    const st = lstatSync(p)
+    if (st.isSymbolicLink()) return
+    if (st.uid !== id.uid || st.gid !== id.gid) chownSync(p, id.uid, id.gid)
+    if (st.isDirectory()) for (const name of readdirSync(p)) walk(join(p, name))
+  }
+  walk(dir)
+}
+
+/**
+ * Run a model-chosen command inside a demo project. Same as runProcess, but as the
+ * unprivileged demo user when one is configured, after giving that user the project
+ * directory and the build caches.
+ */
+export function runUntrusted(argv: string[], opts: { root: string; cwd: string; env: Record<string, string>; timeoutMs: number }): Promise<RunResult> {
+  const id = untrustedIdentity()
+  if (id) {
+    chownTree(opts.root, id)
+    for (const key of ['HOME', 'TMPDIR', 'npm_config_cache', 'GOPATH', 'GOCACHE']) {
+      if (opts.env[key]) chownTree(opts.env[key]!, id)
+    }
+  }
+  return runProcess(argv, { cwd: opts.cwd, env: opts.env, timeoutMs: opts.timeoutMs, ...(id ? { uid: id.uid, gid: id.gid } : {}) })
+}
+
+export function runProcess(argv: string[], opts: { cwd: string; env: Record<string, string>; timeoutMs: number; uid?: number; gid?: number }): Promise<RunResult> {
   const started = Date.now()
   return new Promise((resolvePromise) => {
     let output = ''
@@ -86,6 +142,7 @@ export function runProcess(argv: string[], opts: { cwd: string; env: Record<stri
       env: opts.env,
       shell: false,
       detached: true,
+      ...(opts.uid !== undefined ? { uid: opts.uid, gid: opts.gid } : {}),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const append = (chunk: Buffer) => {
