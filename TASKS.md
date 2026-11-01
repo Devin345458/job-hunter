@@ -48,13 +48,13 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Capability A: match on skills and total compensation
 
-- [ ] Fix Adzuna query. Report JSearch subscription as blocked.
-- [ ] Add sources whose listings link to real employer application forms (Greenhouse, Lever, Ashby boards).
-- [ ] Enrichment: fetch the full posting, resolve the apply URL, detect the ATS.
-- [ ] Extract salary and benefits from the posting with quotes from the source text.
-- [ ] Total compensation estimate against the floor and preferences in the knowledge base. Ask a question when a preference is missing instead of guessing.
-- [ ] Score = skills fit + compensation fit + learned adjustment, with the breakdown stored and shown.
-- [ ] Verified on prod with listings pulled today.
+- [x] Adzuna fixed (prod run: 38 listings). JSearch reports its missing RapidAPI subscription cleanly (blocked on you).
+- [x] Greenhouse, Lever, and Ashby public boards added for a verified list of remote US employers.
+- [x] Enrichment fetches the full posting, resolves the employer form, detects the ATS (prod: 40 enriched, 26 with a real form).
+- [x] Salary, bonus, equity, and benefits extracted with exact posting quotes; benefits without a stated dollar figure are not valued.
+- [x] Total compensation compared to the floor and target in the knowledge base. Missing floor and health-insurance value become questions.
+- [x] Score = 60% skills + 40% compensation + learned adjustment, breakdown stored, shown on the job page and review card.
+- [x] Verified on prod with listings pulled today (pass 1: 329 found, 40 enriched, 40 scored).
 
 ## Capability B: prepare each application
 
@@ -66,7 +66,7 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [x] Gap analysis per requirement: demo, reframe, ask, or skip. Asks instead of assuming.
 - [x] Demo build in the production image: Go payment webhook receiver, 13 files, all tests pass, about $0.65 on Haiku 4.5. Model-chosen commands run as uid 10001, which cannot read the DB, resumes, or the server env (verified on a real Linux volume).
 - [x] On approve only: publish demo, add resume card, submit. Verified in the production image against local bare repos (sandbox) and the sandbox form: status `submitted`, reference number 1. Real GitHub publish waits on NUXT_GITHUB_TOKEN (see Blocked).
-- [ ] Filled but unsubmitted applications on real employer forms from listings pulled today, on prod.
+- [x] Filled but unsubmitted applications on real employer forms from listings pulled today, on prod (pass 1: CompanyCam, Brilliant, 1Password, AppFolio).
 
 ## Capability C: review dashboard
 
@@ -80,23 +80,29 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [x] Plain questions with one-tap answers; answers write the knowledge base (negative answers too) and refresh every waiting application.
 - [x] Every approve and reject recorded with the reason and a job feature snapshot.
 - [x] Rejection reasons become learned rules (score, exclude from search, boost). Sandbox decisions only make sandbox rules.
-- [ ] Five rejections for one reason visibly move the next day's scores (score history shown).
+- [x] Five rejections for one reason visibly move the next day's scores. Prod proof on sandbox jobs: five Not remote rejections made onsite and hybrid rules of -15; open onsite job 99 to 84, remote job unchanged; score history records the move.
 
 ## Verification passes (at least three)
 
 - [ ] Pass 1: deployed dashboard, every element clicked at desktop and mobile width, console and network clean.
-- [ ] Pass 1: pipeline on today's listings through a filled, unsubmitted application on a real employer form.
-- [ ] Pass 1: submit exercised only against the sandbox form.
-- [ ] Pass 1: scheduled tasks fire in the container (pipeline_runs and docker logs).
+- [x] Pass 1: pipeline:daily on prod, 2026-11-01 10:16: search, enrich, match, prepare. Four real forms filled and not submitted (CompanyCam and 1Password and AppFolio on Ashby, Brilliant on Lever), screenshots served; no files attached; one demo built.
+- [x] Pass 1: answered the two blocking questions and approved the sandbox card in the deployed UI; it reached `submitted` (reference 1) after two fixes (sandbox relabeled by enrichment; sandbox detection now uses the opened URL). Real submits stay off.
+- [x] Pass 1: the 15 minute heartbeat fired on schedule in every deployed container (pipeline_runs host = container id from /api/health).
 - [ ] Pass 2: same four checks.
 - [ ] Pass 3: same four checks.
 
 ## Found during the run
 
+- Enrichment relabeled the sandbox job's ATS and pointed its link at the posting page, so the submit guard treated the sandbox as a real employer and refused (safe failure). Fixed in two places.
+- Question blocking leaked across employers: one shared question row carried whichever form's required flag came first. Now decided per application.
+- Real Greenhouse/Lever/Ashby forms show captchas; approved real applications on those will usually land in Submit by hand with copy buttons.
+- Some generated questions are low value for Devin ("Have you written HTML markup in your web projects?"), and a few Lever labels carry widget text ("Couldn't auto-read resume").
+- Shared question rows keep the context sentence of the first application that asked (CompanyCam's LinkedIn card says the field is optional on the sandbox form). New questions use neutral context.
+
 - Resume PDFs never worked on the deployed app: pdf.ts loaded pdfmake with a dynamic require that the build trace drops. Fixed (66d0052); prod now serves the PDF.
 - Local Docker on macOS fakes file ownership on bind mounts, so permission tests there prove nothing; the privilege tests were rerun on a named volume.
 
-- The Anthropic key answers only on `claude-haiku-4-5`. Every other model (Opus 5.5, Sonnet 5.5, Haiku 5.5, Opus 4.x, Sonnet 4.6) returns 429 with the message "Error", although `models.list` shows them. Likely a zero rate or spend limit on the workspace.
+- The Anthropic key answered only on `claude-haiku-4-5` in the morning (every other model returned 429 "Error"). By 10:34 Central Opus 5.5 answered again, and at 10:34 the account ran out of credit: every Claude call now fails with "Your credit balance is too low".
 - Coolify passes every env var into the Docker build as a build ARG, so secrets like `NUXT_SESSION_PASSWORD` reach the build stage (Docker warns about it). They are not baked into the final image layers.
 - The first foundation deploy failed: Nitro's trace leaves `playwright-core/cli.js` out of the build output. Fixed by installing Chromium from the builder's node_modules.
 
