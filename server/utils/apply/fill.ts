@@ -101,7 +101,8 @@ async function fillCombobox(frame: Frame, loc: Locator, value: string): Promise<
 async function fillOne(frame: Frame, field: FormField, answer: FormAnswer, opts: FillOptions): Promise<{ filled: boolean; error: string | null }> {
   const value = answer.value
   if (field.type === 'file') {
-    if (!opts.attachFiles) return { filled: false, error: 'Not attached in the dry run. Files are attached only after you approve.' }
+    // The dry run never attaches a file; that is the rule working, so it is not an error.
+    if (!opts.attachFiles) return { filled: false, error: null }
     const path = answer.source === 'cover_letter' ? opts.files?.coverLetter : answer.source === 'resume' ? opts.files?.resume : null
     if (!path) return { filled: false, error: 'No file to attach for this field' }
     await frame.locator(field.selector).first().setInputFiles(path, { timeout: ACTION_TIMEOUT })
