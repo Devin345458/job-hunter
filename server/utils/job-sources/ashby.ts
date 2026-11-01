@@ -58,7 +58,11 @@ export const ashbyAdapter: JobSourceAdapter = {
       return (data.jobs ?? []).filter(j => j.isListed !== false).map((j) => {
         const location = j.location?.trim() || undefined
         const secondary = (j.secondaryLocations ?? []).map(s => s.location).filter((l): l is string => !!l)
-        const remote = j.isRemote === true || /remote/i.test(j.workplaceType ?? '') || looksRemote(location, ...secondary)
+        // Ashby sets isRemote on hybrid roles too (Replit: isRemote true, workplaceType Hybrid,
+        // Foster City). workplaceType wins when present; a remote secondary location still counts.
+        const remote = j.workplaceType
+          ? /remote/i.test(j.workplaceType) || looksRemote(...secondary)
+          : j.isRemote === true || looksRemote(location, ...secondary)
         const pay = yearlySalary(j)
         const country = j.address?.postalAddress?.addressCountry
         return {
