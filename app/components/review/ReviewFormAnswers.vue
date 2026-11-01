@@ -88,7 +88,7 @@ function isLong(a: FormAnswer) {
             {{ expanded.has(a.fieldId) ? 'Show less' : 'Show all' }}
           </button>
           <div class="fa__meta">
-            <span>{{ SOURCE[a.source] ?? a.source }}<template v-if="a.sourceDetail"> ({{ a.source === 'knowledge' ? a.sourceDetail.replace(':', ': ') : a.sourceDetail }})</template></span>
+            <span>{{ SOURCE[a.source] ?? a.source }}{{ a.sourceDetail ? ` (${a.source === 'knowledge' ? a.sourceDetail.replace(':', ': ') : a.sourceDetail})` : '' }}</span>
             <span class="fa__conf" :class="`text-${CONF[a.confidence].color}`">{{ CONF[a.confidence].label }}</span>
             <span v-if="a.fillError" class="text-error">Fill error: {{ a.fillError }}</span>
           </div>
@@ -112,7 +112,7 @@ function isLong(a: FormAnswer) {
           <img :src="screenshotUrl" alt="Screenshot of the filled employer form" loading="lazy">
         </button>
         <figcaption>
-          Filled {{ clockTime(filledAt) }}<template v-if="snapshot"> on {{ hostOf(snapshot.finalUrl || snapshot.url) }}</template>. Not submitted.
+          Filled {{ clockTime(filledAt) }}{{ snapshot ? ` on ${hostOf(snapshot.finalUrl || snapshot.url)}` : '' }}. Not submitted.
         </figcaption>
       </figure>
     </div>

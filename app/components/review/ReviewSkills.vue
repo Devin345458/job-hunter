@@ -45,7 +45,7 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
         <div class="skills__req-body">
           <span class="skills__req-text">{{ r.text }}</span>
           <span class="skills__req-meta">
-            {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}<template v-if="r.evidence"> · from {{ r.evidence.replace(':', ': ') }}</template>
+            {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · from ${r.evidence.replace(':', ': ')}` : '' }}
           </span>
         </div>
       </li>

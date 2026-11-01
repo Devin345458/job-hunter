@@ -52,7 +52,7 @@ function blockingCount(item: ReviewItem) {
             <span class="ql__main">
               <span class="ql__title">{{ item.job.title }}</span>
               <span class="ql__sub">
-                {{ item.job.company }}<template v-if="pay(item)"> · {{ pay(item) }}</template>
+                {{ item.job.company }}{{ pay(item) ? ` · ${pay(item)}` : '' }}
               </span>
               <span v-if="s.key === 'decide' && blockingCount(item)" class="ql__flag ql__flag--warning">
                 <v-icon icon="mdi-comment-question-outline" size="13" />
@@ -61,7 +61,7 @@ function blockingCount(item: ReviewItem) {
               <span v-else-if="s.key !== 'decide'" class="ql__flag" :class="`ql__flag--${statusMeta(item.status).color}`">
                 <v-progress-circular v-if="s.key === 'sending'" indeterminate size="11" width="2" />
                 <v-icon v-else :icon="statusMeta(item.status).icon" size="13" />
-                {{ statusMeta(item.status).label }}<template v-if="item.status === 'submitted' && item.submission"> {{ clockTime(item.submission.submittedAt) }}</template>
+                {{ statusMeta(item.status).label }}{{ item.status === 'submitted' && item.submission ? ` ${clockTime(item.submission.submittedAt)}` : '' }}
               </span>
             </span>
             <span v-if="item.isSandbox" class="ql__sandbox" title="Sandbox or fixture data">S</span>

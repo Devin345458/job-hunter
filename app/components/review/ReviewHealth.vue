@@ -65,7 +65,7 @@ const inlineSummary = computed(() => {
           <div class="hl__text">
             <div class="hl__strong">{{ runLabel }}</div>
             <div v-if="run" class="hl__muted">
-              {{ clockTime(run.startedAt) }}<template v-if="run.host"> on {{ run.host }}</template>
+              {{ clockTime(run.startedAt) }}{{ run.host ? ` on ${run.host}` : '' }}
             </div>
             <div v-if="runError" class="hl__error-line">{{ runError }}</div>
           </div>

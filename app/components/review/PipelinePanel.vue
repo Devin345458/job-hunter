@@ -154,7 +154,7 @@ onMounted(() => {
         </button>
         <v-expand-transition>
           <div v-show="openRun === r.id" class="pp__run-detail">
-            <div>Task {{ r.task }}, started by {{ r.trigger }}<template v-if="r.host"> on host {{ r.host }}</template>.</div>
+            <div>Task {{ r.task }}, started by {{ r.trigger }}{{ r.host ? ` on host ${r.host}` : '' }}.</div>
             <div v-if="statsLine(r)">Result: {{ statsLine(r) }}</div>
             <pre v-if="r.error" class="pp__run-error">{{ r.error }}</pre>
           </div>
