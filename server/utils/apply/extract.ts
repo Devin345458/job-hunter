@@ -68,15 +68,17 @@ export function extractFieldsInPage(): RawField[] {
   const containerLabel = (el: Element, exclude: Element[]): string => {
     let cur: Element | null = el.parentElement
     for (let depth = 0; cur && depth < 7; depth++, cur = cur.parentElement) {
-      const cands = Array.from(cur.querySelectorAll('legend, label, [class*="label" i], [class*="title" i], [class*="question" i] > p, h3, h4, h5, p, span'))
-      let nearest = ''
-      for (const c of cands) {
-        if (exclude.some(x => c === x || c.contains(x))) continue
-        if (!(c.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue
-        const t = clean(textOf(c).split('\n')[0] || '')
-        if (t && !GENERIC.test(t) && t.length < 400) nearest = textOf(c)
+      for (const selector of ['legend, label, [class*="label" i], [class*="title" i], h3, h4, h5', '[class*="question" i] > p, p, span']) {
+        const cands = Array.from(cur.querySelectorAll(selector))
+        let nearest = ''
+        for (const c of cands) {
+          if (exclude.some(x => c === x || c.contains(x))) continue
+          if (!(c.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue
+          const t = clean(textOf(c).split('\n')[0] || '')
+          if (t && !GENERIC.test(t) && t.length < 400) nearest = textOf(c)
+        }
+        if (nearest) return nearest
       }
-      if (nearest) return nearest
     }
     return ''
   }
@@ -89,7 +91,11 @@ export function extractFieldsInPage(): RawField[] {
     if (!clean(t) || GENERIC.test(clean(t))) t = el.getAttribute('aria-label') || t
     if (!clean(t) || GENERIC.test(clean(t))) {
       const wrap = el.closest('label')
-      if (wrap) t = textOf(wrap)
+      if (wrap) {
+        const copy = wrap.cloneNode(true) as Element
+        copy.querySelectorAll('select, option, input, textarea, button, [class*="default-label" i], [class*="filename" i]').forEach(n => n.remove())
+        t = (copy.textContent || '').replace(/\s+/g, ' ')
+      }
     }
     if (!clean(t) || GENERIC.test(clean(t))) t = containerLabel(el, [el]) || t
     if (!clean(t)) t = el.getAttribute('placeholder') || el.getAttribute('name') || ''
@@ -209,11 +215,13 @@ export function extractFieldsInPage(): RawField[] {
       const id = (el.getAttribute('id') || '') + (el.getAttribute('name') || '')
       // An unlabeled file input at the top of a form is the ATS's "autofill from resume" box.
       if (!id && !clean(textOf(labelElFor(el)))) continue
-      push({ selector: selectorOf(el), label: clean(label), type: 'file', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' })
+      const fileLabel = clean(label).replace(/\s+(attach|upload|choose|drop)\b.*$/i, '').trim() || clean(label)
+      push({ selector: selectorOf(el), label: fileLabel, type: 'file', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' })
       continue
     }
 
     if (!visible(el)) continue
+    if (el.getAttribute('aria-hidden') === 'true' || (el.getAttribute('tabindex') === '-1' && getComputedStyle(el).opacity === '0')) continue
     if (type === 'search' && role !== 'combobox') continue
     const label = labelOf(el)
     if (!clean(label)) continue
