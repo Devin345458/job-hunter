@@ -78,14 +78,19 @@ const US_NAMES = /\b(united states|north america|americas|namer|amer)\b/i
 const NON_US_AMERICA = /\b(latin|south|central)\s+america\b/i
 const US_STATE_ABBR_AFTER_COMMA = new RegExp(`(,|\\s-|\\()\\s*(${US_ABBR})\\b`)
 const US_STATE_NAME = new RegExp(`\\b(${US_STATES.join('|')})\\b`, 'i')
-const US_CITY = /\b(san francisco|new york city|nyc|seattle|austin|boston|chicago|denver|los angeles|atlanta|bay area)\b/i
+const US_CITY = /\b(san francisco|new york city|nyc|seattle|austin|boston|chicago|denver|los angeles|atlanta|bay area|santa clara|silicon valley)\b/i
+// Adzuna writes US locations as "Buffalo, Erie County" with no state.
+const US_COUNTY = /\b[A-Z][a-z]+(\s[A-Z][a-z]+)?\sCounty\b/
 
 function segmentIsUs(seg: string): boolean {
   if (US_ABBREVIATION.test(seg)) return true
   if (US_NAMES.test(seg)) return true
   if (/\bamerica\b/i.test(seg) && !NON_US_AMERICA.test(seg)) return true
-  return US_STATE_ABBR_AFTER_COMMA.test(seg) || US_STATE_NAME.test(seg) || US_CITY.test(seg)
+  return US_STATE_ABBR_AFTER_COMMA.test(seg) || US_STATE_NAME.test(seg) || US_CITY.test(seg) || US_COUNTY.test(seg)
 }
+
+/** Sources whose query only returns US listings (Adzuna's /us/ endpoint, Jobicy with geo=usa). */
+export const US_ONLY_SOURCES = new Set(['adzuna', 'jobicy'])
 
 const WORLDWIDE_WORDS = new Set(['remote', 'fully', 'anywhere', 'worldwide', 'global', 'globally', 'distributed', 'work', 'from', 'home', 'wfh', 'in', 'the', 'world', 'earth', 'any', 'location', 'locations', 'flexible'])
 

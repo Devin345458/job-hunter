@@ -5,7 +5,7 @@ import { AiBudgetExceeded, aiSpentToday } from '../ai'
 import { buildCompensation, totalMidpoint } from '../compensation'
 import { type KnowledgeEntry, loadKnowledge } from '../knowledge'
 import { nowSql, parseJson } from '../review'
-import { isSoftwareRoleTitle, matchedKeywords, matchesAnyTerm, termRegex, usEligibility } from '../job-sources/filters'
+import { isSoftwareRoleTitle, matchedKeywords, matchesAnyTerm, termRegex, US_ONLY_SOURCES, usEligibility } from '../job-sources/filters'
 import { mapPool } from '../job-sources/http'
 import { BoardCache } from './ats'
 import { extractPosting } from './extract'
@@ -53,7 +53,7 @@ export function prefilter(job: JobRow, ctx: PrefilterContext): { skip: string | 
   const keywordHits = matchedKeywords(job.title, ctx.keywords)
   const software = isSoftwareRoleTitle(job.title)
   if (!software && !keywordHits.length) return { skip: 'not a software engineering role', score: 0, skillHits: [] }
-  if (!job.isSandbox && usEligibility([job.location]) === 'non_us') return { skip: `the location "${job.location}" is outside the United States`, score: 0, skillHits: [] }
+  if (!job.isSandbox && !US_ONLY_SOURCES.has(job.source) && usEligibility([job.location]) === 'non_us') return { skip: `the location "${job.location}" is outside the United States`, score: 0, skillHits: [] }
   const text = `${job.title}\n${(job.description ?? '').replace(/<[^>]+>/g, ' ')}`
   const skillHits = ctx.skillTerms.filter(t => termRegex(t).test(text))
   const score = (keywordHits.length ? 3 : 0)
