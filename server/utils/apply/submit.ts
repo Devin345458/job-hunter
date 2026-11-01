@@ -108,7 +108,7 @@ export async function submitApplication(applicationId: number): Promise<Submissi
   const stopping = snapshot.blockers.find(b => /^(login wall|closed posting|account required|no form|file upload)/.test(b))
   if (stopping) return manual(stopping, sandbox)
   // Optional fields waiting on a non-blocking question are left empty; anything blocking refuses.
-  const blocking = openBlockingQuestionIds(answers)
+  const blocking = openBlockingQuestionIds(answers, snapshot)
   const missingRequired = answers.filter(a => a.value === null && snapshot.fields.find(f => f.id === a.fieldId)?.required && snapshot.fields.find(f => f.id === a.fieldId)?.type !== 'file')
   if (blocking.length > 0 || missingRequired.length > 0) {
     throw new Error(`Refusing to submit: ${blocking.length} blocking question(s) open, ${missingRequired.length} required field(s) without an answer${missingRequired.length ? ` (${missingRequired.map(a => a.label).join('; ')})` : ''}`)

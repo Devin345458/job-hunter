@@ -149,7 +149,7 @@ export function storeFormRun(applicationId: number, run: FormRunResult) {
     setApplicationStatus(applicationId, 'needs_manual', `Apply by hand: ${run.manualReason}`, values)
     return 'needs_manual' as const
   }
-  const blocking = openBlockingQuestionIds(run.answers)
+  const blocking = openBlockingQuestionIds(run.answers, run.snapshot)
   if (blocking.length > 0) {
     setApplicationStatus(applicationId, 'needs_input', `Waiting on ${blocking.length} answer${blocking.length === 1 ? '' : 's'} from you. ${summarize(run.snapshot!, run.answers)}`, values)
     return 'needs_input' as const

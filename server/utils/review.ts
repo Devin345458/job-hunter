@@ -149,7 +149,21 @@ export function referencedQuestionIds(app: AppRow): number[] {
  */
 function openQuestionsFor(app: AppRow, pending: QuestionRow[]): QuestionRow[] {
   const refs = new Set(referencedQuestionIds(app))
-  return pending.filter(q => q.applicationId === app.id || refs.has(q.id))
+  // Blocking is per application: a question blocks this one only when one of its own required
+  // form fields waits on it. A question this application asked that no field references keeps
+  // the row's flag. Another employer's required field never blocks this application.
+  const snapshot = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
+  const required = new Set((snapshot?.fields ?? []).filter(f => f.required).map(f => f.id))
+  const answers = parseJson<FormAnswer[]>(app.answersJson, [])
+  return pending
+    .filter(q => q.applicationId === app.id || refs.has(q.id))
+    .map((q) => {
+      const fields = answers.filter(a => a.needsQuestionId === q.id)
+      const blocking = fields.length > 0
+        ? fields.some(a => required.has(a.fieldId))
+        : q.applicationId === app.id && q.blocking
+      return { ...q, blocking }
+    })
 }
 
 /** Review items for applications in the given statuses, best score first. */
