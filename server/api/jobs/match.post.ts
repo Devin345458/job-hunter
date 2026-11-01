@@ -1,71 +1,26 @@
-import { eq, sql, isNull } from 'drizzle-orm'
+import { isNull } from 'drizzle-orm'
 import { jobs } from '~~/server/db/schema'
-import { scoreJobMatch } from '~~/server/utils/ai'
+import { enrichJobs } from '~~/server/utils/enrich'
+import { scoreJobs } from '~~/server/utils/scoring'
 
+// Score jobs from the UI. With jobIds: enrich any of them that are not enriched yet, then score
+// them. Without: the same work as the jobs:match task, capped so the request stays short.
 export default defineEventHandler(async (event) => {
-  const db = useDb()
-  const body = await readBody(event)
+  const body = await readBody<{ jobIds?: number[] }>(event).catch(() => null)
+  const jobIds = Array.isArray(body?.jobIds) ? body!.jobIds.map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 20) : []
 
-  try {
-    const entries = loadKnowledge()
-
-    if (entries.length === 0) {
-      throw createError({
-        statusCode: 400,
-        statusMessage: 'No knowledge base entries found. Add your profile information first.',
-      })
-    }
-
-    const knowledgeBase = knowledgeMap(entries)
-
-    // Get jobs to score
-    let jobsToScore
-    if (body?.jobIds && Array.isArray(body.jobIds) && body.jobIds.length > 0) {
-      jobsToScore = await db
-        .select()
-        .from(jobs)
-        .where(sql`${jobs.id} IN (${sql.join(body.jobIds.map((id: number) => sql`${id}`), sql`, `)})`)
-    } else {
-      // Score all unscored jobs
-      jobsToScore = await db
-        .select()
-        .from(jobs)
-        .where(isNull(jobs.matchScore))
-    }
-
-    if (jobsToScore.length === 0) {
-      return { scored: 0 }
-    }
-
-    let scoredCount = 0
-    for (const job of jobsToScore) {
-      try {
-        const result = await scoreJobMatch(
-          job.description || `${job.title} at ${job.company}`,
-          knowledgeBase,
-        )
-
-        await db
-          .update(jobs)
-          .set({
-            matchScore: result.score,
-            matchReasoning: result.reasoning,
-          })
-          .where(eq(jobs.id, job.id))
-
-        scoredCount++
-      } catch (err) {
-        console.error(`Failed to score job ${job.id}:`, err)
-        // Continue with next job
-      }
-    }
-
-    return { scored: scoredCount }
-  } catch (error: any) {
-    if (error.statusCode) throw error
-    throw createError({
-      statusCode: 500,
-      statusMessage: 'Failed to score jobs',
-    })
+  if (!loadKnowledge().length) {
+    throw createError({ statusCode: 400, statusMessage: 'No knowledge base entries found. Add your profile information first.' })
   }
+
+  if (jobIds.length) {
+    const unenriched = useDb().select({ id: jobs.id, enrichedAt: jobs.enrichedAt }).from(jobs).where(isNull(jobs.enrichedAt)).all()
+      .filter(j => jobIds.includes(j.id)).map(j => j.id)
+    if (unenriched.length) await enrichJobs({ jobIds: unenriched })
+    const stats = await scoreJobs({ jobIds })
+    return { scored: stats.scored, stats }
+  }
+
+  const stats = await scoreJobs({ limit: 15 })
+  return { scored: stats.scored, stats }
 })
