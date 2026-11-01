@@ -40,7 +40,9 @@ export async function runApproval(applicationId: number): Promise<void> {
     try {
       const result = await submitApplication(applicationId)
       setApplicationStatus(applicationId, result.method === 'manual' ? 'needs_manual' : 'submitted',
-        result.method === 'manual' ? 'Ready for you to submit by hand' : `Submitted ${result.sandbox ? 'to the sandbox form' : ''}`.trim(),
+        result.method === 'manual'
+          ? `Ready for you to submit by hand${result.manualReason ? `: ${result.manualReason}` : ''}`
+          : `Submitted ${result.sandbox ? 'to the sandbox form' : ''}`.trim(),
         { submissionJson: JSON.stringify(result), submittedAt: result.submittedAt, submitError: null })
     }
     catch (e: any) {
