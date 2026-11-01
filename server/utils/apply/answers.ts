@@ -325,17 +325,44 @@ export async function mapToOptions(items: Array<{ field: FormField; fact: string
   return out
 }
 
+// status, source, and confidence are plain strings normalized in code: Haiku 4.5 (the only model
+// the production key reaches) sometimes writes a label outside an enum, and a strict enum made the
+// whole call fail to parse. A stray label now costs one answer at most, never the whole form.
 const FreeSchema = z.object({
   answers: z.array(z.object({
     fieldId: z.string(),
-    status: z.enum(['answered', 'unknown', 'leave_blank']),
+    status: z.string().describe('"answered", "unknown", or "leave_blank"'),
     value: z.string().nullable().describe('select/radio: one option copied exactly. checkbox: "true" or "false". checkbox_group: options copied exactly, joined with " | ". Text: the answer.'),
-    source: z.enum(['knowledge', 'resume', 'cover_letter', 'generated']),
+    source: z.string().describe('"knowledge", "resume", "cover_letter", or "generated"'),
     sourceDetail: z.string().nullable().describe('Knowledge base key such as "skill/PHP", or a short note on where the answer came from'),
-    confidence: z.enum(['high', 'medium', 'low']),
+    confidence: z.string().describe('"high", "medium", or "low"'),
     questionForDevin: z.string().nullable().describe('When status is unknown: one plain question Devin can answer in a tap or a sentence'),
   })),
 })
+
+type FreeStatus = 'answered' | 'unknown' | 'leave_blank'
+type FreeSource = 'knowledge' | 'resume' | 'cover_letter' | 'generated'
+
+function normStatus(s: string): FreeStatus {
+  const v = s.toLowerCase()
+  if (/blank|skip|leave/.test(v)) return 'leave_blank'
+  if (/^answer/.test(v)) return 'answered'
+  return 'unknown'
+}
+
+/** Anything that is not clearly the knowledge base or the resume counts as written by the pipeline. */
+function normSource(s: string): FreeSource {
+  const v = s.toLowerCase()
+  if (v.includes('knowledge')) return 'knowledge'
+  if (v.includes('resume')) return 'resume'
+  if (v.includes('cover')) return 'cover_letter'
+  return 'generated'
+}
+
+function normConfidence(s: string): FormAnswer['confidence'] {
+  const v = s.toLowerCase()
+  return v === 'high' || v === 'low' ? v : 'medium'
+}
 
 const FREE_SYSTEM = `You fill in a job application form for Devin Hollister-Graham.
 Facts about Devin may come ONLY from the KNOWLEDGE BASE, the TAILORED RESUME, the COVER LETTER, and the KNOWN FACTS. Facts about the employer may come only from the POSTING.
@@ -521,7 +548,8 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
     const toVerify: Array<{ field: FormField; a: FormAnswer; sentences: string[] }> = []
 
     for (const field of free) {
-      const r = res.answers.find(x => x.fieldId === field.id)
+      const raw = res.answers.find(x => x.fieldId === field.id)
+      const r = raw ? { ...raw, status: normStatus(raw.status), source: normSource(raw.source), confidence: normConfidence(raw.confidence) } : undefined
       const unknown = (why: string | null) => field.required
         ? askFor(ctx, field, ats, formFieldQuestion(field, r?.questionForDevin ?? null))
         : answer(field, { value: null, source: 'skipped', sourceDetail: why ?? 'Optional, and the knowledge base has no answer', confidence: 'low' })

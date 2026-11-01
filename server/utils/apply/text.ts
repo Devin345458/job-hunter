@@ -17,13 +17,18 @@ export function periodText(period: string): string {
   return period.replace(/\s+[-\u2013\u2014]\s+/g, ' to ').trim()
 }
 
-/** Every number written in the text, with thousands separators and currency removed. */
+/**
+ * Every number written in the text, with thousands separators and currency removed, plus
+ * magnitude words ("hundreds of millions" yields "hundred" and "million"), which carry an
+ * invented figure as surely as digits do.
+ */
 export function numbersIn(text: string): string[] {
   const out: string[] = []
   for (const m of text.matchAll(/\d[\d,]*(?:\.\d+)?/g)) {
     const n = m[0].replace(/,/g, '').replace(/\.0+$/, '')
     if (n) out.push(n)
   }
+  for (const m of text.toLowerCase().matchAll(/\b(hundred|thousand|million|billion|trillion|dozen)s?\b/g)) out.push(m[1]!)
   return out
 }
 

@@ -137,7 +137,8 @@ export function releaseStaleQuestions(applicationId: number, answers: FormAnswer
 
 /** Saves a dry run's results and sets the application's status from them. */
 export function storeFormRun(applicationId: number, run: FormRunResult) {
-  releaseStaleQuestions(applicationId, run.answers)
+  // Only a run that read the form knows which questions still apply; a failed run releases nothing.
+  if (run.snapshot && run.snapshot.fields.length > 0) releaseStaleQuestions(applicationId, run.answers)
   const values: Partial<AppRow> = {
     formSnapshotJson: run.snapshot ? JSON.stringify(run.snapshot) : null,
     answersJson: JSON.stringify(run.answers),
