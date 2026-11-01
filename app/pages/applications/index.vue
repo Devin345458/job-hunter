@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { ApplicationStatus, ApplicationWithJob } from '~/composables/useApplications'
+import type { ApplicationWithJob } from '~/composables/useApplications'
+import type { ApplicationStatus } from '#shared/types/pipeline'
 
 definePageMeta({
   layout: 'default',
@@ -20,7 +21,7 @@ const statusTabs: { title: string; value: string }[] = [
   { title: 'Rejected', value: 'rejected' },
 ]
 
-const statusColors: Record<ApplicationStatus, string> = {
+const statusColors: Partial<Record<ApplicationStatus, string>> = {
   draft: 'grey',
   ready: 'info',
   submitted: 'primary',
@@ -30,7 +31,7 @@ const statusColors: Record<ApplicationStatus, string> = {
   offer: 'success',
 }
 
-const statusLabels: Record<ApplicationStatus, string> = {
+const statusLabels: Partial<Record<ApplicationStatus, string>> = {
   draft: 'Draft',
   ready: 'Ready',
   submitted: 'Submitted',

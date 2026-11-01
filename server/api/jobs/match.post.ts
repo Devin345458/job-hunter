@@ -1,5 +1,5 @@
 import { eq, sql, isNull } from 'drizzle-orm'
-import { jobs, knowledgeEntries } from '~~/server/db/schema'
+import { jobs } from '~~/server/db/schema'
 import { scoreJobMatch } from '~~/server/utils/ai'
 
 export default defineEventHandler(async (event) => {
@@ -7,10 +7,7 @@ export default defineEventHandler(async (event) => {
   const body = await readBody(event)
 
   try {
-    // Build knowledge base from all entries
-    const entries = await db
-      .select()
-      .from(knowledgeEntries)
+    const entries = loadKnowledge()
 
     if (entries.length === 0) {
       throw createError({
@@ -19,10 +16,7 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    const knowledgeBase: Record<string, string> = {}
-    for (const entry of entries) {
-      knowledgeBase[`${entry.category}/${entry.key}`] = entry.value
-    }
+    const knowledgeBase = knowledgeMap(entries)
 
     // Get jobs to score
     let jobsToScore

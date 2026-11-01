@@ -74,11 +74,14 @@ export default defineNuxtConfig({
     experimental: {
       tasks: true,
     },
+    // Cron times are in the container's TZ (America/Chicago, set in the Dockerfile).
+    // One daily chain runs every step in order: learn, search, enrich, match, prepare, demos.
     scheduledTasks: {
-      // Daily job search at 6 AM
-      '0 6 * * *': ['jobs:search'],
-      // Score new jobs at 7 AM (after search completes)
-      '0 7 * * *': ['jobs:match'],
+      '0 6 * * *': ['pipeline:daily'],
+    },
+    externals: {
+      // Playwright resolves its browser binaries and driver files at runtime; bundling breaks that.
+      external: ['playwright', 'playwright-core'],
     },
   },
 
@@ -88,6 +91,22 @@ export default defineNuxtConfig({
     adzunaAppId: '',
     adzunaApiKey: '',
     databasePath: './data/job-hunter.db',
+    // Login (NUXT_AUTH_PASSWORD_HASH from scripts/hash-password.mjs, NUXT_SESSION_PASSWORD 32+ random chars)
+    authPasswordHash: '',
+    sessionPassword: '',
+    // Throwaway employer form at /sandbox/apply/<token> (NUXT_SANDBOX_TOKEN, 16+ chars)
+    sandboxToken: '',
+    // Absolute origin used in links the app generates, e.g. https://job-hunter.devinsmini.com
+    publicBaseUrl: '',
+    // Claude models. The fallback is used whenever the key cannot call the primary.
+    aiModel: 'claude-opus-5-5',
+    aiFallbackModel: 'claude-haiku-4-5',
+    // Hard stop for Claude spend per local day, in dollars
+    dailyAiBudgetUsd: '10',
+    // Token with push access to the demo and resume repos (used only on approve)
+    githubToken: '',
+    githubOwner: 'Devin345458',
+    resumeRepo: 'Devin345458/resume',
   },
 
   app: {

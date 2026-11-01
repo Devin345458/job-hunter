@@ -2,7 +2,7 @@ import { createRequire } from 'module'
 import { writeFileSync, existsSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
 import type { TDocumentDefinitions, Content } from 'pdfmake/interfaces'
-import type { TailoredResume } from './ai'
+import type { TailoredResume } from '#shared/types/pipeline'
 
 const require = createRequire(import.meta.url)
 

@@ -34,7 +34,14 @@
 ## Environment Variables
 - Required:
   - `NUXT_ANTHROPIC_API_KEY`
+  - `NUXT_AUTH_PASSWORD_HASH` (from `node scripts/hash-password.mjs`; without it every route stays locked)
+  - `NUXT_SESSION_PASSWORD` (32+ random characters)
 - Optional:
+  - `NUXT_SANDBOX_TOKEN` (16+ chars; enables the throwaway employer form at `/sandbox/apply/<token>`)
+  - `NUXT_PUBLIC_BASE_URL` (e.g. `https://job-hunter.devinsmini.com`)
+  - `NUXT_AI_MODEL` (default `claude-opus-5-5`), `NUXT_AI_FALLBACK_MODEL` (default `claude-haiku-4-5`)
+  - `NUXT_DAILY_AI_BUDGET_USD` (default 10)
+  - `NUXT_GITHUB_TOKEN` (push access for demo repos and the resume site; used only on approve)
   - `NUXT_JSEARCH_API_KEY`
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`
@@ -54,10 +61,23 @@
 - MDI icons load through Vuetify's icon set; the MDI font ships in the built CSS. `nuxt.config.ts` computes `mdiCssPath` and two related constants that nothing uses yet. Dev still logs a 404 for `/_nuxt/@mdi/font/css/materialdesignicons.css`; production does not.
 - The mobile app bar and bottom navigation bind `model-value`/`active` to `!isDesktop`. A `d-md-none` class alone hides them but leaves their 64px and 56px reserved in Vuetify's layout.
 
+## Pipeline architecture (added 2026-11-01)
+- Login: `server/middleware/00.auth.ts` gates every page and `/api/*` route. Public: `/login`, `/api/auth/*`, `/api/health`, build assets, and the sandbox form (token-checked).
+- Shared contract: `shared/types/pipeline.ts` defines every JSON column shape and the `ReviewItem` the dashboard reads. Change it first.
+- Data model: migration `0001_pipeline_learning_demos` adds job enrichment and scoring columns, application pipeline columns, and the tables `decisions`, `learned_rules`, `demo_projects`, `pipeline_runs`, `score_history`, `sandbox_submissions`, `ai_calls`.
+- Claude calls go through `aiStructured()` / `aiText()` in `server/utils/ai.ts`: structured outputs, model fallback, cost logging to `ai_calls`, daily budget.
+- Tasks: `pipeline:daily` (06:00 America/Chicago) runs `learn:daily`, `jobs:search`, `jobs:enrich`, `jobs:match`, `applications:prepare`, `demos:build` in order. Every run writes `pipeline_runs`. `POST /api/pipeline/run {task}` triggers one by hand.
+- Review: `GET /api/review/queue`, `GET /api/review/:id`, `POST /api/review/:id/approve`, `POST /api/review/:id/reject {reasonCode, reasonText}`. Approve is the only path to `runApproval()` in `server/utils/approval.ts`, which is the only caller of `publishDemo()` and `submitApplication()`.
+- Files the app writes (resumes, screenshots, demo repos, sandbox uploads) go under `dataDir()`, next to the database, so they land on the persistent volume.
+- Browser: `launchBrowser()` / `newBrowserContext()` in `server/utils/browser.ts`. The Docker image installs Chromium at the bundled Playwright version.
+
 ## API and Data Safety
 - Do not commit API keys or private profile data.
 - Treat seeded resume/profile content as user-owned data; avoid overwriting without intent.
 - Keep migrations additive and reversible where practical.
+- Never submit an employer form, create an employer account, push to the resume repo or a public demo repo, outside the approve path.
+- Dry-run form fills never attach files; uploads happen only inside the approved submit.
+- The production knowledge base holds every seeded row three times. Reads dedupe with `loadKnowledge()`; nothing deletes rows.
 
 ## Validation Checklist (before shipping)
 - `npm run build` succeeds.

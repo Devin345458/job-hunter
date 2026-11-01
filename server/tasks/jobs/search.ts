@@ -24,7 +24,13 @@ export default defineTask({
     name: 'jobs:search',
     description: 'Daily job search across all configured sources',
   },
-  async run() {
+  async run({ payload }) {
+    const outcome = await withRun('jobs:search', triggerOf(payload), async () => searchJobs())
+    return { result: outcome }
+  },
+})
+
+async function searchJobs() {
     const db = useDb()
     console.log('[jobs:search] Starting daily job search...')
 
@@ -33,7 +39,7 @@ export default defineTask({
 
     if (configs.length === 0) {
       console.log('[jobs:search] No active search configs found')
-      return { result: { found: 0, new: 0 } }
+      return { found: 0, new: 0 }
     }
 
     let totalFound = 0
@@ -111,6 +117,5 @@ export default defineTask({
     }
 
     console.log(`[jobs:search] Complete. Found: ${totalFound}, New: ${totalNew}`)
-    return { result: { found: totalFound, new: totalNew } }
-  },
-})
+    return { found: totalFound, new: totalNew }
+}

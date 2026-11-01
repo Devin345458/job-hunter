@@ -21,6 +21,12 @@ const db = drizzle(sqlite)
 // Run migrations first
 migrate(db, { migrationsFolder: './server/db/migrations' })
 
+const existing = (sqlite.prepare('select count(*) as n from knowledge_entries').get() as { n: number }).n
+if (existing > 0) {
+  console.log(`Knowledge base already has ${existing} rows. Not seeding again, so nothing is duplicated or overwritten.`)
+  process.exit(0)
+}
+
 console.log('Database migrated. Seeding knowledge base...\n')
 
 const entries = [

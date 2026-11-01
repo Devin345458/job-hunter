@@ -4,14 +4,9 @@ import type { applications, jobs } from '~~/server/db/schema'
 export type Application = InferSelectModel<typeof applications>
 export type ApplicationWithJob = Application & { job: InferSelectModel<typeof jobs> }
 
-export type ApplicationStatus =
-  | 'draft'
-  | 'ready'
-  | 'submitted'
-  | 'response_received'
-  | 'interviewing'
-  | 'rejected'
-  | 'offer'
+// The full status list lives in shared/types/pipeline.ts.
+import type { ApplicationStatus } from '#shared/types/pipeline'
+
 
 export interface ApplicationFilters {
   status?: ApplicationStatus | ApplicationStatus[]

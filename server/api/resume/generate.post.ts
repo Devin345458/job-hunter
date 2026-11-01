@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { applications, jobs, knowledgeEntries } from '~~/server/db/schema'
+import { applications, jobs } from '~~/server/db/schema'
 import { tailorResume } from '~~/server/utils/ai'
 
 export default defineEventHandler(async (event) => {
@@ -44,15 +44,9 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    // Fetch all knowledge entries and format as key-value map
-    const entries = await db
-      .select()
-      .from(knowledgeEntries)
+    const entries = loadKnowledge()
 
-    const knowledgeBase: Record<string, string> = {}
-    for (const entry of entries) {
-      knowledgeBase[`${entry.category}/${entry.key}`] = entry.value
-    }
+    const knowledgeBase = knowledgeMap(entries)
 
     // Generate tailored resume
     const tailored = await tailorResume(

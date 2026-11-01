@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm'
-import { applications, jobs, knowledgeEntries, questions } from '~~/server/db/schema'
+import { applications, jobs, questions } from '~~/server/db/schema'
 import { tailorResume } from '~~/server/utils/ai'
 import { saveResumePdf } from '~~/server/utils/pdf'
 
@@ -43,15 +43,9 @@ export default defineEventHandler(async (event) => {
       })
     }
 
-    // Fetch all knowledge entries and format as key-value map
-    const entries = await db
-      .select()
-      .from(knowledgeEntries)
+    const entries = loadKnowledge()
 
-    const knowledgeBase: Record<string, string> = {}
-    for (const entry of entries) {
-      knowledgeBase[`${entry.category}/${entry.key}`] = entry.value
-    }
+    const knowledgeBase = knowledgeMap(entries)
 
     // Tailor the resume via AI
     const tailored = await tailorResume(
@@ -92,14 +86,9 @@ export default defineEventHandler(async (event) => {
     }
 
     // Generate the PDF immediately
-    const candidateName = knowledgeBase['profile/Full Name'] || knowledgeBase['profile/name'] || 'Candidate'
-    const contactInfo = {
-      email: knowledgeBase['profile/Email'] || undefined,
-      phone: knowledgeBase['profile/Phone'] || undefined,
-      github: knowledgeBase['profile/GitHub'] || undefined,
-    }
+    const { name: candidateName, contact: contactInfo } = candidateContact(entries)
 
-    const pdfPath = `./data/resumes/resume-${newApplication.id}.pdf`
+    const pdfPath = dataPath('resumes', `resume-${newApplication.id}.pdf`)
     await saveResumePdf(tailored, candidateName, contactInfo, pdfPath)
 
     // Update application with the PDF path

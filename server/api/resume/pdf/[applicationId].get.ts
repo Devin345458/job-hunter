@@ -1,8 +1,8 @@
 import { eq } from 'drizzle-orm'
-import { applications, jobs, knowledgeEntries } from '~~/server/db/schema'
+import { applications, jobs } from '~~/server/db/schema'
 import { generateResumePdf } from '~~/server/utils/pdf'
 import { existsSync, readFileSync } from 'fs'
-import type { TailoredResume } from '~~/server/utils/ai'
+import type { TailoredResume } from '#shared/types/pipeline'
 
 export default defineEventHandler(async (event) => {
   const db = useDb()
@@ -31,8 +31,8 @@ export default defineEventHandler(async (event) => {
     }
 
     // If a PDF already exists at the stored path, serve it
-    if (application.tailoredResumePdfPath && existsSync(application.tailoredResumePdfPath)) {
-      const pdfBuffer = readFileSync(application.tailoredResumePdfPath)
+    if (application.tailoredResumePdfPath && existsSync(resolveStoredPath(application.tailoredResumePdfPath))) {
+      const pdfBuffer = readFileSync(resolveStoredPath(application.tailoredResumePdfPath))
       setResponseHeader(event, 'Content-Type', 'application/pdf')
       setResponseHeader(event, 'Content-Disposition', `inline; filename="resume-${applicationId}.pdf"`)
       return pdfBuffer
@@ -49,23 +49,7 @@ export default defineEventHandler(async (event) => {
     const resume: TailoredResume = JSON.parse(application.tailoredResumeJson)
 
     // Get candidate name and contact info from knowledge base
-    const entries = await db
-      .select()
-      .from(knowledgeEntries)
-
-    const kb: Record<string, string> = {}
-    for (const entry of entries) {
-      kb[`${entry.category}/${entry.key}`] = entry.value
-    }
-
-    const candidateName = kb['profile/name'] || kb['profile/full_name'] || 'Candidate'
-    const contactInfo = {
-      email: kb['profile/email'] || undefined,
-      phone: kb['profile/phone'] || undefined,
-      location: kb['profile/location'] || undefined,
-      linkedin: kb['profile/linkedin'] || undefined,
-      github: kb['profile/github'] || undefined,
-    }
+    const { name: candidateName, contact: contactInfo } = candidateContact()
 
     const pdfBuffer = await generateResumePdf(resume, candidateName, contactInfo)
 

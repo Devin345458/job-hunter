@@ -1,4 +1,4 @@
-import { jobs, knowledgeEntries } from '../../db/schema'
+import { jobs } from '../../db/schema'
 import { eq, isNull } from 'drizzle-orm'
 import { scoreJobMatch } from '../../utils/ai'
 
@@ -7,7 +7,13 @@ export default defineTask({
     name: 'jobs:match',
     description: 'AI score unscored jobs against the knowledge base',
   },
-  async run() {
+  async run({ payload }) {
+    const outcome = await withRun('jobs:match', triggerOf(payload), async () => matchJobs())
+    return { result: outcome }
+  },
+})
+
+async function matchJobs() {
     const db = useDb()
     console.log('[jobs:match] Starting AI job matching...')
 
@@ -21,15 +27,10 @@ export default defineTask({
 
     if (unscoredJobs.length === 0) {
       console.log('[jobs:match] No unscored jobs found')
-      return { result: { scored: 0 } }
+      return { scored: 0 }
     }
 
-    // Build knowledge base map
-    const entries = db.select().from(knowledgeEntries).all()
-    const knowledgeBase: Record<string, string> = {}
-    for (const entry of entries) {
-      knowledgeBase[`${entry.category}:${entry.key}`] = entry.value
-    }
+    const knowledgeBase = knowledgeMap()
 
     let scored = 0
 
@@ -59,6 +60,5 @@ export default defineTask({
     }
 
     console.log(`[jobs:match] Complete. Scored: ${scored}`)
-    return { result: { scored } }
-  },
-})
+    return { scored }
+}

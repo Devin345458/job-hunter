@@ -1,18 +1,195 @@
 import Anthropic from '@anthropic-ai/sdk'
-import { MODEL } from '#server/utils/model'
+import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
+import { z } from 'zod'
+import { and, gte, sql } from 'drizzle-orm'
+import { aiCalls } from '../db/schema'
+import { FALLBACK_MODEL, MODEL, priceOf, profileOf, type Effort } from './model'
+import type { TailoredResume } from '#shared/types/pipeline'
 
 let _client: Anthropic | null = null
 
 export function useAI() {
   if (_client) return _client
-
   const config = useRuntimeConfig()
-  _client = new Anthropic({
-    apiKey: config.anthropicApiKey,
-  })
-
+  _client = new Anthropic({ apiKey: config.anthropicApiKey, maxRetries: 3 })
   return _client
 }
+
+export class AiBudgetExceeded extends Error {
+  constructor(spent: number, budget: number) {
+    super(`Daily AI budget reached: $${spent.toFixed(2)} of $${budget.toFixed(2)} spent today`)
+  }
+}
+
+export class AiRefusal extends Error {}
+
+export class AiOutputTruncated extends Error {}
+
+/** Dollars spent on Claude calls since local midnight. */
+export function aiSpentToday(): number {
+  const db = useDb()
+  const row = db
+    .select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)` })
+    .from(aiCalls)
+    .where(and(gte(aiCalls.createdAt, sql`datetime('now', 'localtime', 'start of day', 'utc')`)))
+    .get()
+  return row?.total ?? 0
+}
+
+export function aiBudget(): number {
+  const config = useRuntimeConfig()
+  return Number(config.dailyAiBudgetUsd) || 10
+}
+
+/** Throws AiBudgetExceeded when today's spend has reached the daily budget. */
+export function assertAiBudget() {
+  const spent = aiSpentToday()
+  const budget = aiBudget()
+  if (spent >= budget) throw new AiBudgetExceeded(spent, budget)
+}
+
+function costOf(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null }) {
+  const price = priceOf(model)
+  return ((usage.input_tokens ?? 0) * price.input
+    + (usage.output_tokens ?? 0) * price.output
+    + (usage.cache_read_input_tokens ?? 0) * price.cacheRead) / 1_000_000
+}
+
+function logCall(purpose: string, model: string, usage: any, ref?: { type: string; id: number }, error?: string) {
+  try {
+    useDb().insert(aiCalls).values({
+      purpose,
+      model,
+      inputTokens: usage?.input_tokens ?? 0,
+      outputTokens: usage?.output_tokens ?? 0,
+      cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
+      costUsd: usage ? costOf(model, usage) : 0,
+      refType: ref?.type ?? null,
+      refId: ref?.id ?? null,
+      error: error ?? null,
+    }).run()
+  }
+  catch (e) {
+    console.error('[ai] failed to log call', e)
+  }
+}
+
+export interface AiCallOptions {
+  /** Short label stored with the usage row, e.g. "match", "tailor", "form_answers". */
+  purpose: string
+  system?: string
+  prompt: string | Anthropic.Beta.BetaContentBlockParam[]
+  effort?: Effort
+  maxTokens?: number
+  ref?: { type: string; id: number }
+}
+
+// ── Model selection with fallback ──
+
+let primaryUnavailableUntil = 0
+
+export function primaryModel(): string {
+  return useRuntimeConfig().aiModel || MODEL
+}
+
+export function fallbackModel(): string {
+  return useRuntimeConfig().aiFallbackModel || FALLBACK_MODEL
+}
+
+/** The model the next call will try first. */
+export function activeModel(): string {
+  return Date.now() < primaryUnavailableUntil ? fallbackModel() : primaryModel()
+}
+
+function isAccessError(e: any) {
+  return e instanceof Anthropic.RateLimitError
+    || e instanceof Anthropic.PermissionDeniedError
+    || e instanceof Anthropic.NotFoundError
+}
+
+function buildParams(model: string, opts: AiCallOptions, format?: unknown) {
+  const profile = profileOf(model)
+  const outputConfig: Record<string, unknown> = {}
+  if (profile.effort) outputConfig.effort = opts.effort ?? 'medium'
+  if (format) outputConfig.format = format
+  return {
+    model,
+    max_tokens: opts.maxTokens ?? 16000,
+    ...(profile.fallbacks ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
+    ...(opts.system ? { system: opts.system } : {}),
+    messages: [{ role: 'user', content: opts.prompt }],
+    ...(Object.keys(outputConfig).length ? { output_config: outputConfig } : {}),
+  } as any
+}
+
+/**
+ * Runs one request against the primary model, and against the fallback model when the
+ * key cannot use the primary. Every attempt is logged to ai_calls with its cost.
+ */
+async function withModel<T extends { usage?: any; model?: string; stop_reason?: string | null }>(
+  opts: AiCallOptions,
+  send: (model: string, requestOptions: { maxRetries: number }) => Promise<T>,
+): Promise<T> {
+  assertAiBudget()
+  const models = [...new Set([activeModel(), fallbackModel()])]
+  let lastError: any
+  for (const model of models) {
+    try {
+      // One retry on the primary: an access 429 does not clear with backoff, so fail over fast.
+      const response = await send(model, { maxRetries: model === fallbackModel() ? 3 : 1 })
+      if (response.stop_reason === 'refusal') {
+        logCall(opts.purpose, response.model || model, response.usage, opts.ref, 'refusal')
+        throw new AiRefusal(`Claude declined the ${opts.purpose} request`)
+      }
+      if (response.stop_reason === 'max_tokens') {
+        logCall(opts.purpose, response.model || model, response.usage, opts.ref, 'max_tokens')
+        throw new AiOutputTruncated(`Claude ran out of output tokens on ${opts.purpose}`)
+      }
+      logCall(opts.purpose, response.model || model, response.usage, opts.ref)
+      return response
+    }
+    catch (e: any) {
+      lastError = e
+      if (e instanceof AiRefusal || e instanceof AiOutputTruncated) throw e // already logged with usage
+      if (!isAccessError(e) || model === fallbackModel()) {
+        logCall(opts.purpose, model, null, opts.ref, e?.message || String(e))
+        throw e
+      }
+      // The key cannot use this model right now. Skip it for 15 minutes and try the fallback.
+      logCall(opts.purpose, model, null, opts.ref, `unavailable: ${e?.status} ${e?.message || ''}`.slice(0, 500))
+      if (model === primaryModel()) primaryUnavailableUntil = Date.now() + 15 * 60 * 1000
+      console.warn(`[ai] ${model} unavailable (${e?.status}), falling back to ${fallbackModel()}`)
+    }
+  }
+  throw lastError
+}
+
+/**
+ * One Claude call that returns an object validated against a zod schema, using structured
+ * outputs (forced tool choice returns a 400 on the 5.x models). Enforces the daily budget.
+ */
+export async function aiStructured<S extends z.ZodType>(schema: S, opts: AiCallOptions): Promise<z.infer<S>> {
+  const ai = useAI()
+  const response = await withModel(opts, (model, ro) => ai.beta.messages.parse(buildParams(model, opts, betaZodOutputFormat(schema)), ro) as any)
+  const parsed = (response as any).parsed_output
+  if (parsed == null) throw new Error(`Claude returned no parseable output for ${opts.purpose}`)
+  return parsed as z.infer<S>
+}
+
+/** One Claude call that returns plain text (cover letters and similar prose). */
+export async function aiText(opts: AiCallOptions): Promise<string> {
+  const ai = useAI()
+  const response = await withModel(opts, (model, ro) => ai.beta.messages.create(buildParams(model, opts), ro) as Promise<Anthropic.Beta.BetaMessage>)
+  return response.content
+    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+    .trim()
+}
+
+// ── Existing features, moved onto aiStructured ──
+// Capability agents replace these with richer versions; the signatures stay so the
+// original pages keep working in the meantime.
 
 export interface MatchResult {
   score: number
@@ -22,166 +199,70 @@ export interface MatchResult {
   recommendation: 'strong_match' | 'good_match' | 'partial_match' | 'weak_match'
 }
 
-export interface TailoredResume {
-  summary: string
-  experience: Array<{
-    company: string
-    title: string
-    period: string
-    bullets: string[]
-  }>
-  skills: Record<string, string[]>
-  education: Array<{
-    institution: string
-    degree: string
-    year: string
-  }>
-  tailoringNotes: string
-  generatedQuestions: Array<{
-    question: string
-    context: string
-    category: string
-  }>
+const MatchResultSchema = z.object({
+  score: z.number().describe('Match score from 0 to 100'),
+  reasoning: z.string().describe('Two or three sentences explaining the score'),
+  missingSkills: z.array(z.string()),
+  keywordOverlap: z.array(z.string()),
+  recommendation: z.enum(['strong_match', 'good_match', 'partial_match', 'weak_match']),
+})
+
+export function formatKnowledge(knowledgeBase: Record<string, string>) {
+  return Object.entries(knowledgeBase).map(([k, v]) => `**${k}:** ${v}`).join('\n')
 }
 
-const matchResultTool: Anthropic.Tool = {
-  name: 'submit_match_result',
-  description: 'Submit the job match scoring result',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      score: { type: 'number', description: 'Match score from 0-100' },
-      reasoning: { type: 'string', description: '2-3 sentence explanation of the score' },
-      missingSkills: { type: 'array', items: { type: 'string' }, description: 'Skills the job needs that the candidate lacks' },
-      keywordOverlap: { type: 'array', items: { type: 'string' }, description: 'Matching keywords between JD and resume' },
-      recommendation: { type: 'string', enum: ['strong_match', 'good_match', 'partial_match', 'weak_match'] },
-    },
-    required: ['score', 'reasoning', 'missingSkills', 'keywordOverlap', 'recommendation'],
-  },
-}
-
-const tailorResumeTool: Anthropic.Tool = {
-  name: 'submit_tailored_resume',
-  description: 'Submit the tailored resume data',
-  input_schema: {
-    type: 'object' as const,
-    properties: {
-      summary: { type: 'string', description: 'Tailored professional summary, 2-3 sentences' },
-      experience: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            company: { type: 'string' },
-            title: { type: 'string' },
-            period: { type: 'string' },
-            bullets: { type: 'array', items: { type: 'string' } },
-          },
-          required: ['company', 'title', 'period', 'bullets'],
-        },
-      },
-      skills: {
-        type: 'object',
-        additionalProperties: { type: 'array', items: { type: 'string' } },
-        description: 'Skills grouped by category',
-      },
-      education: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            institution: { type: 'string' },
-            degree: { type: 'string' },
-            year: { type: 'string' },
-          },
-          required: ['institution', 'degree', 'year'],
-        },
-      },
-      tailoringNotes: { type: 'string', description: 'What was changed and why' },
-      generatedQuestions: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            question: { type: 'string' },
-            context: { type: 'string' },
-            category: { type: 'string', enum: ['technical', 'behavioral', 'preference'] },
-          },
-          required: ['question', 'context', 'category'],
-        },
-      },
-    },
-    required: ['summary', 'experience', 'skills', 'education', 'tailoringNotes', 'generatedQuestions'],
-  },
-}
-
-export async function scoreJobMatch(
-  jobDescription: string,
-  knowledgeBase: Record<string, string>,
-): Promise<MatchResult> {
-  const ai = useAI()
-
-  const message = await ai.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    tools: [matchResultTool],
-    tool_choice: { type: 'tool', name: 'submit_match_result' },
-    messages: [{
-      role: 'user',
-      content: `You are a job matching assistant. Score how well this candidate matches the job description.
+export async function scoreJobMatch(jobDescription: string, knowledgeBase: Record<string, string>): Promise<MatchResult> {
+  return aiStructured(MatchResultSchema, {
+    purpose: 'match',
+    effort: 'low',
+    maxTokens: 4000,
+    prompt: `You are a job matching assistant. Score how well this candidate matches the job description.
 
 ## Candidate Profile
-${Object.entries(knowledgeBase).map(([k, v]) => `**${k}:** ${v}`).join('\n')}
+${formatKnowledge(knowledgeBase)}
 
 ## Job Description
 ${jobDescription}
 
-Focus on: role level match, tech stack overlap, experience relevance. Be realistic - don't inflate scores.`,
-    }],
+Focus on role level match, tech stack overlap, and experience relevance. Be realistic and do not inflate scores.`,
   })
-
-  const toolUse = message.content.find(block => block.type === 'tool_use')
-  if (!toolUse || toolUse.type !== 'tool_use') {
-    throw new Error('AI did not return structured match result')
-  }
-
-  return toolUse.input as MatchResult
 }
 
-export async function tailorResume(
-  jobDescription: string,
-  knowledgeBase: Record<string, string>,
-): Promise<TailoredResume> {
-  const ai = useAI()
+const TailoredResumeSchema = z.object({
+  summary: z.string(),
+  experience: z.array(z.object({
+    company: z.string(),
+    title: z.string(),
+    period: z.string(),
+    bullets: z.array(z.string()),
+  })),
+  skills: z.record(z.string(), z.array(z.string())),
+  education: z.array(z.object({ institution: z.string(), degree: z.string(), year: z.string() })),
+  tailoringNotes: z.string(),
+  generatedQuestions: z.array(z.object({
+    question: z.string(),
+    context: z.string(),
+    category: z.enum(['technical', 'behavioral', 'preference']),
+  })),
+})
 
-  const message = await ai.messages.create({
-    model: MODEL,
-    max_tokens: 4096,
-    tools: [tailorResumeTool],
-    tool_choice: { type: 'tool', name: 'submit_tailored_resume' },
-    messages: [{
-      role: 'user',
-      content: `You are a resume tailoring expert. Restructure and reframe the candidate's experience for this specific job.
+export async function tailorResume(jobDescription: string, knowledgeBase: Record<string, string>): Promise<TailoredResume> {
+  return aiStructured(TailoredResumeSchema, {
+    purpose: 'tailor',
+    effort: 'high',
+    prompt: `You are a resume tailoring expert. Restructure and reframe the candidate's experience for this specific job.
 
 ## RULES
 - NEVER fabricate experience. Only reframe and reorder existing experience.
 - Prioritize relevant accomplishments. Match JD keywords naturally.
 - Adjust the professional summary to target this role.
 - Reorder experience bullets to highlight most relevant first.
-- Add relevant keywords from the JD where they genuinely apply.
+- Add relevant keywords from the JD only where they genuinely apply.
 
 ## Candidate Knowledge Base
-${Object.entries(knowledgeBase).map(([k, v]) => `**${k}:** ${v}`).join('\n')}
+${formatKnowledge(knowledgeBase)}
 
 ## Target Job Description
 ${jobDescription}`,
-    }],
   })
-
-  const toolUse = message.content.find(block => block.type === 'tool_use')
-  if (!toolUse || toolUse.type !== 'tool_use') {
-    throw new Error('AI did not return structured resume result')
-  }
-
-  return toolUse.input as TailoredResume
 }

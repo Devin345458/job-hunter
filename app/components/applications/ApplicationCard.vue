@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { ApplicationWithJob, ApplicationStatus } from '~/composables/useApplications'
+import type { ApplicationWithJob } from '~/composables/useApplications'
+import type { ApplicationStatus } from '#shared/types/pipeline'
 
 const props = defineProps<{
   application: ApplicationWithJob
@@ -7,7 +8,7 @@ const props = defineProps<{
 
 const router = useRouter()
 
-const statusColors: Record<ApplicationStatus, string> = {
+const statusColors: Partial<Record<ApplicationStatus, string>> = {
   draft: 'grey',
   ready: 'info',
   submitted: 'primary',
@@ -17,7 +18,7 @@ const statusColors: Record<ApplicationStatus, string> = {
   offer: 'success',
 }
 
-const statusLabels: Record<ApplicationStatus, string> = {
+const statusLabels: Partial<Record<ApplicationStatus, string>> = {
   draft: 'Draft',
   ready: 'Ready',
   submitted: 'Submitted',
