@@ -352,7 +352,9 @@ Specific rules:
 - A question asking whether he previously worked for this employer may be answered "No" only when the employer is absent from his full work history in the knowledge base.
 - "How did you hear about this job": use the HOW FOUND line.
 - Motivation questions ("Why do you want to work here?"): two to four sentences built from the posting and his real experience. source "generated".
-- Never check a marketing, newsletter, or "contact me about future jobs" box. A required box confirming the application is accurate may be checked.
+- Never check a marketing, newsletter, or "contact me about future jobs" box.
+- A required box that only confirms the information in the application is true and accurate may be checked.
+- Any other box or statement that says Devin did, read, agreed to, or set up something ("I have marked the sender address as safe", "I have read the privacy policy", "I consent to...") is status "unknown". Devin decides those himself.
 - Never answer voluntary self-identification questions (gender, race, veteran, disability); they are handled elsewhere.
 - Plain American English. Never use an em dash or an en dash.`
 
