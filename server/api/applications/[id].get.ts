@@ -1,51 +1,25 @@
 import { eq } from 'drizzle-orm'
 import { applications, jobs, questions } from '~~/server/db/schema'
 
-export default defineEventHandler(async (event) => {
+// One application with its job, its questions, and the ReviewItem view the review dashboard uses
+// (form snapshot, answers, screenshot URL, open questions including shared ones, submission).
+export default defineEventHandler((event) => {
   const db = useDb()
   const id = Number(getRouterParam(event, 'id'))
+  if (!Number.isInteger(id) || id <= 0) throw createError({ statusCode: 400, statusMessage: 'Invalid application ID' })
 
-  if (!id || isNaN(id)) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Invalid application ID',
-    })
-  }
+  const row = db.select({ application: applications, job: jobs })
+    .from(applications)
+    .leftJoin(jobs, eq(applications.jobId, jobs.id))
+    .where(eq(applications.id, id))
+    .get()
+  if (!row) throw createError({ statusCode: 404, statusMessage: 'Application not found' })
 
-  try {
-    const resultArray = await db
-      .select({
-        application: applications,
-        job: jobs,
-      })
-      .from(applications)
-      .leftJoin(jobs, eq(applications.jobId, jobs.id))
-      .where(eq(applications.id, id))
-
-    const result = resultArray?.[0]
-    if (!result) {
-      throw createError({
-        statusCode: 404,
-        statusMessage: 'Application not found',
-      })
-    }
-
-    // Fetch related questions
-    const relatedQuestions = await db
-      .select()
-      .from(questions)
-      .where(eq(questions.applicationId, id))
-
-    return {
-      ...result.application,
-      job: result.job,
-      questions: relatedQuestions,
-    }
-  } catch (error: any) {
-    if (error.statusCode) throw error
-    throw createError({
-      statusCode: 500,
-      statusMessage: 'Failed to fetch application',
-    })
+  const relatedQuestions = db.select().from(questions).where(eq(questions.applicationId, id)).all()
+  return {
+    ...row.application,
+    job: row.job,
+    questions: relatedQuestions,
+    review: getReviewItem(id),
   }
 })

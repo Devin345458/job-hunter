@@ -258,6 +258,8 @@ export interface SubmissionResult {
   screenshotPath: string | null
   /** True when the target was the sandbox form instead of a real employer. */
   sandbox: boolean
+  /** Why method is 'manual': captcha, account required, real submits switched off, and similar. */
+  manualReason?: string | null
 }
 
 export const REJECT_REASONS = [

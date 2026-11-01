@@ -1,75 +1,37 @@
 import { eq } from 'drizzle-orm'
 import { applications, jobs } from '~~/server/db/schema'
-import { tailorResume } from '~~/server/utils/ai'
+import { tailorResumeForJob } from '~~/server/utils/tailor'
+import { saveResumePdf } from '~~/server/utils/pdf'
 
+// POST /api/resume/generate { applicationId } re-tailors the resume for an application with the
+// same two-pass flow the pipeline uses (reframe, then the evidence check), and re-renders the PDF.
 export default defineEventHandler(async (event) => {
   const db = useDb()
-  const body = await readBody(event)
+  const body = await readBody<{ applicationId?: number }>(event)
+  const applicationId = Number(body?.applicationId)
+  if (!Number.isInteger(applicationId) || applicationId <= 0) throw createError({ statusCode: 400, statusMessage: 'applicationId is required' })
 
-  if (!body.applicationId) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'applicationId is required',
-    })
+  const application = db.select().from(applications).where(eq(applications.id, applicationId)).get()
+  if (!application) throw createError({ statusCode: 404, statusMessage: 'Application not found' })
+  if (['submitting', 'submitted', 'approved', 'publishing'].includes(application.status)) {
+    throw createError({ statusCode: 409, statusMessage: `The application is ${application.status}; its resume can no longer change` })
   }
+  const job = db.select().from(jobs).where(eq(jobs.id, application.jobId)).get()
+  if (!job) throw createError({ statusCode: 404, statusMessage: 'Associated job not found' })
 
-  const applicationId = Number(body.applicationId)
+  const entries = loadKnowledge()
+  const tailored = await tailorResumeForJob(job, entries, { type: 'application', id: applicationId })
+  const { name, contact } = candidateContact(entries)
+  const pdfPath = dataPath('resumes', `resume-${applicationId}.pdf`)
+  await saveResumePdf(tailored.resume, name, contact, pdfPath)
 
-  try {
-    // Fetch the application
-    const applicationResult = await db
-      .select()
-      .from(applications)
-      .where(eq(applications.id, applicationId))
-
-    const application = applicationResult?.[0]
-    if (!application) {
-      throw createError({
-        statusCode: 404,
-        statusMessage: 'Application not found',
-      })
-    }
-
-    // Fetch the associated job
-    const jobResult = await db
-      .select()
-      .from(jobs)
-      .where(eq(jobs.id, application.jobId))
-
-    const job = jobResult?.[0]
-    if (!job) {
-      throw createError({
-        statusCode: 404,
-        statusMessage: 'Associated job not found',
-      })
-    }
-
-    const entries = loadKnowledge()
-
-    const knowledgeBase = knowledgeMap(entries)
-
-    // Generate tailored resume
-    const tailored = await tailorResume(
-      job.description || `${job.title} at ${job.company}`,
-      knowledgeBase,
-    )
-
-    // Update the application with the new resume JSON
-    await db
-      .update(applications)
-      .set({
-        tailoredResumeJson: JSON.stringify(tailored),
-        tailoringNotes: tailored.tailoringNotes,
-        updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      })
-      .where(eq(applications.id, applicationId))
-
-    return tailored
-  } catch (error: any) {
-    if (error.statusCode) throw error
-    throw createError({
-      statusCode: 500,
-      statusMessage: 'Failed to generate resume',
-    })
-  }
+  // Keep the cover letter's evidence record, replace the resume's.
+  const letterNotes = (application.tailoringNotes || '').split('\n\n').filter(p => p.startsWith('Cover letter evidence check')).join('\n\n')
+  db.update(applications).set({
+    tailoredResumeJson: JSON.stringify(tailored.resume),
+    tailoredResumePdfPath: pdfPath,
+    tailoringNotes: [tailored.notes, letterNotes].filter(Boolean).join('\n\n'),
+    updatedAt: nowSql(),
+  }).where(eq(applications.id, applicationId)).run()
+  return tailored.resume
 })
