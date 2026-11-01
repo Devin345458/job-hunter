@@ -78,6 +78,7 @@ export default defineNuxtConfig({
     // One daily chain runs every step in order: learn, search, enrich, match, prepare, demos.
     scheduledTasks: {
       '0 6 * * *': ['pipeline:daily'],
+      '*/15 * * * *': ['system:heartbeat'],
     },
     externals: {
       // Playwright resolves its browser binaries and driver files at runtime; bundling breaks that.
