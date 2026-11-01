@@ -92,7 +92,9 @@ export async function submitApplication(applicationId: number): Promise<Submissi
   if (app.status !== 'submitting') throw new Error(`Refusing to submit application ${applicationId}: status is ${app.status}, not submitting`)
 
   const job = db.select().from(jobs).where(eq(jobs.id, app.jobId)).get()!
-  const sandbox = job.atsType === 'sandbox' && isOwnSandbox(job.applyUrl)
+  // The sandbox is recognized by the job's sandbox flag plus this app's own form URL and token,
+  // never by the ATS label alone (enrichment once relabeled the sandbox job as 'other').
+  const sandbox = (job.isSandbox || job.atsType === 'sandbox') && isOwnSandbox(job.applyUrl)
 
   if (requiresAccount(job.atsType)) {
     return manual(`${ATS_LABELS[job.atsType as keyof typeof ATS_LABELS] ?? job.atsType} requires an applicant account, which the pipeline never creates`, false)

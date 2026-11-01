@@ -67,8 +67,10 @@ function inputMode(q: QuestionView) {
         <v-btn
           v-for="c in q.choices"
           :key="c"
+          class="qs__choice"
           variant="tonal"
-          height="44"
+          min-height="44"
+          height="auto"
           :disabled="savingId !== null"
           @click="emit('answer', q.id, c)"
         >
@@ -160,6 +162,21 @@ function inputMode(q: QuestionView) {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+
+  // Long choices ("No, I opt out and do not consent to a recorded interview") wrap inside the
+  // button instead of pushing it past the card edge on a phone.
+  &__choice {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+    padding-top: 10px;
+    padding-bottom: 10px;
+
+    :deep(.v-btn__content) {
+      white-space: normal;
+      line-height: 1.3;
+    }
   }
 
   &__form {

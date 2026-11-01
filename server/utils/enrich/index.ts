@@ -149,8 +149,9 @@ export async function enrichJobs(opts: { limit?: number; jobIds?: number[]; log?
     if (stats.budgetStopped) return
     try {
       const resolved = await resolvePosting(job, cache)
-      // A board listing already carries its form URL; a failed detail fetch must not erase it.
-      const keepSource = !resolved.applyUrl && !resolved.closed && !!job.applyUrl
+      // Sandbox jobs point at this app's own test form; never relabel them. A board listing already
+      // carries its form URL; a failed detail fetch must not erase it.
+      const keepSource = (job.isSandbox && !!job.applyUrl) || (!resolved.applyUrl && !resolved.closed && !!job.applyUrl)
       const base: Partial<JobRow> = {
         applyUrl: keepSource ? job.applyUrl : resolved.applyUrl,
         atsType: keepSource ? job.atsType : resolved.atsType,

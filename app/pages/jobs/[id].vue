@@ -98,17 +98,18 @@ async function onGenerateResume() {
     const application = await $fetch<{ id: number }>(`/api/applications/${job.value.id}`, {
       method: 'POST',
     })
+    // The server answers at once (202) and prepares in the background: resume, cover letter,
+    // gap analysis, and the employer form dry run. Nothing is applied for until Devin approves.
     applicationId.value = application.id
-    job.value.status = 'applied'
-    snackbar.success('Tailored resume generated successfully', {
+    snackbar.success('Preparing the application: resume, cover letter, and form. Follow it on the application page.', {
       text: 'View Application',
       handler: () => router.push(`/applications/${application.id}`),
     })
   }
   catch (e: any) {
-    const msg = e.data?.message || e.message || 'Failed to generate resume'
+    const msg = e.data?.statusMessage || e.data?.message || e.message || 'Could not start preparing the application'
     resumeError.value = msg
-    snackbar.error('Resume generation failed. See details below.')
+    snackbar.error('Could not start preparing the application. See details below.')
   }
   finally {
     generatingResume.value = false

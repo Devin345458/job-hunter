@@ -32,6 +32,14 @@ const CONF: Record<FormAnswer['confidence'], { label: string; color: string }> =
 
 const shotOpen = ref(false)
 const copiedId = ref<string | null>(null)
+// Long answers are clamped to a few lines; tapping "Show all" opens one in full.
+const expanded = ref<Set<string>>(new Set())
+function toggle(id: string) {
+  const next = new Set(expanded.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expanded.value = next
+}
 const copyError = ref<string | null>(null)
 
 const fieldsById = computed(() => new Map((props.snapshot?.fields ?? []).map(f => [f.id, f])))
@@ -73,11 +81,14 @@ function isLong(a: FormAnswer) {
             {{ a.label }}
             <span v-if="fieldsById.get(a.fieldId)?.required" class="fa__req" aria-label="required">*</span>
           </div>
-          <div class="fa__value" :class="{ 'fa__value--empty': !answerText(a.value), 'fa__value--long': isLong(a) }">
+          <div class="fa__value" :class="{ 'fa__value--empty': !answerText(a.value), 'fa__value--long': isLong(a), 'fa__value--open': expanded.has(a.fieldId) }">
             {{ answerText(a.value) || (a.needsQuestionId ? 'Waiting on your answer above' : 'Blank') }}
           </div>
+          <button v-if="isLong(a)" type="button" class="fa__more" @click="toggle(a.fieldId)">
+            {{ expanded.has(a.fieldId) ? 'Show less' : 'Show all' }}
+          </button>
           <div class="fa__meta">
-            <span>{{ SOURCE[a.source] ?? a.source }}<template v-if="a.sourceDetail && a.source === 'knowledge'"> ({{ a.sourceDetail.replace(':', ': ') }})</template></span>
+            <span>{{ SOURCE[a.source] ?? a.source }}<template v-if="a.sourceDetail"> ({{ a.source === 'knowledge' ? a.sourceDetail.replace(':', ': ') : a.sourceDetail }})</template></span>
             <span class="fa__conf" :class="`text-${CONF[a.confidence].color}`">{{ CONF[a.confidence].label }}</span>
             <span v-if="a.fillError" class="text-error">Fill error: {{ a.fillError }}</span>
           </div>
@@ -195,10 +206,33 @@ function isLong(a: FormAnswer) {
 
     &--long {
       white-space: pre-line;
-      max-height: 9.5em;
-      overflow-y: auto;
-      padding-right: 4px;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 6;
+      line-clamp: 6;
+      overflow: hidden;
     }
+
+    &--open {
+      display: block;
+      -webkit-line-clamp: unset;
+      line-clamp: unset;
+      overflow: visible;
+    }
+  }
+
+  &__more {
+    grid-column: 1;
+    justify-self: start;
+    min-height: 44px;
+    padding: 0;
+    background: none;
+    border: 0;
+    color: rgb(var(--v-theme-primary));
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
   }
 
   &__meta {
