@@ -76,9 +76,7 @@ function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-/** True when the number is written in the quote, as 165000, 165,000, 165k, 211.4K, or 1.5M. */
-export function numberInQuote(n: number, quote: string): boolean {
-  const q = normalizeForQuote(quote).replace(/(\d),(?=\d{3}\b)/g, '$1')
+function numberForms(n: number): string[] {
   const forms = new Set<string>([String(n), n.toFixed(2).replace(/\.?0+$/, '')])
   if (n >= 1000) {
     const k = n / 1000
@@ -86,7 +84,29 @@ export function numberInQuote(n: number, quote: string): boolean {
     forms.add(String(Math.round(k)))
   }
   if (n >= 1_000_000) forms.add(String(Math.round(n / 100_000) / 10))
-  return [...forms].some(f => new RegExp(`(?<![0-9.])${escapeRegex(f)}(?![0-9])`).test(q))
+  return [...forms].map(escapeRegex)
+}
+
+function quoteDigits(quote: string) {
+  return normalizeForQuote(quote).replace(/(\d),(?=\d{3}\b)/g, '$1')
+}
+
+/** True when the number is written in the quote, as 165000, 165,000, 165k, 211.4K, or 1.5M. */
+export function numberInQuote(n: number, quote: string): boolean {
+  const q = quoteDigits(quote)
+  return numberForms(n).some(f => new RegExp(`(?<![0-9.])${f}(?![0-9])`).test(q))
+}
+
+/** True when the number is written as money: "$1,500", "$1.5k", or "1500 USD". "120 hours" does not count. */
+export function moneyInQuote(n: number, quote: string): boolean {
+  const q = quoteDigits(quote)
+  return numberForms(n).some(f => new RegExp(`\\$\\s?${f}(?![0-9])|(?<![0-9.])${f}\\s?(k|m)?\\s?(usd|dollars)\\b`).test(q))
+}
+
+/** True when the number is written as a percent: "4%" or "10 percent". */
+export function percentInQuote(n: number, quote: string): boolean {
+  const q = quoteDigits(quote)
+  return numberForms(n).some(f => new RegExp(`(?<![0-9.])${f}\\s?(%|percent)`).test(q))
 }
 
 // ── Derivation in code ───────────────────────────────────────
@@ -126,14 +146,18 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   const notes: string[] = []
   if (ex.notes?.trim()) notes.push(ex.notes.trim())
 
-  const verified = (label: string, quote: string | null | undefined, nums: Array<number | null>): 'ok' | 'no_quote' | 'bad_number' => {
+  // Each figure must be written in its quote in the right form: a dollar amount as money
+  // ("$1,500", not "120 hours"), a percent with "%". Base pay only needs the number.
+  type Check = [number | null, 'number' | 'money' | 'percent']
+  const CHECKS = { number: numberInQuote, money: moneyInQuote, percent: percentInQuote }
+  const verified = (label: string, quote: string | null | undefined, checks: Check[]): 'ok' | 'no_quote' | 'bad_number' => {
     if (!quoteInText(quote, text)) {
       notes.push(`Dropped ${label}: its quote is not in the posting.`)
       return 'no_quote'
     }
-    for (const n of nums) {
-      if (n != null && !numberInQuote(n, quote!)) {
-        notes.push(`Dropped the ${label} figure ${n}: it does not appear in the quoted text.`)
+    for (const [n, kind] of checks) {
+      if (n != null && !CHECKS[kind](n, quote!)) {
+        notes.push(`Dropped the ${label} figure ${n}: the quote does not state it as ${kind === 'money' ? 'a dollar amount' : kind === 'percent' ? 'a percent' : 'a number'}.`)
         return 'bad_number'
       }
     }
@@ -145,7 +169,7 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   let baseMax: number | null = null
   let basePeriod: CompensationBreakdown['basePeriod'] = null
   let baseQuote: string | null = null
-  if (ex.base && (ex.base.min != null || ex.base.max != null) && verified('base pay', ex.base.quote, [ex.base.min, ex.base.max]) === 'ok') {
+  if (ex.base && (ex.base.min != null || ex.base.max != null) && verified('base pay', ex.base.quote, [[ex.base.min, 'number'], [ex.base.max, 'number']]) === 'ok') {
     baseMin = ex.base.min
     baseMax = ex.base.max
     if (baseMin != null && baseMax != null && baseMin > baseMax) [baseMin, baseMax] = [baseMax, baseMin]
@@ -184,7 +208,7 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   let bonusLow = 0
   let bonusHigh = 0
   if (ex.bonus) {
-    const status = verified('bonus', ex.bonus.quote, [ex.bonus.percentOfBase, ex.bonus.amount])
+    const status = verified('bonus', ex.bonus.quote, [[ex.bonus.percentOfBase, 'percent'], [ex.bonus.amount, 'money']])
     if (status !== 'no_quote') {
       let estimated: number | null = null
       if (status === 'ok' && ex.bonus.amount != null) {
@@ -204,7 +228,7 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   let equity: CompensationBreakdown['equity'] = null
   let equityAnnual = 0
   if (ex.equity) {
-    const status = verified('equity', ex.equity.quote, [ex.equity.amountPerYear, ex.equity.totalGrant])
+    const status = verified('equity', ex.equity.quote, [[ex.equity.amountPerYear, 'money'], [ex.equity.totalGrant, 'money']])
     if (status !== 'no_quote') {
       let estimated: number | null = null
       if (status === 'ok' && ex.equity.amountPerYear != null) estimated = round(ex.equity.amountPerYear)
@@ -220,7 +244,7 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   const benefits: Benefit[] = []
   for (const raw of ex.benefits ?? []) {
     const b = { ...raw, category: oneOf(raw.category, BENEFIT_CATEGORIES, 'other'), amountRecurrence: oneOf(raw.amountRecurrence, RECURRENCES, null) }
-    const status = verified(`benefit "${b.name}"`, b.quote, [b.amount, b.category === 'retirement' ? b.percentOfBase : null])
+    const status = verified(`benefit "${b.name}"`, b.quote, [[b.amount, 'money'], [b.category === 'retirement' ? b.percentOfBase : null, 'percent']])
     if (status === 'no_quote') continue
     let value: number | null = null
     let detail = b.detail
