@@ -52,6 +52,8 @@ export interface CompensationBreakdown {
   baseMin: number | null
   baseMax: number | null
   basePeriod: 'year' | 'month' | 'hour' | null
+  /** Exact text from the posting the base pay came from. */
+  baseQuote?: string | null
   /** Base salary converted to a yearly figure. */
   baseAnnualMin: number | null
   baseAnnualMax: number | null
@@ -88,11 +90,20 @@ export interface ScoreComponent {
 
 export interface ScoreBreakdown {
   final: number
-  skills: { score: number; reasoning: string; matched: string[]; missing: string[] }
+  skills: {
+    score: number
+    reasoning: string
+    matched: string[]
+    missing: string[]
+    /** The parts the skills score is summed from: must-haves 0 to 45, stack 0 to 25, seniority 0 to 20, domain 0 to 10. */
+    parts?: { mustHaves: number; stack: number; seniority: number; domain: number }
+  }
   compensation: {
     score: number | null
     reasoning: string
     floor: number | null
+    /** Target salary from the knowledge base, when one is set. */
+    target?: number | null
     estimate: number | null
     meetsFloor: boolean | null
   }
