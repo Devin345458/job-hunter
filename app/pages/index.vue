@@ -231,6 +231,7 @@ onMounted(async () => {
             v-for="(step, idx) in setupSteps"
             :key="idx"
             :to="step.to"
+            :value="`${step.to}-${idx}`"
             rounded="lg"
             class="mb-1"
           >

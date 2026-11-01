@@ -1,7 +1,24 @@
+import { existsSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+
+const mdiCssCandidates = [
+  resolve(process.cwd(), 'node_modules/@mdi/font/css/materialdesignicons.css'),
+  resolve(process.cwd(), '../node_modules/@mdi/font/css/materialdesignicons.css'),
+  resolve(process.cwd(), '../../node_modules/@mdi/font/css/materialdesignicons.css'),
+]
+
+const mdiCssPath = mdiCssCandidates.find(path => existsSync(path))
+const mdiCssPathForVite = mdiCssPath?.replaceAll('\\', '/')
+const mdiPackagePath = mdiCssPath ? dirname(dirname(mdiCssPath)) : undefined
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
+  ssr: true,
   devtools: { enabled: true },
+  features: {
+    inlineStyles: true,
+  },
 
   modules: [
     'vuetify-nuxt-module',
@@ -10,8 +27,9 @@ export default defineNuxtConfig({
   vuetify: {
     moduleOptions: {
       styles: {
-        configFile: 'assets/scss/vuetify-settings.scss',
+        configFile: 'assets/scss/components.scss',
       },
+      disableVuetifyStyles: true,
     },
     vuetifyOptions: {
       theme: {
@@ -93,7 +111,6 @@ export default defineNuxtConfig({
   },
 
   css: [
-    '@mdi/font/css/materialdesignicons.css',
     '~/assets/scss/global.scss',
   ],
 })

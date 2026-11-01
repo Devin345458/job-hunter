@@ -1,3 +1,8 @@
+// Load the configured settings first so the full Vuetify stylesheet below compiles with
+// the same font and radius as the per-component styles.
+@use 'components';
+@use 'vuetify';
+
 // ── Custom scrollbar ──
 ::-webkit-scrollbar {
   width: 5px;

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 const drawer = ref(true)
-const hydrated = ref(false)
-const { mdAndUp } = useDisplay()
+const isDesktop = ref(true)
 
 interface NavItem {
   title: string
@@ -31,9 +30,6 @@ const activePageTitle = computed(() => {
   return item?.title || 'Job Hunter'
 })
 
-const isDesktop = computed(() => (hydrated.value ? mdAndUp.value : true))
-const showMobileChrome = computed(() => hydrated.value && !mdAndUp.value)
-
 watch(
   isDesktop,
   (desktop) => {
@@ -42,16 +38,29 @@ watch(
   { immediate: true },
 )
 
+const updateViewportMode = () => {
+  isDesktop.value = window.matchMedia('(min-width: 960px)').matches
+}
+
 onMounted(() => {
-  hydrated.value = true
+  updateViewportMode()
+  window.addEventListener('resize', updateViewportMode)
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateViewportMode)
+})
+
 </script>
 
 <template>
   <v-app>
     <!-- Mobile App Bar -->
+    <!-- model-value keeps the bar out of Vuetify's layout on desktop. The class alone hides
+         it but still reserves its 64px. -->
     <v-app-bar
-      v-if="showMobileChrome"
+      class="d-md-none"
+      :model-value="!isDesktop"
       color="surface"
       flat
     >
@@ -135,12 +144,12 @@ onMounted(() => {
 
     <!-- Mobile Bottom Navigation -->
     <v-layout-item
-      v-if="showMobileChrome"
-      model-value
+      class="d-md-none"
+      :model-value="!isDesktop"
       position="bottom"
       size="0"
     >
-      <v-bottom-navigation color="primary" grow>
+      <v-bottom-navigation color="primary" grow :active="!isDesktop">
         <v-btn
           v-for="item in navItems.slice(0, 5)"
           :key="item.to"

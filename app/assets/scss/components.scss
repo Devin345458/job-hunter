@@ -1,0 +1,7 @@
+// Vuetify SASS settings. vuetify-nuxt-module compiles every component's styles through
+// this file (moduleOptions.styles.configFile), so the overrides must live here.
+@forward 'vuetify/settings' with (
+  $body-font-family: ('Plus Jakarta Sans', sans-serif),
+  $heading-font-family: ('Plus Jakarta Sans', sans-serif),
+  $border-radius-root: 8px,
+);
