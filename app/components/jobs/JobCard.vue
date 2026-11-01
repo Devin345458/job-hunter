@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Job, JobStatus } from '~/composables/useJobs'
+import { ATS_LABELS, formatMoneyShort } from './format'
 
 const props = defineProps<{
   job: Job
@@ -104,6 +105,25 @@ const salaryDisplay = computed(() =>
           prepend-icon="mdi-currency-usd"
         >
           {{ salaryDisplay }}
+        </v-chip>
+
+        <v-chip
+          v-if="job.totalCompEstimate"
+          size="small"
+          variant="tonal"
+          color="primary"
+        >
+          About {{ formatMoneyShort(job.totalCompEstimate) }} total
+        </v-chip>
+
+        <v-chip
+          v-if="job.applyUrl"
+          size="small"
+          variant="tonal"
+          color="secondary"
+          prepend-icon="mdi-form-select"
+        >
+          {{ ATS_LABELS[job.atsType ?? 'other'] ?? 'Employer form' }} form
         </v-chip>
       </div>
 

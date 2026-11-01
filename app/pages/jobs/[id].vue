@@ -1,5 +1,18 @@
 <script setup lang="ts">
+import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import type { Job, JobStatus } from '~/composables/useJobs'
+import { ATS_LABELS } from '~/components/jobs/format'
+
+/** GET /api/jobs/:id adds the parsed pipeline fields to the row. */
+type JobDetail = Job & {
+  compensation: CompensationBreakdown | null
+  score: ScoreBreakdown | null
+  requirements: Requirement[]
+  postingUrl: string | null
+  enrichNotes: string[]
+  scoreHistory: Array<{ score: number; skillsScore: number | null; compScore: number | null; learnedAdjustment: number | null; reason: string; computedAt: string }>
+  openQuestions: QuestionView[]
+}
 
 definePageMeta({
   layout: 'default',
@@ -10,7 +23,7 @@ const router = useRouter()
 const { getJob, updateJobStatus, loading, error } = useJobs()
 const snackbar = useSnackbar()
 
-const job = ref<Job | null>(null)
+const job = ref<JobDetail | null>(null)
 const generatingResume = ref(false)
 const resumeError = ref<string | null>(null)
 const applicationId = ref<number | null>(null)
@@ -42,24 +55,14 @@ const salaryDisplay = computed(() => {
   return ''
 })
 
-const matchScoreColor = computed(() => {
-  if (!job.value?.matchScore) return 'grey'
-  if (job.value.matchScore >= 80) return 'success'
-  if (job.value.matchScore >= 60) return 'warning'
-  return 'error'
-})
+const atsLabel = computed(() => ATS_LABELS[job.value?.atsType ?? 'unknown'] ?? job.value?.atsType ?? '')
 
-const matchScoreLabel = computed(() => {
-  if (!job.value?.matchScore) return ''
-  if (job.value.matchScore >= 80) return 'Strong Match'
-  if (job.value.matchScore >= 60) return 'Good Match'
-  if (job.value.matchScore >= 40) return 'Partial Match'
-  return 'Weak Match'
-})
+/** Listing HTML when the source gave one; otherwise the posting text the enrichment fetched. */
+const hasHtmlDescription = computed(() => !!job.value?.description)
 
 async function loadJob() {
   try {
-    job.value = await getJob(jobId.value)
+    job.value = await getJob(jobId.value) as JobDetail
 
     if (job.value?.status === 'applied') {
       const apps = await $fetch<{ applications: { id: number }[] }>('/api/applications', {
@@ -78,7 +81,8 @@ async function loadJob() {
 async function onMarkReady() {
   if (!job.value) return
   try {
-    job.value = await updateJobStatus(job.value.id, 'applied' as JobStatus)
+    const updated = await updateJobStatus(job.value.id, 'applied' as JobStatus)
+    job.value = { ...job.value, ...updated }
     snackbar.success('Job marked as ready to apply')
   }
   catch {
@@ -238,19 +242,67 @@ onMounted(() => {
                 </v-chip>
               </div>
 
-              <v-btn
-                v-if="job.url"
-                :href="job.url"
-                target="_blank"
-                variant="text"
-                prepend-icon="mdi-open-in-new"
-                color="primary"
-                size="small"
+              <div class="job-detail__links">
+                <v-btn
+                  v-if="job.applyUrl"
+                  :href="job.applyUrl"
+                  target="_blank"
+                  rel="noopener"
+                  color="primary"
+                  variant="flat"
+                  size="small"
+                  prepend-icon="mdi-form-select"
+                >
+                  Employer application form
+                </v-btn>
+                <v-chip v-if="job.atsType && job.atsType !== 'unknown'" size="small" variant="tonal" color="secondary" prepend-icon="mdi-domain">
+                  {{ atsLabel }}
+                </v-chip>
+                <v-btn
+                  v-if="job.postingUrl || job.url"
+                  :href="job.postingUrl || job.url || undefined"
+                  target="_blank"
+                  rel="noopener"
+                  variant="text"
+                  prepend-icon="mdi-open-in-new"
+                  color="primary"
+                  size="small"
+                >
+                  View posting
+                </v-btn>
+              </div>
+
+              <v-alert
+                v-if="job.enrichedAt && !job.applyUrl"
+                type="warning"
+                variant="tonal"
+                density="compact"
+                class="mt-3"
               >
-                View Original Posting
-              </v-btn>
+                <div class="text-body-2">
+                  No employer application form found.
+                </div>
+                <div v-for="(note, i) in job.enrichNotes" :key="i" class="text-caption">
+                  {{ note }}
+                </div>
+              </v-alert>
+              <v-alert
+                v-else-if="job.enrichError"
+                type="info"
+                variant="tonal"
+                density="compact"
+                class="mt-3"
+              >
+                <div class="text-caption">
+                  {{ job.enrichError }}
+                </div>
+              </v-alert>
             </v-card-text>
           </v-card>
+
+          <JobsCompensationBreakdown :compensation="job.compensation" :enriched-at="job.enrichedAt" class="mb-6" />
+
+          <JobsRequirementsList v-if="job.requirements.length" :requirements="job.requirements" class="mb-6" />
 
           <!-- Job Description -->
           <v-card variant="outlined">
@@ -261,10 +313,16 @@ onMounted(() => {
             </v-card-item>
             <v-card-text>
               <div
-                v-if="job.description"
+                v-if="hasHtmlDescription"
                 class="job-description text-body-2"
                 v-html="job.description"
               />
+              <div
+                v-else-if="job.postingText"
+                class="job-description job-description--plain text-body-2"
+              >
+                {{ job.postingText }}
+              </div>
               <div v-else class="text-center pa-8">
                 <v-icon icon="mdi-text-box-remove-outline" size="40" class="mb-2" style="opacity: 0.3;" />
                 <p class="text-body-2 text-medium-emphasis">
@@ -278,43 +336,7 @@ onMounted(() => {
         <!-- Right Column: Match Analysis + Actions -->
         <v-col cols="12" md="5" lg="4">
           <!-- Match Score -->
-          <v-card variant="outlined" class="mb-4">
-            <v-card-item>
-              <v-card-title class="text-subtitle-1 font-weight-medium">
-                Match Analysis
-              </v-card-title>
-            </v-card-item>
-            <v-card-text>
-              <div v-if="job.matchScore != null" class="text-center mb-4">
-                <v-progress-circular
-                  :model-value="job.matchScore"
-                  :size="100"
-                  :width="8"
-                  :color="matchScoreColor"
-                >
-                  <span class="text-h4 font-weight-bold">{{ job.matchScore }}</span>
-                </v-progress-circular>
-                <div class="text-body-2 font-weight-medium mt-2" :class="`text-${matchScoreColor}`">
-                  {{ matchScoreLabel }}
-                </div>
-              </div>
-
-              <div v-if="job.matchReasoning" class="text-body-2" style="line-height: 1.6;">
-                {{ job.matchReasoning }}
-              </div>
-
-              <div
-                v-else-if="job.matchScore == null"
-                class="text-center pa-6"
-              >
-                <v-icon icon="mdi-chart-line" size="40" class="mb-3" style="opacity: 0.3;" />
-                <p class="text-body-2 text-medium-emphasis mb-1">Not scored yet</p>
-                <p class="text-caption text-medium-emphasis">
-                  This job hasn't been analyzed against your profile. Jobs are scored daily at 7 AM, or you can trigger scoring manually in Settings.
-                </p>
-              </div>
-            </v-card-text>
-          </v-card>
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4" />
 
           <!-- Actions -->
           <v-card variant="outlined" class="mb-4">
@@ -421,8 +443,20 @@ onMounted(() => {
 </template>
 
 <style scoped lang="scss">
+.job-detail__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .job-description {
   line-height: 1.7;
+  overflow-wrap: anywhere;
+
+  &--plain {
+    white-space: pre-line;
+  }
 
   :deep(ul),
   :deep(ol) {
