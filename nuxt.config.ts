@@ -82,7 +82,14 @@ export default defineNuxtConfig({
     },
     externals: {
       // Playwright resolves its browser binaries and driver files at runtime; bundling breaks that.
-      external: ['playwright', 'playwright-core'],
+      external: ['playwright', 'playwright-core', 'pdfmake', 'pdfkit'],
+      // pdfmake resolves its font files at runtime; list them so the trace copies them.
+      traceInclude: [
+        'node_modules/pdfmake/fonts/Roboto/Roboto-Regular.ttf',
+        'node_modules/pdfmake/fonts/Roboto/Roboto-Medium.ttf',
+        'node_modules/pdfmake/fonts/Roboto/Roboto-Italic.ttf',
+        'node_modules/pdfmake/fonts/Roboto/Roboto-MediumItalic.ttf',
+      ],
     },
   },
 

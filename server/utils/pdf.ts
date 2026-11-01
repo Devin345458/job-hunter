@@ -1,5 +1,9 @@
 import { createRequire } from 'module'
 import { writeFileSync, existsSync, mkdirSync } from 'fs'
+// Static import so the production build's file trace copies pdfmake and its dependencies into
+// .output/server/node_modules. A dynamic require() is invisible to the trace, which left the
+// deployed image without pdfmake ("Cannot find module 'pdfmake/js/Printer'").
+import PdfPrinterModule from 'pdfmake/js/Printer.js'
 import { dirname } from 'path'
 import type { TDocumentDefinitions, Content } from 'pdfmake/interfaces'
 import type { TailoredResume } from '#shared/types/pipeline'
@@ -15,8 +19,7 @@ export interface ContactInfo {
 }
 
 function getPrinter() {
-  const PdfPrinterModule = require('pdfmake/js/Printer')
-  const PdfPrinter = PdfPrinterModule.default || PdfPrinterModule
+  const PdfPrinter = (PdfPrinterModule as any).default || PdfPrinterModule
   const fonts = {
     Roboto: {
       normal: require.resolve('pdfmake/fonts/Roboto/Roboto-Regular.ttf'),
