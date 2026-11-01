@@ -112,7 +112,7 @@ export function parseYesNo(answer: string): YesNo | null {
 }
 
 /** "$150,000", "150k", "150000" and "150000/yr" all read as 150000. */
-export function parseMoney(answer: string): number | null {
+function parseMoney(answer: string): number | null {
   const s = answer.replace(/[,\s]/g, '').toLowerCase()
   const m = s.match(/^\$?(\d+(?:\.\d+)?)(k)?(?:\/?(?:yr|year|y|peryear))?$/)
   if (!m) return null

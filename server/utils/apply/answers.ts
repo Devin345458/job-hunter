@@ -614,11 +614,18 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
 // ── Blockers and refresh ─────────────────────────────────────
 
 /** Question ids the answers wait on that are still pending and blocking. */
-export function openBlockingQuestionIds(answers: FormAnswer[]): number[] {
-  const ids = [...new Set(answers.map(a => a.needsQuestionId).filter((x): x is number => typeof x === 'number'))]
+export function openBlockingQuestionIds(answers: FormAnswer[], snapshot?: FormSnapshot | null): number[] {
+  // With the snapshot, blocking is decided for THIS application: a pending question blocks it
+  // only when one of its own required fields waits on it. The question row's blocking flag is
+  // shared by every application that asked the same thing (askQuestion dedupes by subject),
+  // so another employer's required field must not block this one.
+  const required = snapshot ? new Set(snapshot.fields.filter(f => f.required).map(f => f.id)) : null
+  const ids = [...new Set(answers
+    .filter(a => typeof a.needsQuestionId === 'number' && (!required || required.has(a.fieldId)))
+    .map(a => a.needsQuestionId as number))]
   if (ids.length === 0) return []
   return useDb().select().from(questions).where(inArray(questions.id, ids)).all()
-    .filter(q => q.status === 'pending' && q.blocking)
+    .filter(q => q.status === 'pending' && (required ? true : q.blocking))
     .map(q => q.id)
 }
 
@@ -682,7 +689,7 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     }
   }
 
-  const blocking = openBlockingQuestionIds(next)
+  const blocking = openBlockingQuestionIds(next, snapshot)
   const unresolvedRequired = next.filter((a) => {
     const f = snapshot.fields.find(x => x.id === a.fieldId)
     return f?.required && a.needsQuestionId && !blocking.includes(a.needsQuestionId) && qs.find(q => q.id === a.needsQuestionId)?.status === 'answered'

@@ -1,88 +1,69 @@
 import type { JobSourceAdapter, NormalizedJob, SearchParams } from './types'
+import { isSoftwareRoleTitle, isUsEligible, matchesAnyTerm, payBelow, titleMatchesKeywords } from './filters'
+import { fetchJson } from './http'
+
+// Remotive public API: https://remotive.com/api/remote-jobs (all listings are remote).
+// The employer's apply link sits behind a Remotive login, so enrichment finds the employer
+// form through the company's ATS board instead.
+
+interface RemotiveJob {
+  id: number
+  url: string
+  title: string
+  company_name: string
+  category?: string
+  tags?: string[]
+  job_type?: string
+  publication_date?: string
+  candidate_required_location?: string
+  salary?: string
+  description?: string
+}
+
+/** Yearly USD range from a free-text salary like "$150,000 - $180,000" or "$3.5k-$5k/month" (Remotive also uses an en dash there). Null when unclear. */
+export function parseListedSalary(salary: string | undefined | null): { min?: number; max?: number } | null {
+  if (!salary || !/\$|usd/i.test(salary)) return null
+  const nums = [...salary.matchAll(/(\d+(?:[.,]\d+)*)\s*(k)?/gi)]
+    .map(m => Number(m[1]!.replace(/,/g, '')) * (m[2] ? 1000 : 1))
+    .filter(n => n > 0)
+  if (!nums.length) return null
+  const factor = /hour|hr\b/i.test(salary) ? 2080 : /month|mo\b/i.test(salary) ? 12 : 1
+  const values = nums.map(n => n * factor)
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  if (max < 10000) return null
+  return { min, max }
+}
 
 export const remotiveAdapter: JobSourceAdapter = {
   name: 'remotive',
 
   async search(params: SearchParams): Promise<NormalizedJob[]> {
-    try {
-      // Extract individual search terms from keywords (Remotive doesn't handle multi-word well)
-      const searchTerms = [...new Set(
-        params.keywords
-          .flatMap(k => k.split(/\s+/))
-          .filter(w => w.length > 3)
-          .slice(0, 3),
-      )]
-
-      const allJobs: any[] = []
-      const seenIds = new Set<string>()
-
-      for (const term of searchTerms) {
-        const response = await $fetch<any>('https://remotive.com/api/remote-jobs', {
-          query: {
-            search: term,
-            limit: 25,
-          },
-        })
-
-        if (response?.jobs) {
-          for (const job of response.jobs) {
-            const id = String(job.id)
-            if (!seenIds.has(id)) {
-              seenIds.add(id)
-              allJobs.push(job)
-            }
-          }
+    const data = await fetchJson<{ jobs?: RemotiveJob[] }>('https://remotive.com/api/remote-jobs?category=software-dev&limit=150')
+    return (data.jobs ?? [])
+      .filter(j => titleMatchesKeywords(j.title, params.keywords))
+      .filter(j => isSoftwareRoleTitle(j.title))
+      .filter(j => !matchesAnyTerm(j.title, params.excludedKeywords))
+      .filter(j => isUsEligible([j.candidate_required_location]))
+      .filter(j => !/intern|part[\s_-]?time|freelance/i.test(j.job_type ?? ''))
+      .map((j): NormalizedJob => {
+        const salary = parseListedSalary(j.salary)
+        return {
+          source: 'remotive',
+          sourceId: String(j.id),
+          title: j.title || 'Unknown',
+          company: j.company_name || 'Unknown',
+          location: j.candidate_required_location || 'Worldwide',
+          remoteType: 'remote',
+          salaryMin: salary?.min,
+          salaryMax: salary?.max,
+          salaryCurrency: salary ? 'USD' : undefined,
+          description: j.description || '',
+          url: j.url,
+          tags: j.tags || [],
+          atsMeta: j.salary ? { listedSalary: j.salary } : undefined,
         }
-      }
-
-      return allJobs
-        .filter((job: any) => {
-          // Filter by salary if specified
-          if (params.salaryMin && job.salary) {
-            const salaryNum = parseSalaryString(job.salary)
-            if (salaryNum && salaryNum < params.salaryMin) return false
-          }
-          return true
-        })
-        .map((job: any): NormalizedJob => {
-          const salary = parseSalaryRange(job.salary)
-          return {
-            source: 'remotive',
-            sourceId: String(job.id),
-            title: job.title || 'Unknown',
-            company: job.company_name || 'Unknown',
-            companyUrl: job.company_logo_url ? undefined : undefined,
-            location: job.candidate_required_location || 'Worldwide',
-            remoteType: 'remote',
-            salaryMin: salary?.min,
-            salaryMax: salary?.max,
-            salaryCurrency: 'USD',
-            description: job.description || '',
-            url: job.url,
-            tags: job.tags || [],
-          }
-        })
-    } catch (error) {
-      console.error('Remotive API error:', error)
-      return []
-    }
+      })
+      .filter(j => !payBelow(params.salaryMin, j.salaryMin, j.salaryMax))
   },
-}
-
-function parseSalaryString(salary: string): number | null {
-  if (!salary) return null
-  const match = salary.match(/[\d,]+/)
-  if (!match) return null
-  return parseInt(match[0].replace(/,/g, ''))
-}
-
-function parseSalaryRange(salary: string): { min?: number, max?: number } | null {
-  if (!salary) return null
-  const numbers = salary.match(/[\d,]+/g)
-  if (!numbers) return null
-  const parsed = numbers.map(n => parseInt(n.replace(/,/g, '')))
-  return {
-    min: parsed[0] || undefined,
-    max: parsed[1] || parsed[0] || undefined,
-  }
 }
