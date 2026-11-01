@@ -113,6 +113,17 @@ export function percentInQuote(n: number, quote: string): boolean {
 
 const PERIOD_FACTOR = { year: 1, month: 12, hour: 2080 } as const
 
+/**
+ * Benefits whose stated value goes into the total. Parental and family-forming benefits
+ * (childcare, fertility, adoption) and uncategorized perks pay out only if used, so an "up to $10,000" fertility
+ * allowance would inflate the estimate. They keep their value on the page but stay out of the total.
+ */
+const USE_DEPENDENT = /fertility|child\s?care|daycare|adoption|surrogacy|family[\s-](forming|planning|building)|egg freezing|\bivf\b/i
+
+export function countsTowardTotal(b: { category: BenefitCategory; name: string; detail?: string }): boolean {
+  return b.category !== 'parental' && b.category !== 'other' && !USE_DEPENDENT.test(`${b.name} ${b.detail ?? ''}`)
+}
+
 const FULL_COVERAGE = /100\s?%|fully (paid|covered)|full(y)? cover|at no cost|no cost|free (medical|health)|employer[\s-]paid|company[\s-]paid|paid in full|covers? (all|the full)|premiums? (are )?(fully )?(paid|covered)/i
 
 /** A health benefit the posting describes as fully paid by the employer. */
@@ -259,9 +270,10 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
         detail = `${detail} (${b.percentOfBase}% of the base midpoint)`
       }
     }
+    if (value != null && !countsTowardTotal(b)) detail = `${detail} (not counted in the total: its value depends on use)`
     benefits.push({ name: b.name, category: b.category, detail, estimatedAnnualValue: value, quote: b.quote })
   }
-  const benefitTotal = benefits.reduce((sum, b) => sum + (b.estimatedAnnualValue ?? 0), 0)
+  const benefitTotal = benefits.reduce((sum, b) => sum + (countsTowardTotal(b) ? b.estimatedAnnualValue ?? 0 : 0), 0)
 
   const hasBase = baseLow != null
   const anyValue = hasBase || (bonus?.estimatedAnnual ?? null) != null || (equity?.estimatedAnnual ?? null) != null || benefits.some(b => b.estimatedAnnualValue != null)
