@@ -103,6 +103,9 @@ export default defineNuxtConfig({
     aiFallbackModel: 'claude-haiku-4-5',
     // Hard stop for Claude spend per local day, in dollars
     dailyAiBudgetUsd: '10',
+    // Safety switch for real employer submits. 'false' lets the approve path submit only to the
+    // sandbox form; flip to 'true' in production once the pipeline is verified.
+    realSubmitEnabled: 'false',
     // Token with push access to the demo and resume repos (used only on approve)
     githubToken: '',
     githubOwner: 'Devin345458',
