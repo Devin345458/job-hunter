@@ -8,8 +8,10 @@
 // - Refuses any database outside ./data of the current directory, and refuses NODE_ENV=production.
 // - Every row it writes is is_sandbox=1 and every job has source 'fixture'.
 // - Re-running deletes only the rows a previous run created (source 'fixture'), then inserts fresh ones.
-// - Facts about Devin (resume, cover letter, form answers) come from the knowledge base rows in the
-//   same database. Nothing about him is invented here.
+// - Resume lines, form answers, and the cover letter's summary and accomplishment sentences come
+//   from the knowledge base rows in the same database. Each fixture's one-line cover letter "focus"
+//   sentence is hand-written fixture copy, acceptable only because these rows are dev-only and
+//   is_sandbox=1. Learned adjustments and their explanations are fixture data, not real history.
 // - Apply links point at this app's own sandbox form, never at an employer.
 
 import Database from 'better-sqlite3'
@@ -499,7 +501,7 @@ const fixtures: Fixture[] = [
     proposedMinutesAgo: 80,
     score: breakdown({
       skills: 84,
-      skillsReason: 'Product-minded full-stack role. Your Vue, Node.js, and Laravel work matches; payments experience is the gap.',
+      skillsReason: 'Product-minded full-stack role. Your Vue, Node.js, and Laravel work matches. Payments experience is the gap.',
       matched: ['Vue.js', 'Node.js', 'TypeScript', 'MySQL', 'Redis'],
       missing: ['Payment systems'],
       comp: null,
@@ -600,7 +602,7 @@ const fixtures: Fixture[] = [
     focus: 'I have built full-stack products for clients and worked directly with them on scope and delivery.',
     resumeOrder: ['contracts', 'Vue', 'Node.js', 'GitHub Actions'],
     gap: {
-      items: [{ requirement: 'React', mustHave: true, decision: 'reframe', rationale: 'Vue 3 Composition API experience maps closely; the resume leads with component architecture.' }],
+      items: [{ requirement: 'React', mustHave: true, decision: 'reframe', rationale: 'Vue 3 Composition API experience maps closely. The resume leads with component architecture.' }],
       demoRecommended: false,
       summary: 'React is reframed through Vue. No demo.',
       analyzedAt: isoTime(-200),
@@ -619,7 +621,7 @@ const fixtures: Fixture[] = [
       matched: ['Node.js', 'Kubernetes', 'Kafka', 'Redis'],
       missing: ['Go', 'Python'],
       comp: null,
-      compReason: 'Contract rate set per engineer; the posting states no figure.',
+      compReason: 'Contract rate set per engineer. The posting states no figure.',
       estimate: null,
       learned: [
         { label: 'Marketplace contract first', points: -6, detail: 'You rejected 4 Lemon.io listings for "Not this company".', ruleId: 3 },
@@ -663,7 +665,7 @@ const fixtures: Fixture[] = [
       testCommand: 'go test ./...',
       testOutput: '--- FAIL: TestRetryBackoff (0.21s)\n    handler_test.go:58: expected 3 attempts, got 2\nFAIL\nFAIL\tgo-webhook-ingester/ingest\t0.412s\nFAIL',
       testsPassed: false,
-      error: 'Tests failed after 2 repair attempts. Not published; it stays local unless you approve and it is fixed first.',
+      error: 'Tests failed after 2 repair attempts. It stays local and is never published in this state.',
     },
     atsType: 'sandbox',
   },

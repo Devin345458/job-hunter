@@ -67,11 +67,11 @@ function kb(bytes: number) {
       <div class="demo__fact">
         <dt>Files</dt>
         <dd>
-          <span class="tabular">{{ demo.files.length }} files, {{ totalKb }} KB</span>
+          <span>{{ demo.files.length }} files, {{ totalKb }} KB</span>
           <ul class="demo__files">
             <li v-for="f in demo.files" :key="f.path">
               <span class="demo__path">{{ f.path }}</span>
-              <span class="demo__muted tabular">{{ kb(f.bytes) }}</span>
+              <span class="demo__muted">{{ kb(f.bytes) }}</span>
             </li>
           </ul>
         </dd>
