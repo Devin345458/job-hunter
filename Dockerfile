@@ -24,8 +24,11 @@ COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/server/db/migrations ./server/db/migrations
 COPY --from=builder /app/scripts ./scripts
 
-# Chromium plus its system libraries, at exactly the version the bundled playwright-core expects.
-RUN node .output/server/node_modules/playwright-core/cli.js install --with-deps chromium \
+# Chromium plus its system libraries, at exactly the version the lockfile pins. The build output
+# only carries the playwright-core files the server imports, so the installer CLI comes from the
+# builder's full node_modules.
+COPY --from=builder /app/node_modules/playwright-core /opt/playwright-core
+RUN node /opt/playwright-core/cli.js install --with-deps chromium \
   && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /app/data /app/data/resumes
