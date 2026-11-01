@@ -380,7 +380,7 @@ export function loadCompPreferences(): CompPreferences {
   return {
     target: fromKnowledge(/target salary|salary target|desired (salary|compensation)/i, 10000) ?? { value: null, source: null },
     floor: fromKnowledge(/floor|minimum (total )?(comp|salary|pay)|lowest|walk[\s-]?away/i, 10000) ?? answeredFloor() ?? { value: null, source: null },
-    healthValue: fromKnowledge(/health insurance (value|worth)/i, 0) ?? fromAnswer(HEALTH_SUBJECT, 0) ?? { value: null, source: null },
+    healthValue: fromKnowledge(/health insurance.*(value|worth)|(value|worth).*health insurance/i, 0) ?? fromAnswer(HEALTH_SUBJECT, 0) ?? { value: null, source: null },
   }
 }
 
