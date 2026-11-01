@@ -20,6 +20,9 @@ const canApprove = computed(() => CAN_APPROVE.includes(props.item.status) && blo
 const canReject = computed(() => CAN_REJECT.includes(props.item.status))
 const isRetry = computed(() => props.item.status === 'submit_failed')
 const isManual = computed(() => props.item.status === 'needs_manual')
+// An approved application that came back as submit by hand (captcha, or real submits switched
+// off) can try the automated submit again; the server reuses the original approve decision.
+const canRetryManual = computed(() => isManual.value && props.item.submission?.method === 'manual')
 const demoWillPublish = computed(() => props.item.demo?.status === 'built')
 
 const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : 'Approve and submit'))
@@ -53,7 +56,7 @@ const consequence = computed(() => {
         {{ blockedReason }}
       </template>
       <template v-else-if="isManual">
-        Submit it on the employer's site, or reject if you changed your mind.
+        <template v-if="item.submission?.manualReason">{{ item.submission.manualReason }}. </template>Submit it on the employer's site, or reject if you changed your mind.
       </template>
       <template v-else>{{ consequence }}</template>
     </p>
@@ -68,6 +71,18 @@ const consequence = computed(() => {
         @click="emit('reject')"
       >
         {{ isManual ? 'Not applying' : 'Reject' }}
+      </v-btn>
+      <v-btn
+        v-if="canRetryManual"
+        variant="tonal"
+        height="48"
+        class="bar__approve"
+        prepend-icon="mdi-refresh"
+        :disabled="blocking > 0"
+        :loading="approving"
+        @click="emit('approve')"
+      >
+        Try automated submit again
       </v-btn>
       <v-btn
         v-if="!isManual"
