@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, isNotNull, isNull, like, ne, notInArray } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNotNull, isNull, like, ne, notInArray } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../../db/schema'
 import type { FormAnswer, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
@@ -20,6 +20,16 @@ type AppRow = InferSelectModel<typeof applications>
 
 export const DEFAULT_MATCH_THRESHOLD = 70
 export const MAX_PER_RUN = 5
+export const MAX_PREPARE_ATTEMPTS = 3
+/** Marks form_error on an application whose preparation threw, with the attempt count. */
+export const PREPARE_FAILED = 'prepare_failed'
+/** A preparing row untouched this long was cut off (crash or restart); every step updates it. */
+const STALE_PREPARING_MS = 30 * 60 * 1000
+
+export function prepareAttempts(formError: string | null): number {
+  const m = formError?.match(/^prepare_failed attempt=(\d+)/)
+  return m ? Number(m[1]) : 0
+}
 
 const inFlight = new Set<number>()
 
@@ -218,11 +228,17 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
     return { applicationId: app.id, status }
   }
   catch (e: any) {
-    const message = String(e?.message || e).split('\n')[0]!
-    setApplicationStatus(app.id, 'preparing', `Preparation failed: ${message}`, { formError: e?.stack?.slice(0, 4000) || message })
-    log(`app ${app.id}: failed: ${message}`)
+    // A failed preparation ends in needs_manual with the reason, so the dashboard can act on it.
+    // The daily run retries it up to MAX_PREPARE_ATTEMPTS times; the prepare endpoint retries on demand.
+    const message = String(e?.statusMessage || e?.message || e).split('\n')[0]!
+    const attempt = prepareAttempts(existing?.formError ?? null) + 1
+    const retry = attempt < MAX_PREPARE_ATTEMPTS ? 'The next daily run retries it, or retry it now from the application page.' : 'Retry it from the application page.'
+    setApplicationStatus(app.id, 'needs_manual', `Preparation failed: ${message}. ${retry}`, {
+      formError: `${PREPARE_FAILED} attempt=${attempt}: ${message}\n${String(e?.stack || '').slice(0, 3500)}`,
+    })
+    log(`app ${app.id}: failed (attempt ${attempt}): ${message}`)
     if (e instanceof AiBudgetExceeded) throw e
-    return { applicationId: app.id, status: 'preparing', error: message }
+    return { applicationId: app.id, status: 'needs_manual', error: message }
   }
   finally {
     inFlight.delete(app.id)
@@ -270,6 +286,27 @@ export function pickJobsToPrepare(threshold = DEFAULT_MATCH_THRESHOLD, limit = M
     .limit(limit)
     .all()
     .map(r => r.job)
+}
+
+/**
+ * Applications to prepare again before new ones: failed preparations under the attempt limit,
+ * and rows left in preparing by a crash or restart.
+ */
+export function pickRetries(limit = MAX_PER_RUN): AppRow[] {
+  const now = Date.now()
+  return useDb().select().from(applications)
+    .where(inArray(applications.status, ['needs_manual', 'preparing']))
+    .all()
+    .filter((a) => {
+      if (inFlight.has(a.id)) return false
+      if (a.status === 'needs_manual') {
+        const n = prepareAttempts(a.formError)
+        return n > 0 && n < MAX_PREPARE_ATTEMPTS
+      }
+      const updated = Date.parse(`${a.updatedAt.replace(' ', 'T')}Z`)
+      return Number.isFinite(updated) && now - updated > STALE_PREPARING_MS
+    })
+    .slice(0, limit)
 }
 
 /** Every needs_input application gets a refresh, so a shared question unblocks all of them. */

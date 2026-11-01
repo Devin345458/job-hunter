@@ -47,6 +47,8 @@ interface CanonicalFact {
   /** The brief's five sensitive facts block approval even on optional fields. */
   alwaysBlocking: boolean
   statement: (v: string) => string
+  /** Labels the stored value answers as written. Others (a city's country, its time zone) are derived by mapToOptions. */
+  direct?: RegExp
 }
 
 export const CANONICAL_FACTS: CanonicalFact[] = [
@@ -124,7 +126,7 @@ export const CANONICAL_FACTS: CanonicalFact[] = [
   },
   {
     key: 'location',
-    match: /^(current )?(location|city)\b|location \(city\)|where are you (currently )?(located|based)|current (city|location|address)|country of residence|countries? (do|you) (you )?reside|do you (currently )?(reside|live)|where do you live|city,? state|state of residence|^address$|^city$/i,
+    match: /^(current )?(location|city)\b|location \(city\)|where are you (currently )?(located|based)|current (city|location|address)|country of residence|(country|city|state) (are|do) you (currently )?(based|located|live|reside)|are you (currently )?(based|located|living|residing) in|do you (currently )?(reside|live)|where do you live|city,? state|state of residence|^address$|^city$|time ?zone|state where you (will )?(reside|live|work)/i,
     kind: 'fact',
     subject: 'current location',
     question: 'What city and state do you live in now?',
@@ -133,6 +135,19 @@ export const CANONICAL_FACTS: CanonicalFact[] = [
     answerType: 'text',
     alwaysBlocking: false,
     statement: v => `Devin currently lives in: ${v}`,
+    direct: /^(current )?(location|city|address)|location \(city\)|where are you (currently )?(located|based)\??$|current (city|location)|city,? state/i,
+  },
+  {
+    key: 'postal_code',
+    match: /zip|postal code|postcode/i,
+    kind: 'fact',
+    subject: 'zip code',
+    question: 'What is your home zip code?',
+    knowledgeKey: 'profile:Zip Code',
+    kbKeys: ['profile/zip code', 'profile/zip', 'profile/postal code'],
+    answerType: 'text',
+    alwaysBlocking: false,
+    statement: v => `Devin's home zip code: ${v}`,
   },
 ]
 
@@ -148,11 +163,23 @@ function kbLookup(entries: KnowledgeEntry[], keys: string[]): KnowledgeEntry | n
 
 interface ResolvedFact { value: string; source: 'knowledge' | 'question'; detail: string }
 
+/**
+ * The learning unit stores a yes/no answer as "Yes. (Answer to: <question>)". Forms need the
+ * answer itself, so the suffix and the lone period go.
+ */
+export function cleanStoredAnswer(value: string): string {
+  return value
+    .replace(/\s*\(Answer to:[\s\S]*\)\s*$/i, '')
+    .replace(/^(yes|no|some experience)\.$/i, '$1')
+    .trim()
+}
+
 function resolveFact(fact: CanonicalFact, entries: KnowledgeEntry[]): ResolvedFact | null {
   const kb = kbLookup(entries, fact.kbKeys)
-  if (kb && kb.value.trim() && !/^none$/i.test(kb.value.trim())) return { value: kb.value.trim(), source: 'knowledge', detail: `${kb.category}/${kb.key}` }
-  const answered = answeredValue(fact.kind, fact.subject)
-  if (answered && answered.trim() && !/^none$/i.test(answered.trim())) return { value: answered.trim(), source: 'question', detail: `question: ${fact.subject}` }
+  const kbValue = kb ? cleanStoredAnswer(kb.value) : ''
+  if (kb && kbValue && !/^none$/i.test(kbValue)) return { value: kbValue, source: 'knowledge', detail: `${kb.category}/${kb.key}` }
+  const answered = cleanStoredAnswer(answeredValue(fact.kind, fact.subject) ?? '')
+  if (answered && !/^none$/i.test(answered)) return { value: answered, source: 'question', detail: `question: ${fact.subject}` }
   return null
 }
 
@@ -220,18 +247,40 @@ function deterministic(field: FormField, ctx: AnswerContext): FormAnswer | null 
   if (field.type === 'tel' || /^(phone|mobile|cell)( number)?$|phone number/.test(label)) return kb(profileValue(entries, 'Phone'), 'profile/Phone')
   if (/github/.test(label) && !/username|handle/.test(label)) return kb(githubUrl(entries), 'profile/GitHub')
   if (/github (username|handle)/.test(label)) return kb(profileValue(entries, 'GitHub'), 'profile/GitHub')
-  if (/^(current |present )?(company|employer|organization)( name)?$|current (company|employer)/.test(label)) {
+  // Whole-label matches only: "Are you subject to agreements with your current employer?" is not a name field.
+  if (/^(current |present |most recent |current most recent )?(company|employer|organization)( name)?$/.test(label)) {
     const cj = currentJob(entries)
     return cj ? kb(cj.company, cj.key) : null
   }
-  if (/current (job )?title|current (role|position)/.test(label)) {
+  if (/^(current |most recent |current most recent )?(job )?title$|^current (role|position)$/.test(label)) {
     const cj = currentJob(entries)
     return cj ? kb(cj.title, cj.key) : null
   }
   return null
 }
 
-function factValueFor(field: FormField, fact: ResolvedFact): string | null {
+const OPT_IN = /\b(sms|text messages?|texts? (me|you)|whatsapp|newsletter|marketing|promotional|future (job )?(opportunit|openings|roles)|talent (community|pool|network)|job alerts?|contact me about)/i
+
+/** Communication and marketing opt-ins: always declined, never asked. */
+function optOut(field: FormField): FormAnswer | null {
+  if (!OPT_IN.test(field.label)) return null
+  if (field.type === 'checkbox') return answer(field, { value: false, source: 'generated', sourceDetail: 'Opt-in declined by rule (the pipeline never opts in to messages or marketing)' })
+  const no = (field.options ?? []).find(o => /^no\b/i.test(o.trim()))
+  if ((field.type === 'select' || field.type === 'radio') && no) return answer(field, { value: no, source: 'generated', sourceDetail: 'Opt-in declined by rule (the pipeline never opts in to messages or marketing)' })
+  if (field.type === 'checkbox_group') return answer(field, { value: null, source: 'skipped', sourceDetail: 'Opt-in left unchecked by rule' })
+  return null
+}
+
+/** A rule-based value for a choice field must be one of its options. */
+function checkOptions(field: FormField, a: FormAnswer | null): FormAnswer | null {
+  if (!a || a.value === null || !['select', 'radio'].includes(field.type) || !(field.options ?? []).length) return a
+  const pick = bestOption(String(a.value), field.options!)
+  return pick ? { ...a, value: pick } : null
+}
+
+function factValueFor(field: FormField, fact: ResolvedFact, canonical: CanonicalFact): string | null {
+  if (canonical.direct && !canonical.direct.test(field.label)) return null
+  if (canonical.direct && /country|time ?zone|state where|zip|postal/i.test(field.label)) return null
   if (field.type === 'number') {
     const n = fact.value.replace(/,/g, '').match(/\d+(\.\d+)?/)
     return n ? n[0] : null
@@ -245,7 +294,7 @@ function factValueFor(field: FormField, fact: ResolvedFact): string | null {
 const MapSchema = z.object({
   picks: z.array(z.object({
     fieldId: z.string(),
-    option: z.string().nullable().describe('One option copied exactly from the list, or null when the fact does not clearly imply one'),
+    option: z.string().nullable().describe('With options: one option copied exactly. Without options: the short answer the fact implies, e.g. the country of a US city. Null when the fact does not clearly determine it.'),
   })),
 })
 
@@ -265,12 +314,12 @@ export async function mapToOptions(items: Array<{ field: FormField; fact: string
     maxTokens: 2000,
     effort: 'low',
     ref,
-    system: 'You map a known fact about a job applicant onto a form field\'s options. Read the question carefully, including negations ("without sponsorship" flips the answer). Copy the chosen option exactly. If the fact does not clearly determine one option, return null. Never guess.',
-    prompt: need.map(it => `FIELD ${it.field.id}: ${it.field.label}\nOPTIONS: ${(it.field.options ?? []).map(o => `"${o}"`).join(', ')}\nFACT: ${it.fact}`).join('\n\n'),
+    system: 'You map a known fact about a job applicant onto a form field. Read the question carefully, including negations ("without sponsorship" flips the answer). For a field with options, copy the chosen option exactly. For a field without options, write the short answer the fact directly implies (a US city is in the United States and in its state\'s time zone). If the fact does not clearly determine the answer, return null. Never guess and never add facts.',
+    prompt: need.map(it => `FIELD ${it.field.id} (${it.field.type}): ${it.field.label}\n${it.field.options?.length ? `OPTIONS: ${it.field.options.slice(0, 250).map(o => `"${o}"`).join(', ')}` : 'NO OPTIONS (free text)'}\nFACT: ${it.fact}`).join('\n\n'),
   })
   for (const it of need) {
     const pick = res.picks.find(p => p.fieldId === it.field.id)?.option ?? null
-    out.set(it.field.id, pick ? bestOption(pick, it.field.options ?? []) : null)
+    out.set(it.field.id, !pick ? null : it.field.options?.length ? bestOption(pick, it.field.options) : scrubDashes(pick.trim()).slice(0, 200))
   }
   return out
 }
@@ -329,7 +378,6 @@ function formFieldQuestion(field: FormField, prompt: string | null): Omit<AskInp
     subject: truncate(field.label, 200),
     answerType: field.type === 'checkbox' || yesNo ? 'yes_no' : options.length > 0 ? 'choice' : field.type === 'number' ? 'number' : 'text',
     choices: options.length > 0 && !yesNo ? options.slice(0, 50) : undefined,
-    knowledgeKey: `form_answer:${truncate(field.label, 120)}`,
     blocking: field.required,
     category: 'technical',
   }
@@ -359,7 +407,9 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext):
   const free: FormField[] = []
 
   for (const field of snapshot.fields) {
-    const det = deterministic(field, ctx)
+    const opt = optOut(field)
+    if (opt) { results.set(field.id, opt); continue }
+    const det = checkOptions(field, deterministic(field, ctx))
     if (det) { results.set(field.id, det); continue }
 
     if (field.isEeo) {
@@ -374,15 +424,13 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext):
     if (fact) {
       const resolved = resolveFact(fact, ctx.entries)
       if (resolved) {
-        const direct = factValueFor(field, resolved)
+        const direct = factValueFor(field, resolved, fact)
         if (direct !== null) {
           results.set(field.id, answer(field, { value: direct, source: resolved.source, sourceDetail: resolved.detail, confidence: 'high' }))
         }
-        else if ((field.options ?? []).length > 0) {
-          factMaps.push({ field, fact: fact.statement(resolved.value), resolved })
-        }
         else {
-          free.push(field)
+          // Pick the option, or derive the short answer (a city's country or time zone), from the fact.
+          factMaps.push({ field, fact: fact.statement(resolved.value), resolved })
         }
         continue
       }
@@ -557,10 +605,14 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
       return { ...a, needsQuestionId: null, source: 'skipped' as const, sourceDetail: `You skipped question #${q.id}` }
     }
     if (q.status !== 'answered' || !q.answer) return a
-    const value = valueFromAnswerText(field, q.answer)
+    const fact = canonicalFactFor(field)
+    const answerText = cleanStoredAnswer(q.answer)
+    let value = valueFromAnswerText(field, answerText)
+    // A fact that does not answer this field as written ("Springfield, MO" for "What country?")
+    // goes through the same strict mapping as during preparation.
+    if (fact?.direct && !(field.options ?? []).length && factValueFor(field, { value: answerText, source: 'question', detail: '' }, fact) === null) value = null
     if (value === null || value === undefined) {
-      const fact = canonicalFactFor(field)
-      needModel.push({ field, fact: fact ? fact.statement(q.answer) : `Asked "${q.question}", Devin answered: ${q.answer}`, q, index })
+      needModel.push({ field, fact: fact ? fact.statement(answerText) : `Asked "${q.question}", Devin answered: ${answerText}`, q, index })
       return a
     }
     updated++

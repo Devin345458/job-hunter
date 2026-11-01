@@ -1,7 +1,7 @@
 import { inArray } from 'drizzle-orm'
 import { jobs } from '~~/server/db/schema'
 import { AiBudgetExceeded } from '~~/server/utils/ai'
-import { DEFAULT_MATCH_THRESHOLD, MAX_PER_RUN, pickJobsToPrepare, prepareApplication, refreshAllNeedsInput } from '~~/server/utils/apply/prepare'
+import { DEFAULT_MATCH_THRESHOLD, MAX_PER_RUN, pickJobsToPrepare, pickRetries, prepareApplication, refreshAllNeedsInput } from '~~/server/utils/apply/prepare'
 
 // Prepares applications for the strongest matches: tailored resume, cover letter, gap analysis,
 // and a dry run of the employer form. At most five per run. Payload (manual runs only):
@@ -20,13 +20,29 @@ export default defineTask({
       // Answers may have arrived since the last run; unblock every application they free.
       const refresh = await refreshAllNeedsInput(log)
 
-      const picked = jobIds?.length
-        ? useDb().select().from(jobs).where(inArray(jobs.id, jobIds)).all().slice(0, limit)
-        : pickJobsToPrepare(threshold, limit)
-      log(`picked ${picked.length} job(s) at threshold ${threshold}`)
-
-      const results: Array<{ jobId: number; applicationId: number | null; status: string; error?: string }> = []
+      // Failed or cut-off preparations go first and count toward the limit.
+      const retries = jobIds?.length ? [] : pickRetries(limit)
+      const results: Array<{ jobId: number; applicationId: number | null; status: string; error?: string; retry?: boolean }> = []
       let budgetStop = false
+      for (const app of retries) {
+        try {
+          const r = await prepareApplication(app.jobId, app, log)
+          results.push({ jobId: app.jobId, applicationId: r.applicationId, status: r.status, retry: true, ...(r.error ? { error: r.error } : {}) })
+        }
+        catch (e: any) {
+          results.push({ jobId: app.jobId, applicationId: app.id, status: 'error', retry: true, error: e?.statusMessage || e?.message || String(e) })
+          if (e instanceof AiBudgetExceeded) { budgetStop = true; break }
+        }
+      }
+
+      const remaining = budgetStop ? 0 : limit - retries.length
+      const picked = remaining <= 0
+        ? []
+        : jobIds?.length
+          ? useDb().select().from(jobs).where(inArray(jobs.id, jobIds)).all().slice(0, remaining)
+          : pickJobsToPrepare(threshold, remaining)
+      log(`retried ${retries.length}, picked ${picked.length} new job(s) at threshold ${threshold}`)
+
       for (const job of picked) {
         try {
           const r = await prepareApplication(job.id, undefined, log)
@@ -40,6 +56,7 @@ export default defineTask({
       const count = (s: string) => results.filter(r => r.status === s).length
       return {
         threshold,
+        retried: retries.length,
         picked: picked.length,
         proposed: count('proposed'),
         needsInput: count('needs_input'),
