@@ -1,110 +1,125 @@
 <script setup lang="ts">
 import type { ApplicationWithJob } from '~/composables/useApplications'
-import type { ApplicationStatus } from '#shared/types/pipeline'
+import { timeAgo } from '~/composables/review/format'
 
-const props = defineProps<{
-  application: ApplicationWithJob
-}>()
+// One application as a list row: company and role, the status tag with the one-line detail of
+// what is happening, the match score, and when it last moved. The whole row is the link.
+const props = defineProps<{ application: ApplicationWithJob }>()
 
-const router = useRouter()
-
-const statusColors: Partial<Record<ApplicationStatus, string>> = {
-  draft: 'grey',
-  ready: 'info',
-  submitted: 'primary',
-  response_received: 'accent',
-  interviewing: 'warning',
-  rejected: 'error',
-  offer: 'success',
-}
-
-const statusLabels: Partial<Record<ApplicationStatus, string>> = {
-  draft: 'Draft',
-  ready: 'Ready',
-  submitted: 'Submitted',
-  response_received: 'Response',
-  interviewing: 'Interviewing',
-  rejected: 'Rejected',
-  offer: 'Offer',
-}
-
-const dateApplied = computed(() => {
-  if (!props.application.submittedAt) return null
-  return new Date(props.application.submittedAt).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-})
-
-const dateCreated = computed(() => {
-  return new Date(props.application.createdAt).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-})
-
-function navigateToDetail() {
-  router.push(`/applications/${props.application.id}`)
-}
+const when = computed(() => timeAgo(props.application.submittedAt || props.application.updatedAt || props.application.createdAt))
 </script>
 
 <template>
-  <v-card
-    class="application-card"
-    @click="navigateToDetail"
-  >
-    <v-card-item>
-      <template #prepend>
-        <JobsMatchScoreBadge
-          v-if="application.job?.matchScore != null"
-          :score="application.job.matchScore"
-          size="small"
-        />
-      </template>
-
-      <v-card-title>{{ application.job?.title || 'Unknown Role' }}</v-card-title>
-      <v-card-subtitle>{{ application.job?.company || 'Unknown Company' }}</v-card-subtitle>
-
-      <template #append>
-        <v-chip
-          :color="statusColors[application.status as ApplicationStatus] || 'grey'"
-          size="small"
-          variant="tonal"
-        >
-          {{ statusLabels[application.status as ApplicationStatus] || application.status }}
-        </v-chip>
-      </template>
-    </v-card-item>
-
-    <v-card-text class="d-flex align-center ga-4 text-body-2 text-medium-emphasis">
-      <span v-if="dateApplied">
-        <v-icon size="x-small" icon="mdi-send" class="mr-1" />
-        Applied {{ dateApplied }}
-      </span>
-      <span v-else>
-        <v-icon size="x-small" icon="mdi-calendar-plus" class="mr-1" />
-        Created {{ dateCreated }}
-      </span>
-
-      <span v-if="application.job?.location">
-        <v-icon size="x-small" icon="mdi-map-marker" class="mr-1" />
-        {{ application.job.location }}
-      </span>
-    </v-card-text>
-  </v-card>
+  <NuxtLink :to="`/applications/${application.id}`" class="arow">
+    <div class="arow__main">
+      <div class="arow__company">
+        {{ application.job?.company || 'Unknown company' }}
+        <span v-if="application.isSandbox" class="arow__sandbox">Sandbox</span>
+      </div>
+      <div class="arow__title">{{ application.job?.title || 'Unknown role' }}</div>
+      <div class="arow__status">
+        <ApplicationsStatusTag :status="application.status" />
+        <span v-if="application.statusDetail" class="arow__detail">{{ application.statusDetail }}</span>
+      </div>
+    </div>
+    <div class="arow__side">
+      <span v-if="application.job?.matchScore != null" class="arow__score tabular" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
+      <span class="arow__when">{{ when }}</span>
+    </div>
+  </NuxtLink>
 </template>
 
 <style scoped lang="scss">
-.application-card {
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+.arow {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-height: 56px;
+  padding: 14px 16px;
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  transition: background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
 
-  &:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  &:hover { background: rgb(var(--v-theme-surface-bright)); }
+  &:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+
+  &__main { flex: 1; min-width: 0; }
+
+  &__company {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
+
+  &__sandbox {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    padding: 0 6px;
+    border-radius: 6px;
+    color: rgb(var(--v-theme-info));
+    border: 1px dashed rgba(var(--v-theme-info), 0.6);
+  }
+
+  &__title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 2px 0 8px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+
+  &__status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  &__detail {
+    min-width: 0;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  &__score {
+    font-size: 1.0625rem;
+    font-weight: 700;
+    min-width: 30px;
+    text-align: right;
+  }
+
+  &__when {
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 599px) {
+  .arow__status { flex-wrap: wrap; }
+  .arow__detail { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arow { transition: none; }
 }
 </style>

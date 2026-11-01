@@ -1,514 +1,444 @@
 <script setup lang="ts">
-import type { ApplicationWithJob, ApplicationStatus } from '~/composables/useApplications'
+import type { InferSelectModel } from 'drizzle-orm'
+import type { applications, jobs } from '~~/server/db/schema'
+import type { ReviewItem } from '#shared/types/pipeline'
+import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, timeAgo } from '~/composables/review/format'
 
-definePageMeta({
-  layout: 'default',
-})
+// One application's full record: where it stands, what the pipeline prepared (resume, cover
+// letter, the filled employer form with its screenshot), the evidence check behind every line,
+// and what happened on submit. Approve and reject live on the review card; this page links there.
+definePageMeta({ layout: 'default' })
+
+type Detail = InferSelectModel<typeof applications> & { job: InferSelectModel<typeof jobs> | null; review: ReviewItem | null }
 
 const route = useRoute()
-const router = useRouter()
-const { getApplication, updateApplication, loading, error } = useApplications()
 const snackbar = useSnackbar()
+const id = computed(() => Number(route.params.id))
 
-const application = ref<ApplicationWithJob | null>(null)
-const activeTab = ref('resume')
+const app = ref<Detail | null>(null)
+const state = ref<'loading' | 'ready' | 'missing' | 'error'>('loading')
+const loadError = ref<string | null>(null)
+const busy = ref<null | 'prepare' | 'refill' | 'refresh' | 'notes'>(null)
+const savingQuestionId = ref<number | null>(null)
 const notes = ref('')
-const savingNotes = ref(false)
-const questions = ref<{ id: number; question: string; answer: string | null; category: string | null }[]>([])
 
-const applicationId = computed(() => Number(route.params.id))
+const WORKING = ['preparing', 'approved', 'publishing', 'submitting']
+const REPREPARE = ['preparing', 'needs_input', 'proposed', 'needs_manual', 'submit_failed', 'draft', 'ready']
+const REFILL = ['needs_input', 'proposed', 'needs_manual', 'submit_failed']
 
-const statusColors: Record<ApplicationStatus, string> = {
-  draft: 'grey',
-  ready: 'info',
-  submitted: 'primary',
-  response_received: 'accent',
-  interviewing: 'warning',
-  rejected: 'error',
-  offer: 'success',
+const review = computed(() => app.value?.review ?? null)
+const status = computed(() => app.value?.status ?? '')
+const working = computed(() => WORKING.includes(status.value))
+const prepareFailed = computed(() => /^prepare_failed/.test(app.value?.formError ?? ''))
+const failureText = computed(() => ((app.value?.formError ?? '').split('\n')[0] ?? '').replace(/^prepare_failed attempt=(\d+): /, 'Attempt $1: '))
+const reviewable = computed(() => [...CAN_APPROVE, ...CAN_REJECT].includes(status.value as any))
+const accountAts = computed(() => ['workday', 'icims', 'taleo', 'successfactors'].includes(app.value?.job?.atsType ?? ''))
+
+useHead(() => ({ title: app.value?.job ? `${app.value.job.company} · Applications · Job Hunter` : 'Application · Job Hunter' }))
+
+let timer: ReturnType<typeof setTimeout> | null = null
+function schedule() {
+  if (timer) clearTimeout(timer)
+  if (working.value) timer = setTimeout(() => load(true), 3000)
 }
 
-const statusLabels: Record<ApplicationStatus, string> = {
-  draft: 'Draft',
-  ready: 'Ready',
-  submitted: 'Submitted',
-  response_received: 'Response',
-  interviewing: 'Interviewing',
-  rejected: 'Rejected',
-  offer: 'Offer',
-}
-
-interface TimelineEvent {
-  title: string
-  subtitle: string
-  icon: string
-  color: string
-  date: string
-}
-
-const timeline = computed<TimelineEvent[]>(() => {
-  if (!application.value) return []
-
-  const events: TimelineEvent[] = []
-
-  if (application.value.job?.foundAt) {
-    events.push({
-      title: 'Job Found',
-      subtitle: `Discovered on ${application.value.job.source || 'job board'}`,
-      icon: 'mdi-magnify',
-      color: 'info',
-      date: application.value.job.foundAt,
-    })
+async function load(quiet = false) {
+  if (!quiet) state.value = 'loading'
+  if (!Number.isInteger(id.value) || id.value <= 0) {
+    state.value = 'missing'
+    return
   }
-
-  events.push({
-    title: 'Application Created',
-    subtitle: 'Resume tailoring started',
-    icon: 'mdi-file-document-edit',
-    color: 'primary',
-    date: application.value.createdAt,
-  })
-
-  if (application.value.submittedAt) {
-    events.push({
-      title: 'Application Submitted',
-      subtitle: 'Sent to company',
-      icon: 'mdi-send',
-      color: 'success',
-      date: application.value.submittedAt,
-    })
-  }
-
-  if (application.value.responseAt) {
-    events.push({
-      title: 'Response Received',
-      subtitle: 'Company responded',
-      icon: 'mdi-email-open',
-      color: 'accent',
-      date: application.value.responseAt,
-    })
-  }
-
-  return events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-})
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-async function downloadPdf() {
-  if (!application.value) return
-  const url = `/api/resume/pdf/${application.value.id}`
-  window.open(url, '_blank')
-}
-
-async function loadApplication() {
   try {
-    application.value = await getApplication(applicationId.value)
-    notes.value = application.value.notes || ''
+    const data = await $fetch<Detail>(`/api/applications/${id.value}`)
+    const firstLoad = !app.value
+    app.value = data
+    if (firstLoad || busy.value !== 'notes') notes.value = data.notes ?? ''
+    state.value = 'ready'
   }
-  catch {
-    // Error handled by composable
+  catch (e: any) {
+    if (e?.statusCode === 404 || e?.response?.status === 404) state.value = 'missing'
+    else if (!quiet) {
+      loadError.value = e?.data?.statusMessage || e?.message || 'Could not load this application'
+      state.value = 'error'
+    }
+  }
+  finally {
+    schedule()
   }
 }
 
-async function loadQuestions() {
+onMounted(() => load())
+onBeforeUnmount(() => { if (timer) clearTimeout(timer) })
+
+async function run(kind: 'prepare' | 'refill' | 'refresh') {
+  if (!app.value || busy.value) return
+  busy.value = kind
   try {
-    const data = await $fetch<{ questions: typeof questions.value }>('/api/questions', {
-      params: { applicationId: applicationId.value },
-    })
-    questions.value = data.questions || []
+    if (kind === 'refresh') {
+      const r = await $fetch<{ updated: number; status: string }>(`/api/applications/${app.value.id}/refresh-answers`, { method: 'POST' })
+      snackbar.success(r.updated ? `${r.updated} answer${r.updated === 1 ? '' : 's'} updated from your replies` : 'Nothing new to take in')
+    }
+    else {
+      await $fetch(`/api/applications/${app.value.id}/${kind}`, { method: 'POST' })
+      snackbar.success(kind === 'prepare' ? 'Preparing again: resume, cover letter, and form' : 'Filling the employer form again')
+    }
+    await load(true)
   }
-  catch {
-    questions.value = []
+  catch (e: any) {
+    snackbar.notify(e?.data?.statusMessage || e?.message || 'That did not work', 'error', { timeout: -1 })
+  }
+  finally {
+    busy.value = null
+  }
+}
+
+async function answer(questionId: number, value: string | null, skip = false) {
+  savingQuestionId.value = questionId
+  try {
+    await $fetch(`/api/questions/${questionId}`, { method: 'PATCH', body: skip ? { status: 'skipped' } : { status: 'answered', answer: value } })
+    await load(true)
+  }
+  catch (e: any) {
+    snackbar.notify(e?.data?.statusMessage || e?.message || 'Could not save the answer', 'error', { timeout: -1 })
+  }
+  finally {
+    savingQuestionId.value = null
   }
 }
 
 async function saveNotes() {
-  if (!application.value) return
-
-  savingNotes.value = true
+  if (!app.value) return
+  busy.value = 'notes'
   try {
-    application.value = await updateApplication(application.value.id, {
-      notes: notes.value,
-    })
+    await $fetch(`/api/applications/${app.value.id}`, { method: 'PATCH', body: { notes: notes.value } })
     snackbar.success('Notes saved')
   }
-  catch {
-    snackbar.error('Failed to save notes. Please try again.')
+  catch (e: any) {
+    snackbar.notify(e?.data?.statusMessage || e?.message || 'Could not save the notes', 'error', { timeout: -1 })
   }
   finally {
-    savingNotes.value = false
+    busy.value = null
   }
 }
 
-onMounted(() => {
-  loadApplication()
-  loadQuestions()
+// ── Section summaries ──
+const formSummary = computed(() => {
+  const f = review.value?.form
+  if (!f?.snapshot) return f?.error ? 'The form could not be used' : accountAts.value ? 'Account required, no form' : 'Not filled yet'
+  const filled = f.answers.filter(a => a.filled).length
+  const blockers = f.snapshot.blockers.length
+  return `${filled} of ${f.snapshot.fields.length} fields filled${blockers ? `, ${blockers} blocker${blockers === 1 ? '' : 's'}` : ''}`
+})
+const questionsSummary = computed(() => {
+  const qs = review.value?.openQuestions ?? []
+  const blocking = qs.filter(q => q.blocking).length
+  return `${qs.length} open${blocking ? `, ${blocking} blocking` : ''}`
+})
+const resumeSummary = computed(() => {
+  const r = review.value?.resume
+  if (!r) return 'Not tailored yet'
+  const bullets = r.experience.reduce((n, e) => n + e.bullets.length, 0)
+  return `${r.experience.length} roles, ${bullets} bullets`
+})
+const letterSummary = computed(() => {
+  const text = (app.value?.coverLetter ?? '').split('\n\n').slice(1).join(' ').trim()
+  return text ? `${text.slice(0, 90)}${text.length > 90 ? '…' : ''}` : 'Not written yet'
+})
+const evidenceSummary = computed(() => {
+  const notes = app.value?.tailoringNotes ?? ''
+  const parts = [...notes.matchAll(/^(Resume|Cover letter) evidence check: \d+ lines checked against the knowledge base\. (\d+) supported, (\d+) rewritten, (\d+) dropped\./gm)]
+    .map(m => `${m[1]}: ${m[2]} supported, ${m[3]} rewritten, ${m[4]} dropped`)
+  return parts.join('. ') || 'No check recorded'
+})
+const evidenceTone = computed(() => (/\b[1-9]\d* dropped/.test(evidenceSummary.value) ? 'warning' : 'default'))
+const submissionSummary = computed(() => {
+  const s = review.value?.submission
+  if (review.value?.submitError) return 'Submit failed'
+  if (!s) return 'Not submitted'
+  return s.method === 'automated' ? `Submitted ${clockTime(s.submittedAt)}` : 'Handed back to submit by hand'
 })
 </script>
 
 <template>
-  <div class="fade-in">
-    <!-- Back button -->
-    <v-btn
-      variant="text"
-      prepend-icon="mdi-arrow-left"
-      class="mb-4"
-      size="small"
-      @click="router.back()"
-    >
-      Back to Applications
-    </v-btn>
+  <div class="ad">
+    <div class="ad__top">
+      <v-btn to="/applications" variant="text" height="44" prepend-icon="mdi-arrow-left" class="ad__back">Applications</v-btn>
+    </div>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
+    <v-skeleton-loader v-if="state === 'loading'" type="heading, paragraph, image, paragraph" class="ad__skel" />
 
-    <v-alert
-      v-if="error"
-      type="error"
-      variant="tonal"
-      class="mb-4"
-    >
-      <v-alert-title class="text-body-2 font-weight-bold">Failed to load application</v-alert-title>
-      <div class="text-body-2 mt-1">{{ error }}</div>
-      <div class="mt-3 d-flex ga-2">
-        <v-btn
-          variant="outlined"
-          size="small"
-          color="error"
-          prepend-icon="mdi-refresh"
-          @click="loadApplication()"
-        >
-          Retry
-        </v-btn>
-        <v-btn
-          variant="text"
-          size="small"
-          prepend-icon="mdi-arrow-left"
-          @click="router.push('/applications')"
-        >
-          Back to Applications
-        </v-btn>
+    <div v-else-if="state === 'missing'" class="ad__state">
+      <v-icon icon="mdi-file-question-outline" size="28" />
+      <h1 class="ad__state-title">No such application</h1>
+      <p class="ad__state-text">It may have been an old link. Every application the pipeline prepared is in the list.</p>
+      <v-btn color="primary" height="44" to="/applications">All applications</v-btn>
+    </div>
+
+    <div v-else-if="state === 'error'" class="ad__state" role="alert">
+      <v-icon icon="mdi-alert-outline" size="28" color="error" />
+      <h1 class="ad__state-title">Could not load this application</h1>
+      <p class="ad__state-text">{{ loadError }}</p>
+      <v-btn variant="outlined" height="44" prepend-icon="mdi-refresh" @click="load()">Try again</v-btn>
+    </div>
+
+    <article v-else-if="app" class="ad__card">
+      <header class="ad__head">
+        <div class="ad__eyebrow">
+          <span class="ad__company">{{ app.job?.company || 'Unknown company' }}</span>
+          <ApplicationsStatusTag :status="app.status" />
+          <span v-if="app.isSandbox" class="ad__sandbox">Sandbox</span>
+        </div>
+        <h1 class="ad__title">{{ app.job?.title || 'Unknown role' }}</h1>
+        <p v-if="app.statusDetail" class="ad__detail" :class="{ 'ad__detail--working': working }" aria-live="polite">
+          <v-progress-circular v-if="working" indeterminate size="14" width="2" color="info" />
+          {{ app.statusDetail }}
+        </p>
+        <div class="ad__meta">
+          <span v-if="app.job?.location"><v-icon icon="mdi-map-marker-outline" size="15" />{{ app.job.location }}</span>
+          <span v-if="review?.form.snapshot?.atsType || app.job?.atsType"><v-icon icon="mdi-form-select" size="15" />{{ review?.form.snapshot?.atsType || app.job?.atsType }} form{{ app.job?.applyUrl ? ` at ${hostOf(app.job.applyUrl)}` : '' }}</span>
+          <span v-if="app.job?.matchScore != null" class="tabular"><v-icon icon="mdi-target" size="15" />Match {{ app.job.matchScore }}</span>
+          <span><v-icon icon="mdi-clock-outline" size="15" />Updated {{ timeAgo(app.updatedAt) }}</span>
+        </div>
+        <div class="ad__links">
+          <v-btn v-if="reviewable" :to="`/review/${app.id}`" variant="tonal" height="44" prepend-icon="mdi-inbox-arrow-down-outline">Open the review card</v-btn>
+          <v-btn v-if="app.job?.url" :href="app.job.url" target="_blank" rel="noopener" variant="outlined" height="44" prepend-icon="mdi-open-in-new">Posting</v-btn>
+          <v-btn v-if="app.job" :to="`/jobs/${app.job.id}`" variant="outlined" height="44" prepend-icon="mdi-briefcase-outline">Job details</v-btn>
+        </div>
+      </header>
+
+      <div v-if="prepareFailed" class="ad__alert" role="alert">
+        <v-icon icon="mdi-alert-octagon-outline" size="18" />
+        <div>
+          <div class="ad__alert-title">Preparation failed</div>
+          <div class="ad__alert-text">{{ failureText }}</div>
+        </div>
       </div>
-    </v-alert>
 
-    <template v-if="application">
-      <!-- Company Header -->
-      <v-card variant="outlined" class="mb-6">
-        <v-card-item>
-          <template #prepend>
-            <v-avatar color="primary" variant="tonal" size="48">
-              <v-icon icon="mdi-domain" />
-            </v-avatar>
-          </template>
-
-          <v-card-title class="text-h5 font-weight-bold" style="letter-spacing: -0.02em;">
-            {{ application.job?.company || 'Unknown Company' }}
-          </v-card-title>
-          <v-card-subtitle class="text-body-1">
-            {{ application.job?.title || 'Unknown Role' }}
-          </v-card-subtitle>
-
-          <template #append>
-            <v-chip
-              :color="statusColors[application.status as ApplicationStatus] || 'grey'"
-              variant="tonal"
-            >
-              {{ statusLabels[application.status as ApplicationStatus] || application.status }}
-            </v-chip>
-          </template>
-        </v-card-item>
-
-        <v-card-text class="d-flex flex-wrap ga-3 pt-0">
-          <v-chip
-            v-if="application.job?.companyUrl"
-            :href="application.job.companyUrl"
-            target="_blank"
-            variant="outlined"
-            prepend-icon="mdi-open-in-new"
-            size="small"
-          >
-            Company Website
-          </v-chip>
-
-          <v-chip
-            v-if="application.job?.location"
-            variant="outlined"
-            prepend-icon="mdi-map-marker-outline"
-            size="small"
-          >
-            {{ application.job.location }}
-          </v-chip>
-
-          <v-chip
-            v-if="application.job?.matchScore != null"
-            variant="outlined"
-            prepend-icon="mdi-chart-line"
-            size="small"
-          >
-            Match: {{ application.job.matchScore }}%
-          </v-chip>
-        </v-card-text>
-      </v-card>
-
-      <!-- Content Tabs -->
-      <v-card variant="outlined">
-        <v-tabs
-          v-model="activeTab"
-          color="primary"
-          bg-color="surface"
+      <div class="ad__actions">
+        <v-btn
+          v-if="REPREPARE.includes(app.status)"
+          variant="outlined"
+          height="44"
+          prepend-icon="mdi-restart"
+          :loading="busy === 'prepare'"
+          :disabled="!!busy || working"
+          @click="run('prepare')"
         >
-          <v-tab value="resume" prepend-icon="mdi-file-document-outline">
-            Resume
-          </v-tab>
-          <v-tab value="cover-letter" prepend-icon="mdi-email-edit-outline">
-            Cover Letter
-          </v-tab>
-          <v-tab value="tailoring" prepend-icon="mdi-auto-fix">
-            Tailoring Notes
-          </v-tab>
-          <v-tab value="timeline" prepend-icon="mdi-timeline-clock-outline">
-            Timeline
-          </v-tab>
-          <v-tab value="notes" prepend-icon="mdi-note-edit-outline">
-            Notes
-          </v-tab>
-          <v-tab value="qa" prepend-icon="mdi-chat-processing-outline">
-            Q&A
-          </v-tab>
-        </v-tabs>
+          Prepare again
+        </v-btn>
+        <v-btn
+          v-if="REFILL.includes(app.status) && app.job?.applyUrl && !accountAts"
+          variant="outlined"
+          height="44"
+          prepend-icon="mdi-form-textbox"
+          :loading="busy === 'refill'"
+          :disabled="!!busy || working"
+          @click="run('refill')"
+        >
+          Fill the form again
+        </v-btn>
+        <v-btn
+          v-if="app.status === 'needs_input'"
+          variant="outlined"
+          height="44"
+          prepend-icon="mdi-sync"
+          :loading="busy === 'refresh'"
+          :disabled="!!busy"
+          @click="run('refresh')"
+        >
+          Take in my answers
+        </v-btn>
+        <p class="ad__actions-note">
+          Nothing here submits. Filling the form again never attaches files or clicks submit; only Approve on the review card sends an application.
+        </p>
+      </div>
 
-        <v-divider />
+      <div class="ad__sections">
+        <ReviewSection
+          v-if="review?.openQuestions.length"
+          title="Questions for you"
+          icon="mdi-comment-question-outline"
+          :summary="questionsSummary"
+          tone="warning"
+          default-open
+        >
+          <ReviewQuestions
+            :questions="review.openQuestions"
+            :saving-id="savingQuestionId"
+            @answer="(qid: number, value: string) => answer(qid, value)"
+            @skip="(qid: number) => answer(qid, null, true)"
+          />
+        </ReviewSection>
 
-        <v-tabs-window v-model="activeTab">
-          <!-- Resume Tab -->
-          <v-tabs-window-item value="resume">
-            <v-card-text>
-              <div v-if="application.tailoredResumeJson" class="resume-preview pa-6">
-                <v-icon icon="mdi-file-check-outline" size="40" color="success" class="mb-3" />
-                <p class="text-body-2 font-weight-medium mb-1">Tailored resume ready</p>
-                <p class="text-caption text-medium-emphasis mb-4">
-                  Your resume has been customized for this specific role.
-                </p>
-                <v-btn
-                  variant="tonal"
-                  color="primary"
-                  prepend-icon="mdi-download"
-                  @click="downloadPdf"
-                >
-                  Download PDF
-                </v-btn>
-              </div>
-              <div v-else class="resume-preview pa-8 text-center">
-                <v-icon icon="mdi-file-document-outline" size="48" class="mb-3" style="opacity: 0.25;" />
-                <h3 class="text-h6 mb-2">No Resume Generated</h3>
-                <p class="text-body-2 text-medium-emphasis mb-1">
-                  A tailored resume hasn't been generated for this application yet.
-                </p>
-                <p class="text-caption text-medium-emphasis mb-4">
-                  Go to the job detail page to generate one. The AI will customize your resume to match the job requirements.
-                </p>
-                <v-btn
-                  v-if="application.jobId"
-                  variant="tonal"
-                  color="primary"
-                  prepend-icon="mdi-file-document-edit-outline"
-                  :to="`/jobs/${application.jobId}`"
-                >
-                  Go to Job
-                </v-btn>
-              </div>
-            </v-card-text>
-          </v-tabs-window-item>
+        <ReviewSection title="Employer form" icon="mdi-form-select" :summary="formSummary" :tone="review?.form.error ? 'error' : 'default'" :default-open="!review?.openQuestions.length">
+          <ReviewFormAnswers
+            v-if="review && (review.form.snapshot || review.form.error)"
+            :answers="review.form.answers"
+            :snapshot="review.form.snapshot"
+            :screenshot-url="review.form.screenshotUrl"
+            :filled-at="review.form.filledAt"
+            :form-error="review.form.error"
+            :copy-mode="app.status === 'needs_manual'"
+          />
+          <p v-else class="ad__empty">
+            {{ accountAts ? 'This employer uses an applicant-account system, so there is no form to fill. Apply by hand with the resume and cover letter below.' : working ? 'The form is filled after the resume and cover letter are ready.' : 'The form has not been filled yet.' }}
+          </p>
+        </ReviewSection>
 
-          <!-- Cover Letter Tab -->
-          <v-tabs-window-item value="cover-letter">
-            <v-card-text>
-              <div v-if="application.coverLetter" class="cover-letter">
-                <div class="text-body-1" style="white-space: pre-wrap;">{{ application.coverLetter }}</div>
-              </div>
-              <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-email-edit-outline" size="40" class="mb-3" style="opacity: 0.25;" />
-                <p class="text-body-2 text-medium-emphasis mb-1">No cover letter yet</p>
-                <p class="text-caption text-medium-emphasis">
-                  A cover letter will be generated along with your tailored resume when you apply through the job detail page.
-                </p>
-              </div>
-            </v-card-text>
-          </v-tabs-window-item>
+        <ReviewSection title="Resume" icon="mdi-file-account-outline" :summary="resumeSummary">
+          <ReviewResume v-if="review?.resume" :resume="review.resume" :pdf-url="review.resumePdfUrl" />
+          <p v-else class="ad__empty">The tailored resume appears here once it is written and checked.</p>
+        </ReviewSection>
 
-          <!-- Tailoring Notes Tab -->
-          <v-tabs-window-item value="tailoring">
-            <v-card-text>
-              <div v-if="application.tailoringNotes">
-                <div class="info-banner mb-4">
-                  <div class="d-flex align-start ga-2">
-                    <v-icon icon="mdi-information-outline" size="16" class="mt-1 info-banner__icon" />
-                    <div class="info-banner__text">
-                      These notes explain how the AI customized your resume for this role — what was emphasized, reworded, or restructured.
-                    </div>
-                  </div>
-                </div>
-                <div class="text-body-2" style="white-space: pre-wrap; line-height: 1.7;">
-                  {{ application.tailoringNotes }}
-                </div>
-              </div>
-              <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-auto-fix" size="40" class="mb-3" style="opacity: 0.25;" />
-                <p class="text-body-2 text-medium-emphasis mb-1">No tailoring notes</p>
-                <p class="text-caption text-medium-emphasis">
-                  When a resume is generated, the AI provides notes explaining what it emphasized and why.
-                </p>
-              </div>
-            </v-card-text>
-          </v-tabs-window-item>
+        <ReviewSection title="Cover letter" icon="mdi-email-outline" :summary="letterSummary">
+          <div v-if="app.coverLetter" class="ad__doc">{{ app.coverLetter }}</div>
+          <p v-else class="ad__empty">The cover letter appears here once it is written and checked.</p>
+        </ReviewSection>
 
-          <!-- Timeline Tab -->
-          <v-tabs-window-item value="timeline">
-            <v-card-text>
-              <v-timeline
-                v-if="timeline.length"
-                side="end"
-                density="compact"
-                truncate-line="both"
-              >
-                <v-timeline-item
-                  v-for="(event, idx) in timeline"
-                  :key="idx"
-                  :dot-color="event.color"
-                  :icon="event.icon"
-                  size="small"
-                >
-                  <div class="mb-1">
-                    <strong class="text-body-2">{{ event.title }}</strong>
-                  </div>
-                  <div class="text-caption text-medium-emphasis">
-                    {{ event.subtitle }}
-                  </div>
-                  <div class="text-caption text-medium-emphasis mt-1">
-                    {{ formatDate(event.date) }}
-                  </div>
-                </v-timeline-item>
-              </v-timeline>
+        <ReviewSection title="Evidence check" icon="mdi-shield-check-outline" :summary="evidenceSummary" :tone="evidenceTone">
+          <ApplicationsEvidenceCheck :notes="app.tailoringNotes" />
+        </ReviewSection>
 
-              <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-timeline-clock-outline" size="40" class="mb-3" style="opacity: 0.25;" />
-                <p class="text-body-2 text-medium-emphasis mb-1">No timeline events yet</p>
-                <p class="text-caption text-medium-emphasis">
-                  Events are added automatically as your application progresses through each stage.
-                </p>
-              </div>
-            </v-card-text>
-          </v-tabs-window-item>
+        <ReviewSection title="Submission" icon="mdi-send-outline" :summary="submissionSummary" :tone="review?.submitError ? 'error' : review?.submission?.method === 'automated' ? 'success' : 'default'">
+          <ApplicationsSubmissionPanel :application-id="app.id" :submission="review?.submission ?? null" :submit-error="review?.submitError ?? null" />
+        </ReviewSection>
 
-          <!-- Notes Tab -->
-          <v-tabs-window-item value="notes">
-            <v-card-text>
-              <div class="info-banner mb-4">
-                <div class="d-flex align-start ga-2">
-                  <v-icon icon="mdi-information-outline" size="16" class="mt-1 info-banner__icon" />
-                  <div class="info-banner__text">
-                    Use this space for personal notes about the application — interview prep, follow-up reminders, contact info, or anything else you want to track.
-                  </div>
-                </div>
-              </div>
-              <v-textarea
-                v-model="notes"
-                label="Your notes"
-                placeholder="Add any personal notes about this application..."
-                rows="8"
-                auto-grow
-                hide-details
-                class="mb-4"
-              />
-              <div class="d-flex justify-end">
-                <v-btn
-                  color="primary"
-                  prepend-icon="mdi-content-save"
-                  :loading="savingNotes"
-                  @click="saveNotes"
-                >
-                  Save Notes
-                </v-btn>
-              </div>
-            </v-card-text>
-          </v-tabs-window-item>
-
-          <!-- Q&A Tab -->
-          <v-tabs-window-item value="qa">
-            <v-card-text>
-              <template v-if="questions.length">
-                <div class="info-banner mb-4">
-                  <div class="d-flex align-start ga-2">
-                    <v-icon icon="mdi-information-outline" size="16" class="mt-1 info-banner__icon" />
-                    <div class="info-banner__text">
-                      These interview questions were generated by AI based on the job requirements and any gaps identified in your profile. Prepare answers for each to strengthen your interview performance.
-                    </div>
-                  </div>
-                </div>
-                <v-card
-                  v-for="q in questions"
-                  :key="q.id"
-                  variant="tonal"
-                  class="mb-3"
-                >
-                  <v-card-item>
-                    <template #prepend>
-                      <v-icon
-                        :icon="q.answer ? 'mdi-check-circle' : 'mdi-help-circle-outline'"
-                        :color="q.answer ? 'success' : 'warning'"
-                        size="20"
-                      />
-                    </template>
-                    <v-card-title class="text-body-2 font-weight-medium">
-                      {{ q.question }}
-                    </v-card-title>
-                    <v-card-subtitle v-if="q.category" class="text-caption">
-                      {{ q.category }}
-                    </v-card-subtitle>
-                  </v-card-item>
-                  <v-card-text v-if="q.answer" class="pt-0">
-                    <div class="text-body-2 bg-surface pa-3 rounded-lg">
-                      {{ q.answer }}
-                    </div>
-                  </v-card-text>
-                </v-card>
-              </template>
-
-              <div v-else class="text-center pa-8">
-                <v-icon icon="mdi-chat-processing-outline" size="40" class="mb-3" style="opacity: 0.25;" />
-                <p class="text-body-2 text-medium-emphasis mb-1">No interview questions yet</p>
-                <p class="text-caption text-medium-emphasis">
-                  Interview questions are generated when the AI identifies gaps between your profile and the job requirements during resume tailoring.
-                </p>
-              </div>
-            </v-card-text>
-          </v-tabs-window-item>
-        </v-tabs-window>
-      </v-card>
-    </template>
+        <ReviewSection title="Your notes" icon="mdi-note-edit-outline" :summary="app.notes ? app.notes.slice(0, 80) : 'None'">
+          <v-textarea v-model="notes" label="Notes" placeholder="Interview prep, follow-ups, contacts" rows="4" auto-grow hide-details class="ad__notes" />
+          <v-btn variant="outlined" height="44" prepend-icon="mdi-content-save-outline" :loading="busy === 'notes'" :disabled="notes === (app.notes ?? '')" @click="saveNotes">Save notes</v-btn>
+        </ReviewSection>
+      </div>
+    </article>
   </div>
 </template>
 
 <style scoped lang="scss">
-.resume-preview {
-  border: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 12px;
-  min-height: 300px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+.ad {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 8px 0 32px;
+
+  &__top { margin: 0 0 8px -8px; }
+  &__skel { border-radius: 12px; }
+
+  &__state {
+    display: grid;
+    justify-items: start;
+    gap: 8px;
+    padding: 24px;
+    border-radius: 12px;
+    background: rgb(var(--v-theme-surface));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__state-title { font-size: 1.125rem; font-weight: 650; margin: 0; }
+  &__state-text { margin: 0 0 8px; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
+
+  &__card {
+    background: rgb(var(--v-theme-surface));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-radius: 12px;
+    padding: 20px 24px 8px;
+  }
+
+  &__eyebrow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 4px; }
+  &__company { font-weight: 600; font-size: 0.9375rem; color: rgba(var(--v-theme-on-surface), 0.86); }
+
+  &__sandbox {
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 6px;
+    color: rgb(var(--v-theme-info));
+    border: 1px dashed rgba(var(--v-theme-info), 0.6);
+  }
+
+  &__title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    line-height: 1.25;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+    overflow-wrap: anywhere;
+  }
+
+  &__detail {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0 0 10px;
+    font-size: 0.875rem;
+    color: rgba(var(--v-theme-on-surface), 0.86);
+    overflow-wrap: anywhere;
+
+    .v-progress-circular { margin-top: 3px; flex-shrink: 0; }
+  }
+
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+
+    span { display: inline-flex; align-items: center; gap: 4px; }
+  }
+
+  &__links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+  &__alert {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    color: rgb(var(--v-theme-error));
+    background: rgba(var(--v-theme-error), 0.08);
+    border: 1px solid rgba(var(--v-theme-error), 0.3);
+  }
+
+  &__alert-title { font-weight: 600; font-size: 0.875rem; }
+  &__alert-text { font-size: 0.8125rem; color: rgba(var(--v-theme-on-surface), 0.86); overflow-wrap: anywhere; }
+
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: rgb(var(--v-theme-background));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__actions-note {
+    flex-basis: 100%;
+    margin: 4px 0 0;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__sections { margin-top: 12px; }
+
+  &__doc {
+    white-space: pre-line;
+    font-size: 0.875rem;
+    line-height: 1.65;
+    padding: 16px 18px;
+    border-radius: 8px;
+    background: rgb(var(--v-theme-sunken));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    max-height: 520px;
+    overflow-y: auto;
+  }
+
+  &__empty { margin: 0; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
+  &__notes { margin-bottom: 12px; }
 }
 
-.cover-letter {
-  max-width: 700px;
-  line-height: 1.7;
+@media (max-width: 599px) {
+  .ad__card { padding: 16px 16px 4px; border-radius: 10px; }
+  .ad__links .v-btn, .ad__actions .v-btn { flex: 1 1 100%; }
 }
 </style>
