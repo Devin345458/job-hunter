@@ -66,7 +66,8 @@ export const CANONICAL_FACTS: CanonicalFact[] = [
   },
   {
     key: 'work_authorization',
-    match: /(authori[sz]ed|eligible|permitted|able|entitled) to (legally )?work|work authori[sz]ation|right to work|employment eligibility|legally work/i,
+    // "able to work from a state where we are registered" is about location, so plain "able" is not enough.
+    match: /(authori[sz]ed|eligible|permitted|entitled) to (legally |lawfully )?work|legally (able|permitted) to work|work authori[sz]ation|right to work|employment eligibility|(legally|lawfully) work/i,
     kind: 'fact',
     subject: 'US work authorization',
     question: 'Are you legally authorized to work in the United States?',
@@ -224,8 +225,8 @@ function deterministic(field: FormField, ctx: AnswerContext): FormAnswer | null 
     value ? answer(field, { value, source: 'knowledge', sourceDetail: detail, confidence }) : null
 
   if (field.type === 'file') {
-    if (/resume|cv\b|curriculum/.test(label)) return answer(field, { value: 'resume.pdf', source: 'resume', sourceDetail: 'Tailored resume PDF for this application' })
-    if (/cover/.test(label)) return answer(field, { value: 'cover-letter.pdf', source: 'cover_letter', sourceDetail: 'Cover letter PDF for this application' })
+    if (/resume|cv\b|curriculum/.test(label)) return answer(field, { value: 'resume.pdf', source: 'resume', sourceDetail: 'Tailored resume PDF, attached only after you approve' })
+    if (/cover/.test(label)) return answer(field, { value: 'cover-letter.pdf', source: 'cover_letter', sourceDetail: 'Cover letter PDF, attached only after you approve' })
     return answer(field, { value: null, source: 'skipped', sourceDetail: 'The pipeline has no document for this upload', fillError: field.required ? 'Needs a document the pipeline does not have' : null })
   }
 
@@ -361,11 +362,26 @@ function questionContext(ctx: AnswerContext, field: FormField, ats: string) {
   return `${ctx.job.company} (${ctx.job.title}) asks "${truncate(field.label, 160)}" on its ${ats} application form. ${field.required ? 'The field is required, so the application waits on your answer.' : 'The field is optional.'}`
 }
 
-function askFor(ctx: AnswerContext, field: FormField, ats: string, input: Omit<AskInput, 'applicationId' | 'jobId' | 'context'>): FormAnswer {
-  const q = askQuestion({ ...input, applicationId: ctx.applicationId, jobId: ctx.job.id, context: questionContext(ctx, field, ats) })
+const OPTIONAL_ASKED = /^Optional: asked you as question #(\d+)/
+
+/**
+ * Asks Devin and returns the field's answer. needsQuestionId is set only when this application
+ * must wait for the answer: a question row is shared across applications and can be blocking
+ * because another form requires it, so an optional field here never points at it. Its
+ * sourceDetail keeps the question id instead, and refresh fills the field once it is answered.
+ */
+function askFor(ctx: AnswerContext, field: FormField, ats: string, input: Omit<AskInput, 'applicationId' | 'jobId' | 'context'>, opts: { optional?: boolean } = {}): FormAnswer {
+  // A fact question is one row shared by every application that needs it, so its context must
+  // read true on all of them. A form_field question is specific to the label that asked it.
+  const context = input.kind === 'form_field'
+    ? questionContext(ctx, field, ats)
+    : `Application forms ask for this (first seen on ${ctx.job.company}'s ${ats} form). Your answer is saved to the knowledge base and fills every form that asks.`
+  const q = askQuestion({ ...input, applicationId: ctx.applicationId, jobId: ctx.job.id, context })
   if (q.status === 'answered' && q.answer) {
-    return answer(field, { value: q.answer, source: 'question', sourceDetail: `question #${q.id}`, confidence: 'high' })
+    const value = valueFromAnswerText(field, cleanStoredAnswer(q.answer))
+    if (value !== null && value !== undefined) return answer(field, { value, source: 'question', sourceDetail: `question #${q.id}: ${truncate(q.answer, 80)}`, confidence: 'high' })
   }
+  if (opts.optional) return answer(field, { value: null, source: 'skipped', sourceDetail: `Optional: asked you as question #${q.id}`, confidence: 'low' })
   return answer(field, { value: null, source: 'question', sourceDetail: `question #${q.id}: ${q.question}`, confidence: 'low', needsQuestionId: q.id })
 }
 
@@ -447,7 +463,7 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext):
       }
       else {
         // Optional: ask once without blocking, so the knowledge base fills in for next time.
-        const a = askFor(ctx, field, ats, { question: fact.question, kind: fact.kind, subject: fact.subject, answerType: fact.answerType, knowledgeKey: fact.knowledgeKey, blocking: false })
+        const a = askFor(ctx, field, ats, { question: fact.question, kind: fact.kind, subject: fact.subject, answerType: fact.answerType, knowledgeKey: fact.knowledgeKey, blocking: false }, { optional: true })
         results.set(field.id, a)
       }
       continue
@@ -590,16 +606,20 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
   const answers = parseJson<FormAnswer[]>(app.answersJson, [])
   if (!snapshot || answers.length === 0) return { updated: 0, status: app.status, blockingQuestionIds: [] }
 
-  const ids = [...new Set(answers.map(a => a.needsQuestionId).filter((x): x is number => typeof x === 'number'))]
+  // Answers waiting on a question, and optional fields whose question was asked without blocking.
+  const questionIdOf = (a: FormAnswer): number | null => a.needsQuestionId ?? (a.source === 'skipped' && a.sourceDetail ? Number(a.sourceDetail.match(OPTIONAL_ASKED)?.[1]) || null : null)
+  const ids = [...new Set(answers.map(questionIdOf).filter((x): x is number => typeof x === 'number'))]
   const qs = ids.length ? db.select().from(questions).where(inArray(questions.id, ids)).all() : []
   let updated = 0
   const needModel: Array<{ field: FormField; fact: string; q: (typeof qs)[number]; index: number }> = []
 
   const next = answers.map((a, index) => {
-    if (!a.needsQuestionId) return a
-    const q = qs.find(x => x.id === a.needsQuestionId)
+    const qid = questionIdOf(a)
+    if (!qid) return a
+    const q = qs.find(x => x.id === qid)
     const field = snapshot.fields.find(f => f.id === a.fieldId)
     if (!q || !field) return a
+    if (!a.needsQuestionId && q.status !== 'answered') return a
     if (q.status === 'skipped' && !field.required) {
       updated++
       return { ...a, needsQuestionId: null, source: 'skipped' as const, sourceDetail: `You skipped question #${q.id}` }

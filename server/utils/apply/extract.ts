@@ -92,9 +92,17 @@ export function extractFieldsInPage(): RawField[] {
     if (!clean(t) || GENERIC.test(clean(t))) {
       const wrap = el.closest('label')
       if (wrap) {
-        const copy = wrap.cloneNode(true) as Element
-        copy.querySelectorAll('select, option, input, textarea, button, [class*="default-label" i], [class*="filename" i]').forEach(n => n.remove())
-        t = (copy.textContent || '').replace(/\s+/g, ' ')
+        // Only the label's own visible text: not the control's options, button captions, or
+        // hidden status messages ("Analyzing resume...") that some ATS keep inside the label.
+        const parts: string[] = []
+        const walker = document.createTreeWalker(wrap, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          const parent = node.parentElement
+          if (!parent || parent.closest('select, option, textarea, button, [class*="default-label" i], [class*="filename" i]')) continue
+          if (!parent.getClientRects().length || getComputedStyle(parent).visibility === 'hidden') continue
+          parts.push(node.textContent || '')
+        }
+        t = parts.join(' ').replace(/\s+/g, ' ')
       }
     }
     if (!clean(t) || GENERIC.test(clean(t))) t = containerLabel(el, [el]) || t

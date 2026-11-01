@@ -25,6 +25,7 @@ const notes = ref('')
 const WORKING = ['preparing', 'approved', 'publishing', 'submitting']
 const REPREPARE = ['preparing', 'needs_input', 'proposed', 'needs_manual', 'submit_failed', 'draft', 'ready']
 const REFILL = ['needs_input', 'proposed', 'needs_manual', 'submit_failed']
+const ANSWERS_MATTER = ['preparing', 'needs_input', 'proposed', 'needs_manual', 'submit_failed']
 
 const review = computed(() => app.value?.review ?? null)
 const status = computed(() => app.value?.status ?? '')
@@ -33,6 +34,10 @@ const prepareFailed = computed(() => /^prepare_failed/.test(app.value?.formError
 const failureText = computed(() => ((app.value?.formError ?? '').split('\n')[0] ?? '').replace(/^prepare_failed attempt=(\d+): /, 'Attempt $1: '))
 const reviewable = computed(() => [...CAN_APPROVE, ...CAN_REJECT].includes(status.value as any))
 const accountAts = computed(() => ['workday', 'icims', 'taleo', 'successfactors'].includes(app.value?.job?.atsType ?? ''))
+const showQuestions = computed(() => ANSWERS_MATTER.includes(status.value) && !!review.value?.openQuestions.length)
+const canPrepare = computed(() => REPREPARE.includes(status.value))
+const canRefill = computed(() => REFILL.includes(status.value) && !!app.value?.job?.applyUrl && !accountAts.value)
+const canRefresh = computed(() => status.value === 'needs_input')
 
 useHead(() => ({ title: app.value?.job ? `${app.value.job.company} · Applications · Job Hunter` : 'Application · Job Hunter' }))
 
@@ -214,9 +219,9 @@ const submissionSummary = computed(() => {
         </div>
       </div>
 
-      <div class="ad__actions">
+      <div v-if="canPrepare || canRefill || canRefresh" class="ad__actions">
         <v-btn
-          v-if="REPREPARE.includes(app.status)"
+          v-if="canPrepare"
           variant="outlined"
           height="44"
           prepend-icon="mdi-restart"
@@ -227,7 +232,7 @@ const submissionSummary = computed(() => {
           Prepare again
         </v-btn>
         <v-btn
-          v-if="REFILL.includes(app.status) && app.job?.applyUrl && !accountAts"
+          v-if="canRefill"
           variant="outlined"
           height="44"
           prepend-icon="mdi-form-textbox"
@@ -238,7 +243,7 @@ const submissionSummary = computed(() => {
           Fill the form again
         </v-btn>
         <v-btn
-          v-if="app.status === 'needs_input'"
+          v-if="canRefresh"
           variant="outlined"
           height="44"
           prepend-icon="mdi-sync"
@@ -255,7 +260,7 @@ const submissionSummary = computed(() => {
 
       <div class="ad__sections">
         <ReviewSection
-          v-if="review?.openQuestions.length"
+          v-if="showQuestions && review"
           title="Questions for you"
           icon="mdi-comment-question-outline"
           :summary="questionsSummary"
@@ -270,7 +275,7 @@ const submissionSummary = computed(() => {
           />
         </ReviewSection>
 
-        <ReviewSection title="Employer form" icon="mdi-form-select" :summary="formSummary" :tone="review?.form.error ? 'error' : 'default'" :default-open="!review?.openQuestions.length">
+        <ReviewSection title="Employer form" icon="mdi-form-select" :summary="formSummary" :tone="review?.form.error ? 'error' : 'default'" :default-open="!showQuestions">
           <ReviewFormAnswers
             v-if="review && (review.form.snapshot || review.form.error)"
             :answers="review.form.answers"
