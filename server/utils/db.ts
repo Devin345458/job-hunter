@@ -2,8 +2,29 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import Database from 'better-sqlite3'
 import * as schema from '../db/schema'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { existsSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { chmodSync, existsSync, mkdirSync, readdirSync } from 'fs'
+import { dirname, join } from 'path'
+
+/**
+ * In the container (running as root) keep the database and private files away from the
+ * unprivileged user that runs demo builds: the data directory can be traversed but not
+ * listed, and the database, backups, resumes, screenshots, and sandbox uploads are root-only.
+ */
+function lockDownDataDir(dbPath: string) {
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return
+  try {
+    const dir = dirname(dbPath)
+    chmodSync(dir, 0o711)
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith('job-hunter.db') || ['backups', 'resumes', 'cover-letters', 'screenshots', 'sandbox', 'sandbox-remotes'].includes(name)) {
+        chmodSync(join(dir, name), name.includes('.') ? 0o600 : 0o700)
+      }
+    }
+  }
+  catch (e) {
+    console.warn('[db] could not tighten data directory permissions', e)
+  }
+}
 
 let _db: ReturnType<typeof drizzle> | null = null
 
@@ -19,6 +40,7 @@ export function useDb() {
     mkdirSync(dir, { recursive: true })
   }
 
+  lockDownDataDir(dbPath)
   const sqlite = new Database(dbPath)
   sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')

@@ -1,0 +1,1 @@
+ALTER TABLE `learned_rules` ADD `is_sandbox` integer DEFAULT false NOT NULL;

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, decisions, demoProjects, jobs, questions } from '../db/schema'
 import type {
@@ -135,6 +135,23 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
   }
 }
 
+/** Question ids an application's form answers wait on (FormAnswer.needsQuestionId). */
+export function referencedQuestionIds(app: AppRow): number[] {
+  return parseJson<FormAnswer[]>(app.answersJson, [])
+    .map(a => a.needsQuestionId)
+    .filter((id): id is number => typeof id === 'number')
+}
+
+/**
+ * Pending questions for an application: the ones it asked (application_id) plus the ones its
+ * answers reference. askQuestion() dedupes by subject, so one question row can serve several
+ * applications while its application_id names only the first.
+ */
+function openQuestionsFor(app: AppRow, pending: QuestionRow[]): QuestionRow[] {
+  const refs = new Set(referencedQuestionIds(app))
+  return pending.filter(q => q.applicationId === app.id || refs.has(q.id))
+}
+
 /** Review items for applications in the given statuses, best score first. */
 export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
   const db = useDb()
@@ -146,13 +163,17 @@ export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
   if (rows.length === 0) return []
   const appIds = rows.map(r => r.app.id)
   const demos = db.select().from(demoProjects).where(inArray(demoProjects.applicationId, appIds)).orderBy(desc(demoProjects.id)).all()
-  const qs = db.select().from(questions).where(and(inArray(questions.applicationId, appIds), eq(questions.status, 'pending'))).all()
+  const refIds = rows.flatMap(r => referencedQuestionIds(r.app))
+  const qs = db.select().from(questions).where(and(
+    eq(questions.status, 'pending'),
+    refIds.length ? or(inArray(questions.applicationId, appIds), inArray(questions.id, refIds)) : inArray(questions.applicationId, appIds),
+  )).all()
   return rows
     .map(({ app, job }) => toReviewItem(
       app,
       job,
       demos.find(d => d.applicationId === app.id && d.status !== 'discarded') ?? null,
-      qs.filter(q => q.applicationId === app.id),
+      openQuestionsFor(app, qs),
     ))
     .sort((a, b) => (b.score?.final ?? 0) - (a.score?.final ?? 0) || (a.proposedAt ?? '').localeCompare(b.proposedAt ?? ''))
 }
@@ -169,9 +190,12 @@ export function getReviewItem(applicationId: number): ReviewItem | null {
     .where(eq(demoProjects.applicationId, applicationId))
     .orderBy(desc(demoProjects.id)).all()
     .find(d => d.status !== 'discarded') ?? null
-  const qs = db.select().from(questions)
-    .where(and(eq(questions.applicationId, applicationId), eq(questions.status, 'pending'))).all()
-  return toReviewItem(row.app, row.job, demo, qs)
+  const refIds = referencedQuestionIds(row.app)
+  const qs = db.select().from(questions).where(and(
+    eq(questions.status, 'pending'),
+    refIds.length ? or(eq(questions.applicationId, applicationId), inArray(questions.id, refIds)) : eq(questions.applicationId, applicationId),
+  )).all()
+  return toReviewItem(row.app, row.job, demo, openQuestionsFor(row.app, qs))
 }
 
 /** The job features a decision is stored with, so learning can find what rejections share. */

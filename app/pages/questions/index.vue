@@ -1,239 +1,242 @@
 <script setup lang="ts">
-definePageMeta({
-  layout: 'default',
-})
+import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
+
+definePageMeta({ layout: 'default' })
 
 const snackbar = useSnackbar()
 
-interface Question {
-  id: number
-  question: string
-  context: string | null
-  category: string | null
-  status: string
-  answer: string | null
-  askedAt: string
-  answeredAt: string | null
-}
-
-const pendingQuestions = ref<Question[]>([])
-const answeredQuestions = ref<Question[]>([])
-const loading = ref(false)
-const answers = ref<Record<number, string>>({})
+const all = ref<QuestionListItem[]>([])
+const loading = ref(true)
+const loadError = ref<string | null>(null)
+const saving = ref<Record<number, string | null>>({})
 const showAnswered = ref(false)
+const showSkipped = ref(false)
 
-async function fetchQuestions() {
-  loading.value = true
+const pending = computed(() => all.value.filter(q => q.status === 'pending'))
+const waitingOnYou = computed(() => pending.value.filter(q => q.waitingApplicationIds.length > 0 || q.blocking))
+const quick = computed(() => pending.value.filter(q => !q.legacy && !(q.waitingApplicationIds.length > 0 || q.blocking)))
+const legacy = computed(() => pending.value.filter(q => q.legacy && !(q.waitingApplicationIds.length > 0 || q.blocking)))
+const answered = computed(() => all.value.filter(q => q.status === 'answered').sort((a, b) => (b.answeredAt ?? '').localeCompare(a.answeredAt ?? '')))
+const skipped = computed(() => all.value.filter(q => q.status === 'skipped'))
+
+async function load() {
+  loadError.value = null
   try {
-    const data = await $fetch<{ questions: Question[] }>('/api/questions')
-    const all = data.questions || []
-    pendingQuestions.value = all.filter(q => q.status === 'pending')
-    answeredQuestions.value = all.filter(q => q.status === 'answered')
+    const data = await $fetch<{ questions: QuestionListItem[] }>('/api/questions')
+    all.value = data.questions
   }
-  catch {
-    pendingQuestions.value = []
-    answeredQuestions.value = []
+  catch (e: any) {
+    loadError.value = e?.data?.statusMessage || e?.message || 'Could not load questions'
   }
   finally {
     loading.value = false
   }
 }
 
-async function saveAnswer(question: Question) {
-  const answer = answers.value[question.id]
-  if (!answer?.trim()) return
+function replace(item: QuestionListItem) {
+  const i = all.value.findIndex(q => q.id === item.id)
+  if (i >= 0) all.value[i] = item
+  else all.value.push(item)
+}
 
+function where(key: string) {
+  const i = key.indexOf(':')
+  return i > 0 ? `${key.slice(0, i)}: ${key.slice(i + 1)}` : key
+}
+
+async function answer(q: QuestionListItem, value: string) {
+  saving.value[q.id] = value
   try {
-    await $fetch(`/api/questions/${question.id}`, {
+    const out = await $fetch<AnswerOutcome>(`/api/questions/${q.id}`, {
       method: 'PATCH',
-      body: { answer, status: 'answered' },
+      body: { status: 'answered', answer: value },
     })
-
-    pendingQuestions.value = pendingQuestions.value.filter(q => q.id !== question.id)
-    answeredQuestions.value.unshift({
-      ...question,
-      answer,
-      status: 'answered',
-      answeredAt: new Date().toISOString(),
-    })
-    delete answers.value[question.id]
-    snackbar.success('Answer saved and added to your knowledge base')
+    replace(out.question)
+    const parts = [`Saved to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`)}.`]
+    if (out.refreshedApplicationIds.length) parts.push(`${out.refreshedApplicationIds.length === 1 ? 'One application was' : `${out.refreshedApplicationIds.length} applications were`} updated.`)
+    else if (out.refreshUnavailable) parts.push('Waiting applications pick it up once form answers can refresh.')
+    if (out.rescored) parts.push(`${out.rescored} ${out.rescored === 1 ? 'job' : 'jobs'} rescored.`)
+    snackbar.success(parts.join(' '))
   }
-  catch {
-    snackbar.error('Failed to save answer. Please try again.')
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not save that answer. Try again.')
+  }
+  finally {
+    saving.value[q.id] = null
   }
 }
 
-async function skipQuestion(question: Question) {
+async function skip(q: QuestionListItem) {
   try {
-    await $fetch(`/api/questions/${question.id}`, {
-      method: 'PATCH',
-      body: { status: 'skipped' },
-    })
-
-    pendingQuestions.value = pendingQuestions.value.filter(q => q.id !== question.id)
-    snackbar.info('Question skipped')
+    const out = await $fetch<{ question: QuestionListItem }>(`/api/questions/${q.id}`, { method: 'PATCH', body: { status: 'skipped' } })
+    replace(out.question)
+    snackbar.info('Skipped. It is under Skipped if you want it back.', { text: 'Undo', handler: () => reopen(out.question) })
   }
-  catch {
-    snackbar.error('Failed to skip question')
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not skip that question')
   }
 }
 
-onMounted(() => {
-  fetchQuestions()
-})
+async function reopen(q: QuestionListItem) {
+  try {
+    const out = await $fetch<{ question: QuestionListItem }>(`/api/questions/${q.id}`, { method: 'PATCH', body: { status: 'pending' } })
+    replace(out.question)
+  }
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not bring that question back')
+  }
+}
+
+onMounted(load)
 </script>
 
 <template>
-  <div class="fade-in">
-    <!-- Page Header -->
-    <div class="d-flex align-center justify-space-between mb-8">
-      <div class="page-header">
-        <h1 class="text-h4 page-header__title">Daily Questions</h1>
+  <div class="fade-in questions-page">
+    <div class="d-flex flex-wrap align-start justify-space-between ga-4 mb-8">
+      <div class="page-header mb-0">
+        <h1 class="text-h4 page-header__title">Questions</h1>
         <p class="text-body-2 page-header__subtitle">
-          The AI generates questions to fill gaps in your professional profile. Your answers are stored in the Knowledge Base and improve job matching and resume tailoring accuracy.
+          What the pipeline needs to know about you. Every answer goes into your knowledge base, a No included,
+          so nothing is ever claimed on an application that you have not confirmed.
         </p>
       </div>
-      <v-chip v-if="pendingQuestions.length" variant="tonal" color="warning">
-        {{ pendingQuestions.length }} pending
+      <v-chip v-if="pending.length" variant="tonal" color="warning" class="questions-page__count">
+        {{ pending.length }} to answer
       </v-chip>
     </div>
 
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
+    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-6" />
 
-    <!-- Pending Questions -->
-    <template v-if="pendingQuestions.length">
-      <v-card
-        v-for="question in pendingQuestions"
-        :key="question.id"
-        variant="outlined"
-        class="mb-4"
-      >
-        <v-card-item>
-          <template #prepend>
-            <v-avatar color="warning" variant="tonal" size="40">
-              <v-icon icon="mdi-chat-processing-outline" size="20" />
-            </v-avatar>
-          </template>
-          <v-card-title class="text-subtitle-1 font-weight-medium">
-            {{ question.question }}
-          </v-card-title>
-          <v-card-subtitle v-if="question.context" class="text-caption">
-            {{ question.context }}
-          </v-card-subtitle>
-        </v-card-item>
+    <v-alert v-if="loadError" type="error" variant="tonal" class="mb-6">
+      {{ loadError }}
+      <template #append>
+        <v-btn variant="text" size="small" @click="load">Try again</v-btn>
+      </template>
+    </v-alert>
 
-        <v-card-text>
-          <v-chip
-            v-if="question.category"
-            size="small"
-            variant="tonal"
-            color="secondary"
-            class="mb-3"
-          >
-            {{ question.category }}
-          </v-chip>
-
-          <v-textarea
-            v-model="answers[question.id]"
-            label="Your answer"
-            placeholder="Type your answer here..."
-            rows="3"
-            auto-grow
-            hide-details
+    <template v-if="!loading && !loadError">
+      <!-- Applications are waiting -->
+      <section v-if="waitingOnYou.length" class="mb-8">
+        <div class="section-label">Waiting on you</div>
+        <div class="d-flex flex-column ga-3">
+          <KnowledgeQuestionCard
+            v-for="q in waitingOnYou"
+            :key="q.id"
+            :question="q"
+            mode="pending"
+            :saving="saving[q.id]"
+            @answer="v => answer(q, v)"
+            @skip="skip(q)"
           />
-          <div class="text-caption text-medium-emphasis mt-1 px-1">
-            Your answer will be saved to the Knowledge Base and used by the AI for future job matching and resume generation.
-          </div>
-        </v-card-text>
-
-        <v-card-actions class="px-4 pb-4">
-          <v-spacer />
-          <v-btn
-            variant="text"
-            size="small"
-            prepend-icon="mdi-skip-next"
-            @click="skipQuestion(question)"
-          >
-            Skip
-          </v-btn>
-          <v-btn
-            color="primary"
-            prepend-icon="mdi-check"
-            :disabled="!answers[question.id]?.trim()"
-            @click="saveAnswer(question)"
-          >
-            Save Answer
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </template>
-
-    <!-- Empty State -->
-    <v-card
-      v-else-if="!loading"
-      variant="outlined"
-      class="text-center pa-12 mb-6"
-    >
-      <v-icon icon="mdi-check-circle-outline" size="64" color="success" class="mb-4" style="opacity: 0.6;" />
-      <h3 class="text-h6 mb-2">All Caught Up</h3>
-      <p class="text-body-2 text-medium-emphasis mb-1" style="max-width: 400px; margin: 0 auto;">
-        No pending questions right now.
-      </p>
-      <p class="text-caption text-medium-emphasis" style="max-width: 400px; margin: 0 auto;">
-        New questions are generated when the AI identifies gaps in your profile during job matching. The more jobs you review, the more targeted questions you'll receive.
-      </p>
-    </v-card>
-
-    <!-- Answered Questions -->
-    <template v-if="answeredQuestions.length">
-      <v-divider class="my-6" />
-
-      <div
-        class="d-flex align-center ga-2 mb-4 cursor-pointer"
-        @click="showAnswered = !showAnswered"
-      >
-        <v-icon
-          :icon="showAnswered ? 'mdi-chevron-down' : 'mdi-chevron-right'"
-          size="small"
-        />
-        <span class="text-subtitle-2 text-medium-emphasis">
-          Previously Answered ({{ answeredQuestions.length }})
-        </span>
-      </div>
-
-      <v-expand-transition>
-        <div v-show="showAnswered">
-          <v-card
-            v-for="question in answeredQuestions"
-            :key="question.id"
-            variant="outlined"
-            class="mb-3"
-          >
-            <v-card-item>
-              <template #prepend>
-                <v-avatar color="success" variant="tonal" size="32">
-                  <v-icon icon="mdi-check" size="16" />
-                </v-avatar>
-              </template>
-              <v-card-title class="text-body-2 font-weight-medium">
-                {{ question.question }}
-              </v-card-title>
-            </v-card-item>
-            <v-card-text class="pt-0">
-              <div class="text-body-2 bg-surface-variant pa-3 rounded-lg">
-                {{ question.answer }}
-              </div>
-            </v-card-text>
-          </v-card>
         </div>
-      </v-expand-transition>
+      </section>
+
+      <!-- One-tap and short answers -->
+      <section v-if="quick.length" class="mb-8">
+        <div class="section-label">Quick answers</div>
+        <div class="d-flex flex-column ga-3">
+          <KnowledgeQuestionCard
+            v-for="q in quick"
+            :key="q.id"
+            :question="q"
+            mode="pending"
+            :saving="saving[q.id]"
+            @answer="v => answer(q, v)"
+            @skip="skip(q)"
+          />
+        </div>
+      </section>
+
+      <!-- Open-ended questions from the original resume tailoring flow -->
+      <section v-if="legacy.length" class="mb-8">
+        <div class="section-label">From earlier resume tailoring ({{ legacy.length }})</div>
+        <p class="text-body-2 text-medium-emphasis mb-4 questions-page__note">
+          Open-ended questions the old tailoring step asked. Answer any you like in your own words. Your words are stored as written.
+        </p>
+        <div class="d-flex flex-column ga-3">
+          <KnowledgeQuestionCard
+            v-for="q in legacy"
+            :key="q.id"
+            :question="q"
+            mode="pending"
+            :saving="saving[q.id]"
+            @answer="v => answer(q, v)"
+            @skip="skip(q)"
+          />
+        </div>
+      </section>
+
+      <!-- Nothing pending -->
+      <v-card v-if="pending.length === 0" variant="outlined" class="text-center pa-10 mb-8">
+        <v-icon icon="mdi-check-circle-outline" size="48" color="success" class="mb-3" />
+        <h2 class="text-h6 mb-1">Nothing to answer</h2>
+        <p class="text-body-2 text-medium-emphasis mx-auto questions-page__note">
+          New questions appear when a job asks for something your knowledge base does not cover, or an application form needs a fact only you know.
+        </p>
+      </v-card>
+
+      <!-- Answered -->
+      <section v-if="answered.length" class="mb-4">
+        <v-btn
+          variant="text"
+          class="px-1 mb-2 text-medium-emphasis"
+          :prepend-icon="showAnswered ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+          :aria-expanded="showAnswered"
+          @click="showAnswered = !showAnswered"
+        >
+          Answered ({{ answered.length }})
+        </v-btn>
+        <v-expand-transition>
+          <div v-show="showAnswered" class="d-flex flex-column ga-3">
+            <KnowledgeQuestionCard
+              v-for="q in answered"
+              :key="q.id"
+              :question="q"
+              mode="answered"
+              :saving="saving[q.id]"
+              @answer="v => answer(q, v)"
+            />
+          </div>
+        </v-expand-transition>
+      </section>
+
+      <!-- Skipped -->
+      <section v-if="skipped.length" class="mb-4">
+        <v-btn
+          variant="text"
+          class="px-1 mb-2 text-medium-emphasis"
+          :prepend-icon="showSkipped ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+          :aria-expanded="showSkipped"
+          @click="showSkipped = !showSkipped"
+        >
+          Skipped ({{ skipped.length }})
+        </v-btn>
+        <v-expand-transition>
+          <div v-show="showSkipped" class="d-flex flex-column ga-3">
+            <KnowledgeQuestionCard
+              v-for="q in skipped"
+              :key="q.id"
+              :question="q"
+              mode="skipped"
+              @reopen="reopen(q)"
+            />
+          </div>
+        </v-expand-transition>
+      </section>
     </template>
   </div>
 </template>
 
 <style scoped lang="scss">
-.cursor-pointer {
-  cursor: pointer;
+.questions-page {
+  max-width: 880px;
+
+  &__note {
+    max-width: 600px;
+  }
+
+  &__count {
+    font-variant-numeric: tabular-nums;
+  }
 }
 </style>

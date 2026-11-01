@@ -1,115 +1,25 @@
 import { eq } from 'drizzle-orm'
-import { applications, jobs, questions } from '~~/server/db/schema'
-import { tailorResume } from '~~/server/utils/ai'
-import { saveResumePdf } from '~~/server/utils/pdf'
+import { jobs } from '~~/server/db/schema'
+import { prepareApplication } from '~~/server/utils/apply/prepare'
+import { createApplicationRow } from '~~/server/utils/apply/prepare'
 
+// POST /api/applications/:jobId: prepare an application for one job, the same way the daily
+// applications:prepare run does (tailor, cover letter, gap analysis, form dry run).
+// Creates the application at once and runs the rest in the background; the detail page follows
+// its status. Pass ?wait=true to wait for the whole preparation (scripts and tests).
 export default defineEventHandler(async (event) => {
-  const db = useDb()
   const jobId = Number(getRouterParam(event, 'id'))
+  if (!Number.isInteger(jobId) || jobId <= 0) throw createError({ statusCode: 400, statusMessage: 'Invalid job ID' })
+  const job = useDb().select().from(jobs).where(eq(jobs.id, jobId)).get()
+  if (!job) throw createError({ statusCode: 404, statusMessage: 'Job not found' })
 
-  if (!jobId || isNaN(jobId)) {
-    throw createError({
-      statusCode: 400,
-      statusMessage: 'Invalid job ID',
-    })
+  const app = createApplicationRow(job)
+  const run = prepareApplication(job.id, app, msg => console.log(`[prepare] ${msg}`))
+  if (getQuery(event).wait === 'true') {
+    const outcome = await run
+    return { ...app, ...outcome, id: app.id }
   }
-
-  try {
-    // Verify the job exists
-    const jobResult = await db
-      .select()
-      .from(jobs)
-      .where(eq(jobs.id, jobId))
-
-    const job = jobResult?.[0]
-    if (!job) {
-      throw createError({
-        statusCode: 404,
-        statusMessage: 'Job not found',
-      })
-    }
-
-    // Check if an application already exists for this job
-    const existingAppResult = await db
-      .select()
-      .from(applications)
-      .where(eq(applications.jobId, jobId))
-
-    const existingApp = existingAppResult?.[0]
-    if (existingApp) {
-      throw createError({
-        statusCode: 409,
-        statusMessage: 'An application already exists for this job',
-      })
-    }
-
-    const entries = loadKnowledge()
-
-    const knowledgeBase = knowledgeMap(entries)
-
-    // Tailor the resume via AI
-    const tailored = await tailorResume(
-      job.description || `${job.title} at ${job.company}`,
-      knowledgeBase,
-    )
-
-    // Create the application
-    const applicationResult = await db
-      .insert(applications)
-      .values({
-        jobId,
-        tailoredResumeJson: JSON.stringify(tailored),
-        tailoringNotes: tailored.tailoringNotes,
-        status: 'draft',
-      })
-      .returning()
-
-    const newApplication = applicationResult?.[0]
-    if (!newApplication) {
-      throw createError({
-        statusCode: 500,
-        statusMessage: 'Failed to create application record',
-      })
-    }
-
-    // Create any generated questions
-    if (tailored.generatedQuestions && tailored.generatedQuestions.length > 0) {
-      await db.insert(questions).values(
-        tailored.generatedQuestions.map(q => ({
-          question: q.question,
-          context: q.context,
-          category: q.category,
-          applicationId: newApplication.id,
-          status: 'pending',
-        })),
-      )
-    }
-
-    // Generate the PDF immediately
-    const { name: candidateName, contact: contactInfo } = candidateContact(entries)
-
-    const pdfPath = dataPath('resumes', `resume-${newApplication.id}.pdf`)
-    await saveResumePdf(tailored, candidateName, contactInfo, pdfPath)
-
-    // Update application with the PDF path
-    await db
-      .update(applications)
-      .set({ tailoredResumePdfPath: pdfPath })
-      .where(eq(applications.id, newApplication.id))
-
-    // Update job status to applied
-    await db
-      .update(jobs)
-      .set({ status: 'applied' })
-      .where(eq(jobs.id, jobId))
-
-    return { ...newApplication, tailoredResumePdfPath: pdfPath }
-  } catch (error: any) {
-    if (error.statusCode) throw error
-    console.error('Application creation error:', error)
-    throw createError({
-      statusCode: 500,
-      statusMessage: 'Failed to create application',
-    })
-  }
+  void run.catch(e => console.error(`[prepare] application ${app.id} failed`, e))
+  setResponseStatus(event, 202)
+  return { ...app, id: app.id }
 })

@@ -32,40 +32,83 @@ export default defineNuxtConfig({
       disableVuetifyStyles: true,
     },
     vuetifyOptions: {
+      // Dispatch desk before dawn: slate surfaces a few points apart, one cobalt "ink" accent
+      // for signing off, semantic colors only for status. Rationale in .claude/context/design-system.md.
       theme: {
         defaultTheme: 'dark',
         themes: {
           dark: {
+            dark: true,
             colors: {
-              primary: '#6366f1',
-              secondary: '#8b5cf6',
-              accent: '#22d3ee',
-              success: '#22c55e',
-              warning: '#f59e0b',
-              error: '#ef4444',
-              surface: '#1e1e2e',
-              background: '#11111b',
+              'background': '#0f1318',
+              'surface': '#151a21',
+              'surface-bright': '#1c222b',
+              'surface-light': '#222a34',
+              'surface-variant': '#d9e0e8',
+              'on-surface-variant': '#10151b',
+              'on-background': '#e6ebf1',
+              'on-surface': '#e6ebf1',
+              'sunken': '#0b0e12',
+              'primary': '#6b93ff',
+              'on-primary': '#08101f',
+              'secondary': '#9aa7b8',
+              'on-secondary': '#0f1318',
+              'accent': '#8fb0ff',
+              'on-accent': '#08101f',
+              'info': '#79b4f2',
+              'on-info': '#06121f',
+              'success': '#3fcf8e',
+              'on-success': '#04140c',
+              'warning': '#e9b04a',
+              'on-warning': '#1d1404',
+              'error': '#f2706f',
+              'on-error': '#1f0707',
+            },
+            variables: {
+              'border-color': '#d0dae6',
+              'border-opacity': 0.11,
+              'high-emphasis-opacity': 0.94,
+              'medium-emphasis-opacity': 0.66,
+              'disabled-opacity': 0.4,
+              'hover-opacity': 0.05,
+              'focus-opacity': 0.1,
+              'activated-opacity': 0.1,
             },
           },
+          // Not switched to anywhere today. Kept so a future toggle has white surfaces, never cream.
           light: {
+            dark: false,
             colors: {
-              primary: '#4f46e5',
-              secondary: '#7c3aed',
-              accent: '#0891b2',
-              success: '#16a34a',
-              warning: '#d97706',
-              error: '#dc2626',
+              'background': '#ffffff',
+              'surface': '#ffffff',
+              'sunken': '#eef1f5',
+              'primary': '#2f5fe8',
+              'secondary': '#526073',
+              'accent': '#2f5fe8',
+              'success': '#14804f',
+              'warning': '#a86a00',
+              'error': '#c8342f',
             },
           },
         },
       },
+      // Borders carry depth (no shadows). Corners: 6px controls, 8px chips and list items, 12px cards.
       defaults: {
-        VCard: { elevation: 0, rounded: 'lg' },
-        VBtn: { rounded: 'lg' },
+        VCard: { elevation: 0, rounded: 'xl' },
+        VSheet: { elevation: 0 },
+        VBtn: { elevation: 0 },
         VTextField: { variant: 'outlined', density: 'comfortable' },
         VTextarea: { variant: 'outlined', density: 'comfortable' },
         VSelect: { variant: 'outlined', density: 'comfortable' },
-        VChip: { rounded: 'lg' },
+        VCombobox: { variant: 'outlined', density: 'comfortable' },
+        VAutocomplete: { variant: 'outlined', density: 'comfortable' },
+        VAlert: { rounded: 'lg', variant: 'tonal' },
+        VDialog: { VCard: { rounded: 'xl' } },
+        VMenu: { VList: { rounded: 'lg' } },
+        VSnackbar: { rounded: 'lg' },
+        VTooltip: { location: 'top' },
+        VExpansionPanels: { rounded: 'lg' },
+        VProgressLinear: { rounded: true },
       },
     },
   },
@@ -78,10 +121,18 @@ export default defineNuxtConfig({
     // One daily chain runs every step in order: learn, search, enrich, match, prepare, demos.
     scheduledTasks: {
       '0 6 * * *': ['pipeline:daily'],
+      '*/15 * * * *': ['system:heartbeat'],
     },
     externals: {
       // Playwright resolves its browser binaries and driver files at runtime; bundling breaks that.
-      external: ['playwright', 'playwright-core'],
+      external: ['playwright', 'playwright-core', 'pdfmake', 'pdfkit'],
+      // pdfmake resolves its font files at runtime; list them so the trace copies them.
+      traceInclude: [
+        'node_modules/pdfmake/fonts/Roboto/Roboto-Regular.ttf',
+        'node_modules/pdfmake/fonts/Roboto/Roboto-Medium.ttf',
+        'node_modules/pdfmake/fonts/Roboto/Roboto-Italic.ttf',
+        'node_modules/pdfmake/fonts/Roboto/Roboto-MediumItalic.ttf',
+      ],
     },
   },
 
@@ -103,6 +154,8 @@ export default defineNuxtConfig({
     aiFallbackModel: 'claude-haiku-4-5',
     // Hard stop for Claude spend per local day, in dollars
     dailyAiBudgetUsd: '10',
+    // uid of the unprivileged user that runs demo build commands in the container
+    demoUid: '10001',
     // Safety switch for real employer submits. 'false' lets the approve path submit only to the
     // sandbox form; flip to 'true' in production once the pipeline is verified.
     realSubmitEnabled: 'false',
@@ -110,6 +163,19 @@ export default defineNuxtConfig({
     githubToken: '',
     githubOwner: 'Devin345458',
     resumeRepo: 'Devin345458/resume',
+    // Demo project builder (server/utils/demo). Model to try first; empty uses aiModel, and
+    // aiFallbackModel still applies when the key cannot call it.
+    demoModel: '',
+    // Hard limits per demos:build run and per demo build
+    demoMaxPerRun: '1',
+    demoMaxTurns: '45',
+    demoMaxMinutes: '25',
+    demoMaxCostUsd: '3',
+    // Extra PATH entries for demo build commands, colon separated (e.g. a local Go toolchain)
+    demoToolPath: '',
+    // index.html (or a directory holding one) that seeds the sandbox copy of the resume repo.
+    // Empty uses a built-in page with the same case-study markup.
+    demoSandboxResumeSeed: '',
   },
 
   app: {
@@ -126,7 +192,7 @@ export default defineNuxtConfig({
         },
         {
           rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&display=swap',
+          href: 'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&display=swap',
         },
       ],
     },

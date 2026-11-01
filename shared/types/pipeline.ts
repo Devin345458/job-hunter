@@ -269,6 +269,8 @@ export interface SubmissionResult {
   screenshotPath: string | null
   /** True when the target was the sandbox form instead of a real employer. */
   sandbox: boolean
+  /** Why method is 'manual': captcha, account required, real submits switched off, and similar. */
+  manualReason?: string | null
 }
 
 export const REJECT_REASONS = [
@@ -317,6 +319,25 @@ export interface DemoProjectView {
   testOutput: string | null
   testsPassed: boolean | null
   error: string | null
+}
+
+/** GET /api/demos/:id. The demo plus what the detail page needs around it. */
+export interface DemoDetail extends DemoProjectView {
+  applicationId: number
+  jobId: number
+  isSandbox: boolean
+  applicationStatus: ApplicationStatus
+  job: { title: string; company: string }
+  /** https://github.com/<owner>/<repoName>, the URL the repo gets on publish (sandbox publishes go to local bare repos instead). */
+  plannedRepoUrl: string | null
+  costUsd: number | null
+  buildLog: string | null
+  createdAt: string
+  builtAt: string | null
+  publishedAt: string | null
+  gapItem: GapItem | null
+  /** The application's whole gap analysis, for context on the detail page. */
+  gap: GapAnalysis | null
 }
 
 export interface ReviewItem {

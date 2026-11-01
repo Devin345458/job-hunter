@@ -160,6 +160,8 @@ export const learnedRules = sqliteTable('learned_rules', {
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+  // Migration 0002: rules learned from sandbox test decisions apply only to sandbox jobs
+  isSandbox: integer('is_sandbox', { mode: 'boolean' }).notNull().default(false),
 }, (table) => [
   index('learned_rules_kind_pattern_idx').on(table.kind, table.pattern, table.effect),
   index('learned_rules_active_idx').on(table.active),
