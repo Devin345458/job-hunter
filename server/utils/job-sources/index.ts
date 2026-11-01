@@ -41,11 +41,8 @@ export const BOARD_ADAPTERS: Record<string, JobSourceAdapter> = {
 
 export const ALL_ADAPTERS: Record<string, JobSourceAdapter> = { ...AGGREGATOR_ADAPTERS, ...BOARD_ADAPTERS }
 
-export interface SearchAdjustments {
-  excludedKeywords: string[]
-  excludedCompanies: string[]
-  boostKeywords: string[]
-}
+// Shape defined by the learning unit in shared/types/learning.ts.
+import type { SearchAdjustments } from '#shared/types/learning'
 
 /**
  * Search changes learned from Devin's rejections, from searchAdjustments() in learning.ts.
