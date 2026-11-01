@@ -1,13 +1,7 @@
-export default defineEventHandler(async (event) => {
+// GET /api/knowledge?category=skill
+// Deduped entries. negative marks a No answer ("Does not know Go"), which is never claimed.
+export default defineEventHandler((event) => {
   const query = getQuery(event)
-  const category = query.category as string | undefined
-  try {
-    return loadKnowledge(category)
-  }
-  catch (error) {
-    throw createError({
-      statusCode: 500,
-      statusMessage: 'Failed to fetch knowledge entries',
-    })
-  }
+  const category = typeof query.category === 'string' && query.category ? query.category : undefined
+  return loadKnowledge(category).map(e => ({ ...e, negative: isNegativeKnowledge(e.value) }))
 })

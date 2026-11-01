@@ -36,8 +36,7 @@ const filteredEntries = computed(() => {
 const groupedEntries = computed(() => {
   const groups: Record<string, typeof entries.value> = {}
   for (const entry of filteredEntries.value) {
-    if (!groups[entry.category]) groups[entry.category] = []
-    groups[entry.category].push(entry)
+    (groups[entry.category] ??= []).push(entry)
   }
   return groups
 })
@@ -61,7 +60,7 @@ async function handleSave(data: any) {
     }
     showEditor.value = false
     editingEntry.value = null
-    await fetchEntries(selectedCategory.value || undefined)
+    await fetchEntries((selectedCategory.value || undefined) as KnowledgeCategory | undefined)
   }
   catch (e: any) {
     snackbar.error(e.data?.message || 'Failed to save entry')
@@ -144,7 +143,7 @@ onMounted(() => fetchEntries())
       </h3>
       <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 440px; margin: 0 auto;">
         {{ entries.length === 0
-          ? 'Your knowledge base powers everything — job matching, resume tailoring, and interview prep. Start by adding entries about your skills, experience, and preferences.'
+          ? 'Your knowledge base powers everything: job matching, resume tailoring, and interview prep. Start by adding entries about your skills, experience, and preferences.'
           : 'No entries match your current search or filter. Try adjusting your criteria.'
         }}
       </p>
@@ -190,7 +189,18 @@ onMounted(() => fetchEntries())
                   :color="entry.source === 'resume' ? 'primary' : entry.source === 'inferred' ? 'warning' : 'default'"
                   variant="tonal"
                 >
-                  {{ entry.source }}
+                  {{ entry.source === 'user_answer' ? 'your answer' : entry.source }}
+                </v-chip>
+                <!-- A No answer from /questions. Stored so it is never asked again and never claimed. -->
+                <v-chip
+                  v-if="(entry as any).negative"
+                  size="x-small"
+                  color="error"
+                  variant="tonal"
+                  prepend-icon="mdi-cancel"
+                  class="ml-1"
+                >
+                  never claimed
                 </v-chip>
                 <v-spacer />
                 <span class="text-caption text-medium-emphasis">{{ new Date(entry.updatedAt).toLocaleDateString() }}</span>
