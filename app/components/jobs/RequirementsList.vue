@@ -27,7 +27,7 @@ const counts = computed(() => {
       <v-card-title class="text-subtitle-1 font-weight-medium">
         Requirements
       </v-card-title>
-      <v-card-subtitle v-if="mustHave.length" class="text-caption">
+      <v-card-subtitle v-if="mustHave.length" class="text-caption requirements__subtitle">
         Must-haves: {{ counts.have }} have, {{ counts.partial }} partial, {{ counts.lack }} lack, {{ counts.unknown }} not in your profile
       </v-card-subtitle>
     </v-card-item>
@@ -59,6 +59,10 @@ const counts = computed(() => {
 
 <style scoped lang="scss">
 .requirements {
+  &__subtitle {
+    white-space: normal;
+  }
+
   &__group + &__group {
     margin-top: 16px;
   }

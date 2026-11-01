@@ -42,6 +42,23 @@ const baseAnnualText = computed(() => {
 })
 
 const totalText = computed(() => (c.value ? formatRange(c.value.totalEstimateMin, c.value.totalEstimateMax, c.value.currency) : ''))
+
+const BENEFITS_SHOWN = 6
+const showAllBenefits = ref(false)
+
+const same = (a: string | null | undefined, b: string | null | undefined) =>
+  (a ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '') === (b ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
+
+/** Valued benefits first; detail and quote only when they say more than the name. */
+const benefitRows = computed(() => {
+  const list = [...(c.value?.benefits ?? [])].sort((a, b) => Number(b.estimatedAnnualValue != null) - Number(a.estimatedAnnualValue != null))
+  return list.map(b => ({
+    ...b,
+    showDetail: !!b.detail && !same(b.detail, b.name),
+    showQuote: !!b.quote && !same(b.quote, b.name) && !same(b.quote, b.detail),
+  }))
+})
+const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.value : benefitRows.value.slice(0, BENEFITS_SHOWN)))
 </script>
 
 <template>
@@ -118,11 +135,11 @@ const totalText = computed(() => (c.value ? formatRange(c.value.totalEstimateMin
         </div>
       </div>
 
-      <div v-if="c.benefits.length" class="comp-breakdown__benefits">
+      <div v-if="benefitRows.length" class="comp-breakdown__benefits">
         <div class="text-body-2 font-weight-medium mb-2">
-          Benefits ({{ c.benefits.length }})
+          Benefits ({{ benefitRows.length }})
         </div>
-        <div v-for="(b, i) in c.benefits" :key="i" class="comp-breakdown__benefit">
+        <div v-for="(b, i) in visibleBenefits" :key="i" class="comp-breakdown__benefit">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2">
               {{ b.name }}
@@ -132,13 +149,24 @@ const totalText = computed(() => (c.value ? formatRange(c.value.totalEstimateMin
               {{ b.estimatedAnnualValue != null ? `${formatMoney(b.estimatedAnnualValue)} a year` : 'Not valued' }}
             </span>
           </div>
-          <div v-if="b.detail" class="text-caption text-medium-emphasis">
+          <div v-if="b.showDetail" class="text-caption text-medium-emphasis">
             {{ b.detail }}
           </div>
-          <blockquote class="comp-breakdown__quote">
+          <blockquote v-if="b.showQuote" class="comp-breakdown__quote">
             {{ b.quote }}
           </blockquote>
         </div>
+        <v-btn
+          v-if="benefitRows.length > BENEFITS_SHOWN"
+          variant="text"
+          size="small"
+          color="primary"
+          class="px-0"
+          :append-icon="showAllBenefits ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+          @click="showAllBenefits = !showAllBenefits"
+        >
+          {{ showAllBenefits ? 'Show fewer' : `Show all ${benefitRows.length} benefits` }}
+        </v-btn>
       </div>
 
       <div v-if="c.notes" class="comp-breakdown__notes text-caption">
@@ -188,7 +216,7 @@ const totalText = computed(() => (c.value ? formatRange(c.value.totalEstimateMin
   }
 
   &__benefit {
-    margin-bottom: 14px;
+    margin-bottom: 10px;
   }
 
   &__notes {

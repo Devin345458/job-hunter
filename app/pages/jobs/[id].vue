@@ -172,7 +172,7 @@ onMounted(() => {
           <!-- Job Header -->
           <v-card variant="outlined" class="mb-6">
             <v-card-item>
-              <v-card-title class="text-h5 font-weight-bold" style="letter-spacing: -0.02em;">
+              <v-card-title class="text-h5 font-weight-bold job-detail__title">
                 {{ job.title }}
               </v-card-title>
               <v-card-subtitle class="text-body-1 mt-1">
@@ -300,6 +300,9 @@ onMounted(() => {
             </v-card-text>
           </v-card>
 
+          <!-- On phones the score follows the header instead of sitting below the whole description -->
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-6 d-md-none" />
+
           <JobsCompensationBreakdown :compensation="job.compensation" :enriched-at="job.enrichedAt" class="mb-6" />
 
           <JobsRequirementsList v-if="job.requirements.length" :requirements="job.requirements" class="mb-6" />
@@ -336,7 +339,7 @@ onMounted(() => {
         <!-- Right Column: Match Analysis + Actions -->
         <v-col cols="12" md="5" lg="4">
           <!-- Match Score -->
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4" />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4 d-none d-md-block" />
 
           <!-- Actions -->
           <v-card variant="outlined" class="mb-4">
@@ -443,6 +446,13 @@ onMounted(() => {
 </template>
 
 <style scoped lang="scss">
+.job-detail__title {
+  letter-spacing: -0.02em;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
 .job-detail__links {
   display: flex;
   flex-wrap: wrap;

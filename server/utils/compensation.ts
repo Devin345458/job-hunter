@@ -280,7 +280,7 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   if (!hasBase && anyValue) notes.push('No base pay is stated, so no total is estimated.')
 
   return {
-    currency: (ex.currency || 'USD').toUpperCase(),
+    currency: normalizeCurrency(ex.currency),
     baseMin,
     baseMax,
     basePeriod,
@@ -296,6 +296,13 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
     notes: notes.join(' '),
     extractedAt: new Date().toISOString(),
   }
+}
+
+/** One ISO code. Haiku sometimes writes "CAD/USD"; any mention of USD means dollars. */
+export function normalizeCurrency(value: string | null | undefined): string {
+  const v = (value ?? '').toUpperCase()
+  if (!v || /USD|US\$|\$/.test(v)) return 'USD'
+  return v.match(/[A-Z]{3}/)?.[0] ?? 'USD'
 }
 
 /** Midpoint of the yearly total estimate, or null. Stored in jobs.total_comp_estimate. */
@@ -446,6 +453,10 @@ export function scoreCompensation(comp: CompensationBreakdown | null, prefs: Com
   if (floor == null) gapNotes.push(`Your lowest acceptable pay is unknown, so no floor was applied${questionIds.floorQuestionId ? ` (asked in question #${questionIds.floorQuestionId})` : ''}.`)
 
   const postingMid = totalMidpoint(comp)
+  const currency = comp ? normalizeCurrency(comp.currency) : 'USD'
+  if (comp && postingMid != null && currency !== 'USD') {
+    return { score: null, reasoning: [`The posting states pay in ${currency}, not US dollars, so it is not compared with your target.`, 'Skills carry the whole score.', ...gapNotes].join(' '), floor, target, estimate: null, meetsFloor: null }
+  }
   if (!comp || postingMid == null) {
     const why = !comp
       ? 'Compensation has not been extracted from this posting yet.'

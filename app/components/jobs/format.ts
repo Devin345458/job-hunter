@@ -3,7 +3,7 @@
 export function formatMoney(value: number | null | undefined, currency: string | null = 'USD'): string {
   if (value == null) return ''
   const n = Math.round(value).toLocaleString('en-US')
-  return !currency || currency === 'USD' ? `$${n}` : `${n} ${currency}`
+  return !currency || /USD/i.test(currency) ? `$${n}` : `${n} ${currency}`
 }
 
 export function formatMoneyShort(value: number | null | undefined): string {
