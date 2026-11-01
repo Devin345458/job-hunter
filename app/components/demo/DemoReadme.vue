@@ -39,6 +39,21 @@ function render(md: string): string {
       out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`)
       continue
     }
+    // Setext headings: a line underlined with === (level 1) or --- (level 2).
+    const underline = lines[i + 1] ?? ''
+    if (line.trim() && !list && !/^\s*([-*+]|\d+\.)\s+/.test(line) && /^(=+|-+)\s*$/.test(underline)) {
+      flushPara()
+      const level = underline.trim().startsWith('=') ? 2 : 3
+      out.push(`<h${level}>${inline(line.trim())}</h${level}>`)
+      i++
+      continue
+    }
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flushPara()
+      flushList()
+      out.push('<hr>')
+      continue
+    }
     const heading = /^(#{1,6})\s+(.*)$/.exec(line)
     if (heading) {
       flushPara()
@@ -143,6 +158,12 @@ const html = computed(() => render(props.source || ''))
 
   :deep(a) {
     color: rgb(var(--v-theme-primary));
+  }
+
+  :deep(hr) {
+    border: 0;
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    margin: 1.4em 0;
   }
 }
 </style>
