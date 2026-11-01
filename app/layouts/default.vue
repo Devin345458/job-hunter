@@ -15,6 +15,7 @@ const navItems: NavItem[] = [
   { title: 'Applications', icon: 'mdi-file-document-edit-outline', to: '/applications', description: 'Track your applications' },
   { title: 'Knowledge Base', icon: 'mdi-lightbulb-outline', to: '/knowledge', description: 'Your professional profile' },
   { title: 'Questions', icon: 'mdi-chat-processing-outline', to: '/questions', description: 'Fill profile gaps' },
+  { title: 'Learning', icon: 'mdi-school-outline', to: '/learning', description: 'What your decisions taught it' },
   { title: 'Settings', icon: 'mdi-tune-variant', to: '/settings', description: 'Search configs & API keys' },
 ]
 
