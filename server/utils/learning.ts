@@ -347,7 +347,7 @@ function quoteNote(note: string): string {
 
 function explain(ev: Evidence, counter: number, effect: RuleEffect, weight: number): string {
   // When every piece of evidence is a note, the note says what the jobs had in common.
-  const onlyNotes = ev.fromNote.size > 0 && ev.fromNote.size === evidenceCount(ev)
+  const onlyNotes = ev.notes.length > 0 && ev.fromNote.size === evidenceCount(ev)
   const did = ev.kind === 'company'
     ? (evidenceCount(ev) === 1 ? `You rejected ${ev.display} as ${reasonLabel(mainReason(ev))}` : `You rejected ${plural(evidenceCount(ev), `${ev.display} job`)} as ${reasonLabel(mainReason(ev))}`)
     : `${whatDevinDid(ev)}${onlyNotes ? '' : featurePhrase(ev)}`
