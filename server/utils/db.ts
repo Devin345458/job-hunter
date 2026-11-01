@@ -16,7 +16,7 @@ function lockDownDataDir(dbPath: string) {
     const dir = dirname(dbPath)
     chmodSync(dir, 0o711)
     for (const name of readdirSync(dir)) {
-      if (name.startsWith('job-hunter.db') || ['backups', 'resumes', 'screenshots', 'sandbox', 'sandbox-remotes'].includes(name)) {
+      if (name.startsWith('job-hunter.db') || ['backups', 'resumes', 'cover-letters', 'screenshots', 'sandbox', 'sandbox-remotes'].includes(name)) {
         chmodSync(join(dir, name), name.includes('.') ? 0o600 : 0o700)
       }
     }
