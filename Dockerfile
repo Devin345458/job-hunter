@@ -31,6 +31,11 @@ COPY --from=builder /app/node_modules/playwright-core /opt/playwright-core
 RUN node /opt/playwright-core/cli.js install --with-deps chromium \
   && rm -rf /var/lib/apt/lists/*
 
+# Go toolchain for demo projects that close a Go requirement gap (server/utils/demo). Same
+# Debian release as this image. Build commands set their own GOPATH and GOCACHE under /app/data.
+COPY --from=golang:1.27-bookworm /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
+
 RUN mkdir -p /app/data /app/data/resumes
 
 ENV NODE_ENV=production

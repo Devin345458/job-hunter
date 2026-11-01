@@ -48,11 +48,13 @@ export function assertAiBudget() {
   if (spent >= budget) throw new AiBudgetExceeded(spent, budget)
 }
 
-function costOf(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null }) {
+function costOf(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) {
   const price = priceOf(model)
+  // Cache writes (5 minute TTL) bill at 1.25x the input price.
   return ((usage.input_tokens ?? 0) * price.input
     + (usage.output_tokens ?? 0) * price.output
-    + (usage.cache_read_input_tokens ?? 0) * price.cacheRead) / 1_000_000
+    + (usage.cache_read_input_tokens ?? 0) * price.cacheRead
+    + (usage.cache_creation_input_tokens ?? 0) * price.input * 1.25) / 1_000_000
 }
 
 function logCall(purpose: string, model: string, usage: any, ref?: { type: string; id: number }, error?: string) {
@@ -129,9 +131,11 @@ function buildParams(model: string, opts: AiCallOptions, format?: unknown) {
 async function withModel<T extends { usage?: any; model?: string; stop_reason?: string | null }>(
   opts: AiCallOptions,
   send: (model: string, requestOptions: { maxRetries: number }) => Promise<T>,
+  preferredModel?: string,
 ): Promise<T> {
   assertAiBudget()
-  const models = [...new Set([activeModel(), fallbackModel()])]
+  const first = preferredModel && !(preferredModel === primaryModel() && Date.now() < primaryUnavailableUntil) ? preferredModel : activeModel()
+  const models = [...new Set([first, fallbackModel()])]
   let lastError: any
   for (const model of models) {
     try {
@@ -174,6 +178,50 @@ export async function aiStructured<S extends z.ZodType>(schema: S, opts: AiCallO
   const parsed = (response as any).parsed_output
   if (parsed == null) throw new Error(`Claude returned no parseable output for ${opts.purpose}`)
   return parsed as z.infer<S>
+}
+
+export interface AiToolTurnOptions {
+  /** Short label stored with the usage row. */
+  purpose: string
+  system: string
+  messages: Anthropic.Beta.BetaMessageParam[]
+  tools: Anthropic.Beta.BetaTool[]
+  maxTokens?: number
+  effort?: Effort
+  ref?: { type: string; id: number }
+  /** Model to try first instead of NUXT_AI_MODEL. The fallback model still applies. */
+  model?: string
+}
+
+/**
+ * One turn of a tool-use conversation (the demo builder's agent loop). Same budget check,
+ * model fallback and ai_calls logging as aiStructured/aiText; the caller runs the tools.
+ * The last block of the last message is marked for prompt caching so each turn reuses
+ * the previous turn's prefix.
+ */
+export async function aiToolTurn(opts: AiToolTurnOptions): Promise<Anthropic.Beta.BetaMessage> {
+  const ai = useAI()
+  const callOpts: AiCallOptions = { purpose: opts.purpose, prompt: '', ref: opts.ref, effort: opts.effort, maxTokens: opts.maxTokens }
+  const messages = opts.messages.map((m, i) => {
+    const blocks = m.content
+    if (i !== opts.messages.length - 1 || !Array.isArray(blocks)) return m
+    const content = blocks.map((b, j) => (j === blocks.length - 1 ? { ...b, cache_control: { type: 'ephemeral' } } : b))
+    return { ...m, content } as Anthropic.Beta.BetaMessageParam
+  })
+  return withModel(callOpts, (model, ro) => {
+    const profile = profileOf(model)
+    const params: any = {
+      model,
+      max_tokens: opts.maxTokens ?? 16000,
+      system: [{ type: 'text', text: opts.system, cache_control: { type: 'ephemeral' } }],
+      tools: opts.tools,
+      tool_choice: { type: 'auto' },
+      messages,
+      ...(profile.effort ? { output_config: { effort: opts.effort ?? 'medium' } } : {}),
+      ...(profile.fallbacks ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
+    }
+    return ai.beta.messages.create(params, ro) as Promise<Anthropic.Beta.BetaMessage>
+  }, opts.model)
 }
 
 /** One Claude call that returns plain text (cover letters and similar prose). */

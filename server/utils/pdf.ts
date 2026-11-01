@@ -103,18 +103,21 @@ export async function generateResumePdf(
         margin: [10, 2, 0, 6] as [number, number, number, number],
       },
     ]),
+    // Projects (demo projects and knowledge base projects), added by the demo unit.
     ...(resume.projects?.length
       ? [
           { text: 'PROJECTS', style: 'sectionHeader', margin: [0, 8, 0, 4] } as Content,
-          ...resume.projects.map(p => ({
-            text: [
-              { text: `${p.name}: `, bold: true },
-              { text: p.description },
-              ...(p.url ? [{ text: `  ${p.url}`, color: '#555555' }] : []),
-            ],
-            style: 'body' as const,
-            margin: [0, 2, 0, 2] as [number, number, number, number],
-          })),
+          ...resume.projects.flatMap(p => [
+            {
+              text: [
+                { text: p.name, bold: true },
+                ...(p.url ? [{ text: `   ${p.url}`, link: p.url, color: '#2a5db0', fontSize: 9 }] : []),
+              ],
+              style: 'body',
+              margin: [0, 4, 0, 1] as [number, number, number, number],
+            } as Content,
+            { text: p.description, style: 'body', margin: [0, 0, 0, 4] as [number, number, number, number] } as Content,
+          ]),
         ]
       : []),
     { text: 'TECHNICAL SKILLS', style: 'sectionHeader', margin: [0, 8, 0, 4] },

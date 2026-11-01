@@ -161,6 +161,19 @@ export default defineNuxtConfig({
     githubToken: '',
     githubOwner: 'Devin345458',
     resumeRepo: 'Devin345458/resume',
+    // Demo project builder (server/utils/demo). Model to try first; empty uses aiModel, and
+    // aiFallbackModel still applies when the key cannot call it.
+    demoModel: '',
+    // Hard limits per demos:build run and per demo build
+    demoMaxPerRun: '1',
+    demoMaxTurns: '45',
+    demoMaxMinutes: '25',
+    demoMaxCostUsd: '3',
+    // Extra PATH entries for demo build commands, colon separated (e.g. a local Go toolchain)
+    demoToolPath: '',
+    // index.html (or a directory holding one) that seeds the sandbox copy of the resume repo.
+    // Empty uses a built-in page with the same case-study markup.
+    demoSandboxResumeSeed: '',
   },
 
   app: {
