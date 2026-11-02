@@ -89,9 +89,18 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [x] Pass 1: answered the two blocking questions and approved the sandbox card in the deployed UI; it reached `submitted` (reference 1) after two fixes (sandbox relabeled by enrichment; sandbox detection now uses the opened URL). Real submits stay off.
 - [x] Pass 1: the 15 minute heartbeat fired on schedule in every deployed container (pipeline_runs host = container id from /api/health).
 - [ ] Pass 2: same four checks.
+  - [x] Scheduler: the daily chain fired on its own schedule at 06:00 Central on 2026-11-02 (pipeline_runs 95, trigger `schedule`), and the heartbeat kept firing every 15 minutes through the night.
+  - [x] Login sweep: 47 routes, every protected route 401 without a session.
+  - [ ] Pipeline on today's listings: search ran (338 found, 8 new); enrich, match, and prepare failed on "Your credit balance is too low". Blocked on Anthropic credit.
+  - [ ] Sandbox submit: needs a fresh prepared sandbox application, which needs Claude. Blocked on Anthropic credit.
+  - [ ] Browser click-through at both widths.
 - [ ] Pass 3: same four checks.
 
 ## Found during the run
+
+- 2026-11-02: the Anthropic account behind the production key is out of credit. Every Claude call from production fails with "Your credit balance is too low". Runs used to mark each job and application as failed; now a credit error stops the run like the daily budget, applications wait in `preparing` without spending a retry, and the review page shows a red "Claude is out of credit" note.
+- Local Claude calls in this repo go through the TeamClaude proxy (`ANTHROPIC_BASE_URL=http://localhost:3456`, Max subscriptions), not the API key. Local "Claude works" results say nothing about the production key; test with `env -u ANTHROPIC_BASE_URL`. The capability agents' local runs went through the proxy too.
+- The daily question step pasted requirement text into "Do you know ...?" ("Do you know 2+ years of experience with LangChain?"), asked Python three times, and asked about English. Now it asks about a clean skill name in plain words, skips compounds, generic words, human languages, and skills the knowledge base implies, tidies old questions each run, and adds at most five new ones per day. Production went from 40 pending questions to 37 with five new ones included.
 
 - Enrichment relabeled the sandbox job's ATS and pointed its link at the posting page, so the submit guard treated the sandbox as a real employer and refused (safe failure). Fixed in two places.
 - Question blocking leaked across employers: one shared question row carried whichever form's required flag came first. Now decided per application.
