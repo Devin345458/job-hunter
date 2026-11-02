@@ -334,6 +334,7 @@ onMounted(() => load())
               auto-grow
               autocomplete="off"
               spellcheck="false"
+              wrap="off"
               hide-details
               class="ghe__ids-field"
               :disabled="savingIds"
@@ -345,6 +346,7 @@ onMounted(() => load())
               auto-grow
               autocomplete="off"
               spellcheck="false"
+              wrap="off"
               hide-details
               class="ghe__ids-field"
               :disabled="savingIds"
@@ -591,8 +593,15 @@ onMounted(() => load())
     gap: 12px;
   }
 
+  // One identity per line: a long noreply address scrolls inside the box instead of wrapping into
+  // what looks like a second entry.
   &__ids-field {
     min-width: 0;
+
+    :deep(textarea) {
+      white-space: pre;
+      overflow-x: auto;
+    }
   }
 
   &__ids-actions {
