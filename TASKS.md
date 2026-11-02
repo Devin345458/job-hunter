@@ -72,7 +72,7 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 - [x] Queue shows job, match reasoning, compensation, resume, cover letter, filled answers with screenshot, and demo project (agent evidence reviewed: desktop two-pane, phone single column).
 - [x] One-tap approve and reject. Reject asks for a reason ("Other" needs a note). Only approve submits.
-- [ ] Clearable in five minutes a day on a phone. Timed on production at 390: all 10 cards in 2 min 37 s of agent time (3 sandbox decided, 7 real cards to the decision point), estimated 3 to 4.5 minutes for a person. Slowed by the toast over the navigation and navigation that scrolls away; both in `rewalk-fixes`. Ticks after those land.
+- [ ] Clearable in five minutes a day (desktop, per Devin's 2026-11-02 decision; it was measured on a phone before that). Timed on production at 390: all 10 cards in 2 min 37 s of agent time (3 sandbox decided, 7 real cards to the decision point), estimated 3 to 4.5 minutes for a person. Slowed by the toast over the navigation and navigation that scrolls away; both in `rewalk-fixes`. Ticks after those land.
 - [x] None of the banned defaults: cream or off-white backgrounds, italic accent words in headings, numbered section labels, monospace labels, pill buttons. Checked on every page at 1280 and 390 on production (commit 802c1b9) by computed style: buttons and chips 6 to 8px radius (up to 151 buttons on one page), body rgb(15, 19, 24), no italic in headings, no numbered labels, no monospace labels (the check flagged the demo build log, which is meant to be monospace, so it works).
 
 ## Capability D: learning
@@ -113,6 +113,11 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
     - [x] Old rows: evidence lines and job page reasoning read plainly (56f8d82); checked on a production copy (application 11 evidence, jobs 1 and 3).
 
 ## Found during the run
+
+- 2026-11-02 16:05, decided by Devin ("we're getting heavily tied down in QAing every step... QA every 5 items"): each unit now ships on a build plus one quick desktop check of its own flow; a production QA walk runs after about every 5 merged features, and its findings go out as one batch. The personal-data scan of every diff and the check before each deploy that no pipeline run is in progress stay.
+- [x] 2026-11-02 production recheck of the third walk (7a95adb): 24 of 25 fixed, R10 partly (old stored reasoning keeps some "his" and "their"; jobs re-scored now write "you"). New findings fixed and live in 29ebefe: answers never reached other jobs' requirement statuses (73 open jobs updated on production, CompanyCam's Terraform and GraphQL and 1Password's React now Have); demo test previews for Jest never got their report because npm took --json as its own option (demo 3 preview now 21 of 21 passed on production). The rest of its findings went to `walk4-fixes`.
+
+- 2026-11-02 15:55, decided by Devin: "Can we remove mobile from the requirements to speed up development. I'm fine if V1 only works on desktop." From here on, new work and verification are desktop (1280x800) only. The phone layouts already shipped stay as they are; phone-only defects are not fixed and 390 checks are no longer run. Items below that mention 390 or a phone record what was checked before this decision.
 
 - [ ] 2026-11-02, Devin (reversed his earlier no): use the claude-self-reflect memory for soft-skill and behavioral questions, reached over Tailscale. Building in `memory-leads` as leads only (never evidence, never an answer); network setup needs Tailscale running on the laptop and an auth key for the Mini (Blocked on me).
 - [x] 2026-11-02: Ramp's demo rebuilt on production with the 80 turn limit: built on turn 58, 99 tests passing, $0.93. Stopped demos for 1Password and AppFolio show Not needed (their gap analyses no longer plan a demo) instead of promising a retry.
