@@ -54,6 +54,14 @@ export async function withRun<T extends Record<string, unknown>>(
 }
 
 /** Trigger passed through Nitro's runTask payload; scheduled runs have no payload. */
+/**
+ * False when this server must not act on its cron schedule (NUXT_SCHEDULER_ENABLED=false, which
+ * every Orca worktree sets). Manual and chained runs are not affected.
+ */
+export function scheduleSkipped(payload: Record<string, unknown> | undefined): boolean {
+  return triggerOf(payload) === 'schedule' && String(useRuntimeConfig().schedulerEnabled) === 'false'
+}
+
 export function triggerOf(payload: Record<string, unknown> | undefined): RunTrigger {
   const t = payload?.trigger
   return t === 'manual' || t === 'chained' ? t : 'schedule'

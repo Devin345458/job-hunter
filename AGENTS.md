@@ -46,6 +46,7 @@
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`
   - `NUXT_DATABASE_PATH` (defaults to `./data/job-hunter.db`)
+  - `NUXT_SCHEDULER_ENABLED` (`false` turns off the cron schedule; every Orca worktree sets it; production leaves it unset)
 
 ## Implementation Conventions
 - Prefer TypeScript-first changes with explicit types for API payloads and DB interactions.
