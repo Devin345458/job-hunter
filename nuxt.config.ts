@@ -160,6 +160,9 @@ export default defineNuxtConfig({
     // Safety switch for real employer submits. 'false' lets the approve path submit only to the
     // sandbox form; flip to 'true' in production once the pipeline is verified.
     realSubmitEnabled: 'false',
+    // 'false' turns off the cron schedule (Orca worktrees set it), so a laptop copy never runs the
+    // pipeline on its own; manual runs still work. Production leaves it unset.
+    schedulerEnabled: 'true',
     // Token with push access to the demo and resume repos (used only on approve)
     githubToken: '',
     githubOwner: 'Devin345458',
