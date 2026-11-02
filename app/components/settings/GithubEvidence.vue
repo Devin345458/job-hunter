@@ -26,7 +26,8 @@ async function load(refresh = false) {
     const first = !data.value
     data.value = await $fetch<RepoSettingsView>('/api/repos', { query: refresh ? { refresh: '1' } : {} })
     if (first) openPanels.value = data.value.groups.filter(g => g.personal).map(g => g.owner)
-    resetIdentityDraft()
+    // A poll while he is editing the identities must not throw his edits away.
+    if (first || !idsChanged.value) resetIdentityDraft()
   }
   catch (e: any) {
     loadError.value = e?.data?.statusMessage || e?.message || 'Could not load the GitHub settings'
@@ -43,26 +44,55 @@ function onCount(g: RepoOwnerGroup) {
   return g.repos.filter(r => r.included).length
 }
 
+// Once a search has run, the list shows only repos with his commits plus the ones he switched on,
+// and hides owners left with none. "Show all repos" brings the rest back.
+const showAll = ref(false)
+const narrowed = computed(() => !!data.value?.find.at && !showAll.value)
+
+function listedRepos(g: RepoOwnerGroup): RepoView[] {
+  return narrowed.value ? g.repos.filter(r => (r.yourCommits ?? 0) > 0 || r.included) : g.repos
+}
+
+const shownGroups = computed(() => (data.value?.groups ?? []).filter(g => !narrowed.value || listedRepos(g).length > 0))
+const hiddenCount = computed(() => {
+  const all = (data.value?.groups ?? []).reduce((n, g) => n + g.repos.length, 0)
+  const listed = (data.value?.groups ?? []).reduce((n, g) => n + listedRepos(g).length, 0)
+  return all - listed
+})
+
 function visibleRepos(g: RepoOwnerGroup): RepoView[] {
   const f = (filters[g.owner] ?? '').trim().toLowerCase()
-  const list = f ? g.repos.filter(r => r.name.toLowerCase().includes(f)) : g.repos
+  const base = listedRepos(g)
+  const list = f ? base.filter(r => r.name.toLowerCase().includes(f)) : base
   return list.slice(0, shown[g.owner] ?? PAGE)
 }
 
 function filteredCount(g: RepoOwnerGroup) {
   const f = (filters[g.owner] ?? '').trim().toLowerCase()
-  return f ? g.repos.filter(r => r.name.toLowerCase().includes(f)).length : g.repos.length
+  const base = listedRepos(g)
+  return f ? base.filter(r => r.name.toLowerCase().includes(f)).length : base.length
 }
+
+/** What the index line says about repos still waiting, given 30 a run. */
+const indexWaiting = computed(() => {
+  const i = data.value?.index
+  if (!i) return ''
+  const left = i.included - i.indexed - i.oversized - i.sso
+  if (left <= 0) return ''
+  if (left <= 30) return `The next run indexes the other ${left === 1 ? 'one' : left}.`
+  return `Each run indexes 30, so the other ${left.toLocaleString('en-US')} take ${Math.ceil(left / 30)} more runs.`
+})
 
 function repoMeta(r: RepoView): string {
   const parts: string[] = []
+  if (r.yourCommits != null) parts.push(r.yourCommits ? `${r.yourCommits.toLocaleString('en-US')} of your ${r.yourCommits === 1 ? 'commit' : 'commits'}` : 'none of your commits')
   if (r.isPrivate) parts.push('Private')
   if (r.archived) parts.push('Archived')
   if (r.sizeMb != null) parts.push(r.sizeMb >= 1 ? `${Math.round(r.sizeMb)} MB` : 'under 1 MB')
   if (r.included) {
     if (r.indexError) parts.push('last index failed')
     else if (r.skipReason) parts.push(r.skipReason)
-    else if (r.indexedAt) parts.push(`${(r.commitCount ?? 0).toLocaleString('en-US')} of your commits indexed`)
+    else if (r.indexedAt) parts.push(`${(r.commitCount ?? 0).toLocaleString('en-US')} indexed`)
     else parts.push('not indexed yet')
   }
   return parts.join(', ')
@@ -90,6 +120,106 @@ async function toggle(g: RepoOwnerGroup, r: RepoView, value: boolean | null) {
   finally {
     switching.value[r.fullName] = false
   }
+}
+
+// ── Bulk switches ──
+const bulkBusy = ref<string | null>(null)
+const confirm = ref<{ title: string; text: string; owners: string[]; action: string; run: () => Promise<void> } | null>(null)
+const confirmOpen = computed({
+  get: () => !!confirm.value,
+  set: (v: boolean) => {
+    if (!v) confirm.value = null
+  },
+})
+
+function plural(n: number, one: string, many: string) {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
+}
+
+async function bulk(body: { owner?: string; included: boolean }, key: string) {
+  bulkBusy.value = key
+  try {
+    const res = await $fetch<{ changed: number; owners: number }>('/api/repos/bulk', { method: 'POST', body })
+    await load()
+    snackbar.info(body.included
+      ? `${plural(res.changed, 'repo', 'repos')} turned on. Their commits are read at the next index, 30 repos a run.`
+      : `${plural(res.changed, 'repo', 'repos')} turned off. Everything indexed from them was deleted.`)
+  }
+  catch (e: any) {
+    snackbar.notify(`Nothing changed: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+  }
+  finally {
+    bulkBusy.value = null
+  }
+}
+
+/** Turn on the repos with his commits: one owner's, or every owner's. The client code warning shows once first, unless every owner is his. */
+function turnOnWithCommits(g?: RepoOwnerGroup) {
+  if (!data.value) return
+  const n = g ? (g.withCommitsOff ?? 0) : data.value.find.turnOn.repos
+  const others = g ? (g.personal ? [] : [g.owner]) : data.value.find.turnOn.otherOwners
+  const run = () => bulk({ ...(g ? { owner: g.owner } : {}), included: true }, g ? `on:${g.owner}` : 'on:all')
+  if (!others.length) return run()
+  confirm.value = {
+    title: `Turn on ${plural(n, 'repo', 'repos')} with your commits?`,
+    text: CLIENT_WARNING,
+    owners: others,
+    action: 'Turn on',
+    run,
+  }
+}
+
+function turnAllOff(g: RepoOwnerGroup) {
+  const n = onCount(g)
+  confirm.value = {
+    title: `Turn off all ${plural(n, 'repo', 'repos')} in ${g.owner}?`,
+    text: 'Everything indexed from them (commits, facts, the clones, and suggestions citing them) is deleted.',
+    owners: [],
+    action: 'Turn all off',
+    run: () => bulk({ owner: g.owner, included: false }, `off:${g.owner}`),
+  }
+}
+
+async function confirmRun() {
+  const c = confirm.value
+  confirm.value = null
+  if (c) await c.run()
+}
+
+// ── Find repos with my commits ──
+const finding = ref(false)
+
+async function findRepos() {
+  finding.value = true
+  try {
+    await $fetch('/api/repos/find', { method: 'POST' })
+    snackbar.info('Searching GitHub for your commits. GitHub allows 30 searches a minute, so this takes a few minutes.')
+    await pollFind()
+  }
+  catch (e: any) {
+    snackbar.notify(`The search did not start: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+  }
+  finally {
+    finding.value = false
+  }
+}
+
+async function pollFind() {
+  const until = Date.now() + 45 * 60_000
+  do {
+    await new Promise(r => setTimeout(r, 4000))
+    await load()
+  } while (data.value?.find.running && Date.now() < until)
+  const f = data.value?.find
+  if (!f || f.running) return
+  if (f.error && (!f.at || (f.errorAt ?? '') > f.at)) snackbar.notify(`The search failed: ${f.error}`, 'error', { timeout: -1 })
+  else snackbar.success(`Found ${plural(f.repos, 'repo', 'repos')} with your commits across ${plural(f.owners, 'owner', 'owners')}.`)
+}
+
+function duration(seconds: number | null) {
+  if (seconds == null) return ''
+  if (seconds < 90) return `${seconds} seconds`
+  return `${Math.round(seconds / 60)} minutes`
 }
 
 // ── Identities ──
@@ -177,7 +307,15 @@ function repoShort(full: string) {
   return full.split('/')[1] ?? full
 }
 
-onMounted(() => load())
+onMounted(async () => {
+  await load()
+  if (data.value?.find.running) {
+    finding.value = true
+    await pollFind().finally(() => {
+      finding.value = false
+    })
+  }
+})
 </script>
 
 <template>
@@ -200,9 +338,15 @@ onMounted(() => load())
 
       <template v-if="data">
         <v-alert v-if="!data.configured" type="info" class="mb-4">
-          No GitHub token is set on the server. Add <strong>NUXT_GITHUB_READ_TOKENS</strong>: fine-grained tokens with read access to Contents, Metadata, and Pull requests, separated by commas. A fine-grained token covers one owner, so use one for your account and one for each organization.
+          No GitHub token is set on the server. Add <strong>NUXT_GITHUB_READ_TOKENS</strong>: either one classic token with the repo scope, which reads every repo you can reach in every organization, or fine-grained tokens with read access to Contents, Metadata, and Pull requests, separated by commas (a fine-grained token covers one owner).
         </v-alert>
         <v-alert v-if="data.listError" type="warning" class="mb-4">{{ data.listError }}</v-alert>
+        <v-alert v-if="data.ssoOrgs.length" type="warning" class="mb-4" title="Some organizations need the token authorized">
+          <ul class="ghe__sso">
+            <li v-for="o in data.ssoOrgs" :key="o">Authorize this token for {{ o }} in GitHub (Configure SSO next to the token)</li>
+          </ul>
+          Until then, GitHub hides their repos and commits from it.
+        </v-alert>
 
         <!-- Tokens -->
         <section v-if="data.tokens.length" class="ghe__block" aria-labelledby="ghe-tokens">
@@ -215,18 +359,61 @@ onMounted(() => load())
               <div v-if="t.error" class="ghe__token-error">{{ t.error }}</div>
               <div v-else class="ghe__token-text">
                 Signed in as {{ t.login }}. Reads {{ ownersText(t.owners) }}.
+                <template v-if="t.ssoOrgs.length"> GitHub left out {{ t.ssoOrgs.join(', ') }} until the token is authorized for SSO there.</template>
               </div>
             </li>
           </ul>
         </section>
 
+        <!-- Find repos with my commits -->
+        <section v-if="data.configured" class="ghe__block ghe__status" aria-labelledby="ghe-find" aria-live="polite">
+          <div class="ghe__status-text">
+            <h3 id="ghe-find" class="ghe__heading">Repos with your commits</h3>
+            <template v-if="data.find.running && data.find.progress">
+              Searching GitHub: {{ plural(data.find.progress.commits, 'commit', 'commits') }} in {{ plural(data.find.progress.repos, 'repo', 'repos') }} so far.
+              <template v-if="data.find.progress.waitingSeconds">Waiting {{ data.find.progress.waitingSeconds }} seconds for GitHub's limit of 30 searches a minute.</template>
+            </template>
+            <template v-else-if="data.find.at">
+              {{ plural(data.find.commits, 'commit', 'commits') }} of yours in {{ plural(data.find.repos, 'repo', 'repos') }} across {{ plural(data.find.owners, 'owner', 'owners') }}, found {{ when(data.find.at) }} in {{ duration(data.find.seconds) }}. The daily run searches again once a day.
+            </template>
+            <template v-else>
+              Searches GitHub for every commit by your logins and emails, across every owner your tokens can read, and counts them per repo. Takes a few minutes.
+            </template>
+            <div v-for="n in data.find.notes" :key="n" class="ghe__muted">{{ n }}</div>
+            <div v-if="data.find.error && !data.find.running" class="ghe__token-error">The last search failed: {{ data.find.error }}</div>
+          </div>
+          <div class="ghe__status-actions">
+            <v-btn color="primary" variant="tonal" height="44" prepend-icon="mdi-source-commit" :loading="finding || data.find.running" @click="findRepos">
+              Find repos with my commits
+            </v-btn>
+          </div>
+          <div v-if="data.find.at && !data.find.running" class="ghe__bulk-all">
+            <v-btn
+              v-if="data.find.turnOn.repos"
+              color="success"
+              variant="flat"
+              height="44"
+              prepend-icon="mdi-toggle-switch"
+              :loading="bulkBusy === 'on:all'"
+              :disabled="!!bulkBusy"
+              @click="turnOnWithCommits()"
+            >
+              Turn on every repo with your commits ({{ plural(data.find.turnOn.repos, 'repo', 'repos') }} across {{ plural(data.find.turnOn.owners, 'owner', 'owners') }})
+            </v-btn>
+            <span v-else-if="data.find.repos" class="ghe__muted">Every repo with your commits is on, except forks.</span>
+          </div>
+        </section>
+
         <!-- Index status -->
         <section v-if="data.configured" class="ghe__block ghe__status" aria-live="polite">
           <div class="ghe__status-text">
-            <template v-if="data.indexedCommits">
-              {{ data.indexedCommits.toLocaleString('en-US') }} of your commits indexed from {{ included.length }} {{ included.length === 1 ? 'repo' : 'repos' }}.
+            <template v-if="data.index.included">
+              {{ data.index.indexed.toLocaleString('en-US') }} of {{ plural(data.index.included, 'repo', 'repos') }} indexed<template v-if="data.indexedCommits">, {{ plural(data.indexedCommits, 'commit', 'commits') }} of yours searchable</template>.
+              {{ indexWaiting }}
+              <template v-if="data.index.oversized">{{ plural(data.index.oversized, 'repo is', 'repos are') }} over 500 MB and never cloned.</template>
+              <template v-if="data.index.sso">{{ plural(data.index.sso, 'repo waits', 'repos wait') }} for SSO authorization.</template>
             </template>
-            <template v-else>Nothing is indexed yet.</template>
+            <template v-else>No repo is switched on yet, so nothing is indexed.</template>
             <template v-if="data.lastIndex">
               Last index {{ when(data.lastIndex.startedAt) }}, {{ data.lastIndex.status }}.
             </template>
@@ -246,22 +433,62 @@ onMounted(() => load())
         <section v-if="data.groups.length" class="ghe__block" aria-labelledby="ghe-repos">
           <h3 id="ghe-repos" class="ghe__heading">Repos</h3>
           <p class="ghe__hint">
-            Your own repos are on by default. Forks and organization and client repos stay off until you turn them on. Turning a repo off deletes everything indexed from it.
+            Your own repos are on by default. Forks and organization and client repos stay off until you turn them on. Turning on in bulk skips forks and repos without your commits. Turning a repo off deletes everything indexed from it.
           </p>
+          <div class="ghe__narrow">
+            <p v-if="!data.find.at" class="ghe__hint mb-0">Find repos with my commits to narrow this list.</p>
+            <template v-else>
+              <p class="ghe__hint mb-0">
+                <template v-if="narrowed">Showing repos with your commits, most first, and any you switched on. {{ plural(hiddenCount, 'repo is', 'repos are') }} hidden.</template>
+                <template v-else>Showing every repo your tokens can read.</template>
+              </p>
+              <v-switch v-model="showAll" color="primary" hide-details inset density="compact" label="Show all repos" class="ghe__narrow-switch" />
+            </template>
+          </div>
           <v-expansion-panels v-model="openPanels" multiple variant="accordion" class="ghe__owners">
-            <v-expansion-panel v-for="g in data.groups" :key="g.owner" :value="g.owner" class="ghe__owner">
+            <v-expansion-panel v-for="g in shownGroups" :key="g.owner" :value="g.owner" class="ghe__owner">
               <v-expansion-panel-title class="ghe__owner-title">
                 <div class="ghe__owner-head">
                   <span class="ghe__owner-name">{{ g.owner }}</span>
                   <span class="ghe__owner-meta">
                     {{ g.personal ? 'Yours, on by default except forks' : g.ownerType === 'Organization' ? 'Organization, off by default' : 'Someone else\'s, off by default' }}.
                     {{ onCount(g) }} of {{ g.repos.length }} on.
+                    <template v-if="g.withCommits != null">{{ g.withCommits ? `${plural(g.withCommits, 'has', 'have')} your commits.` : 'None have your commits.' }}</template>
+                    <template v-if="g.sso"> Needs SSO authorization.</template>
                   </span>
                 </div>
               </v-expansion-panel-title>
               <v-expansion-panel-text>
+                <div v-if="(g.withCommitsOff ?? 0) > 0 || onCount(g) > 0" class="ghe__bulk">
+                  <v-btn
+                    v-if="(g.withCommitsOff ?? 0) > 0"
+                    color="success"
+                    variant="tonal"
+                    height="44"
+                    prepend-icon="mdi-toggle-switch"
+                    :loading="bulkBusy === `on:${g.owner}`"
+                    :disabled="!!bulkBusy"
+                    @click="turnOnWithCommits(g)"
+                  >
+                    Turn on the {{ plural(g.withCommitsOff ?? 0, 'repo', 'repos') }} with your commits
+                  </v-btn>
+                  <v-btn
+                    v-if="onCount(g) > 0"
+                    variant="text"
+                    height="44"
+                    prepend-icon="mdi-toggle-switch-off-outline"
+                    :loading="bulkBusy === `off:${g.owner}`"
+                    :disabled="!!bulkBusy"
+                    @click="turnAllOff(g)"
+                  >
+                    Turn all off
+                  </v-btn>
+                </div>
+                <v-alert v-if="!g.personal && onCount(g) > 0" type="warning" density="compact" class="ghe__warning" role="note">
+                  {{ CLIENT_WARNING }}
+                </v-alert>
                 <v-text-field
-                  v-if="g.repos.length > 12"
+                  v-if="listedRepos(g).length > 12"
                   v-model="filters[g.owner]"
                   :label="`Find a repo in ${g.owner}`"
                   prepend-inner-icon="mdi-magnify"
@@ -298,9 +525,6 @@ onMounted(() => load())
                         @update:model-value="toggle(g, r, $event)"
                       />
                     </div>
-                    <v-alert v-if="!g.personal && r.included" type="warning" density="compact" class="ghe__warning" role="note">
-                      {{ CLIENT_WARNING }}
-                    </v-alert>
                   </li>
                 </ul>
                 <p v-if="!filteredCount(g)" class="ghe__hint">No repo here matches.</p>
@@ -381,6 +605,24 @@ onMounted(() => load())
         </section>
       </template>
     </v-card-text>
+
+    <v-dialog v-model="confirmOpen" max-width="520">
+      <v-card v-if="confirm" class="ghe__dialog">
+        <v-card-title class="text-subtitle-1 font-weight-medium">{{ confirm.title }}</v-card-title>
+        <v-card-text>
+          <v-alert v-if="confirm.owners.length" type="warning" density="compact" class="mb-3">{{ confirm.text }}</v-alert>
+          <p v-else class="mb-0">{{ confirm.text }}</p>
+          <p v-if="confirm.owners.length" class="ghe__hint mb-0">
+            Owners other than you in this: {{ confirm.owners.join(', ') }}.
+          </p>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn variant="text" height="44" @click="confirm = null">Cancel</v-btn>
+          <v-btn :color="confirm.owners.length || confirm.action === 'Turn on' ? 'success' : 'error'" variant="flat" height="44" @click="confirmRun">{{ confirm.action }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-card>
 </template>
 
@@ -592,6 +834,51 @@ onMounted(() => load())
   &__warning {
     margin: 0 0 10px;
     font-size: 0.8125rem;
+  }
+
+  &__bulk,
+  &__bulk-all {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+
+    :deep(.v-btn) {
+      text-transform: none;
+      letter-spacing: normal;
+    }
+  }
+
+  &__bulk-all {
+    flex: 1 1 100%;
+    margin-bottom: 0;
+  }
+
+  &__narrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 16px;
+    margin-bottom: 12px;
+  }
+
+  &__narrow-switch {
+    flex: 0 0 auto;
+
+    :deep(.v-selection-control) {
+      min-height: 44px;
+    }
+  }
+
+  &__sso {
+    margin: 4px 0 6px;
+    padding-left: 18px;
+  }
+
+  &__dialog :deep(.v-btn) {
+    text-transform: none;
+    letter-spacing: normal;
   }
 
   &__more {
