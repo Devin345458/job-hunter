@@ -223,3 +223,135 @@ export function cleanFieldLabel(label: string | null | undefined): string {
   out = out.replace(/\s+/g, ' ').trim()
   return out || label.trim()
 }
+
+// ── Demo build stops ──
+
+export type DemoStopKind = 'credit' | 'key' | 'budget'
+
+/**
+ * Why a demo build stopped when the reason is the Claude account rather than the build: out of
+ * credit, the key was rejected, or the daily budget ran out. The server retries those; any
+ * other failure waits for a manual Build again.
+ */
+export function demoStopKind(error: string | null | undefined): DemoStopKind | null {
+  const e = error ?? ''
+  if (/credit balance is too low|out of credit/i.test(e)) return 'credit'
+  if (/rejected the key|rejected the API key|invalid x-api-key/i.test(e)) return 'key'
+  if (/Daily AI budget reached|Waiting for Claude/i.test(e)) return 'budget'
+  return null
+}
+
+/**
+ * A stop said in the past tense. The stored error describes the account at the time of the build;
+ * the key or the credit may have changed since, so the page never says it is still true.
+ */
+export const DEMO_STOP_TEXT: Record<DemoStopKind, string> = {
+  credit: 'Stopped: Claude was out of credit at the time',
+  key: 'Stopped: Anthropic rejected the API key at the time',
+  budget: 'Stopped: that day\'s Claude budget was used up',
+}
+
+// ── Gap analysis ──
+
+/**
+ * The gap summary, agreeing with the demo that exists. An analysis that ran again after the demo
+ * was planned (a question answered since) can say "No demo planned." while the demo is there.
+ */
+export function gapSummaryText(
+  summary: string | null | undefined,
+  demo: { title: string; gapAddressed?: string | null; status: string } | null | undefined,
+): string {
+  if (!summary) return ''
+  if (!demo || demo.status === 'discarded') return summary
+  const gap = demo.gapAddressed?.trim()
+  return summary.replace(/\bNo demo planned\./, `Demo: ${demo.title}${gap ? ` (for ${gap})` : ''}.`)
+}
+
+// ── Question context ──
+
+/**
+ * A question's stored context in plain words: without the "(kind: domain, must have)" tag older
+ * gap questions copied from the prompt, and without the doubled period a requirement ending in
+ * "U.S." left. An ellipsis stays.
+ */
+export function plainQuestionContext(text: string | null | undefined): string {
+  if (!text) return ''
+  return text
+    .replace(/\s*\(kind: [^)]*\)/gi, '')
+    .replace(/(?<!\.)\.\.(?!\.)/g, '.')
+    .replace(/\s+([.,;:])/g, '$1')
+}
+
+// ── Match reasoning in the second person ──
+
+const TO_BASE: Record<string, string> = {
+  'has': 'have', 'is': 'are', 'was': 'were', 'does': 'do', 'doesn\'t': 'don\'t', 'isn\'t': 'aren\'t',
+  'hasn\'t': 'haven\'t', 'wasn\'t': 'weren\'t', 'focuses': 'focus',
+}
+const MODALS = new Set(['would', 'could', 'can', 'will', 'should', 'may', 'might', 'must', 'cannot', 'can\'t', 'won\'t', 'wouldn\'t'])
+/** Verbs that share a subject after a comma or "and": "You have AWS, has led teams, and is ...". */
+const COORDINATED = /(,\s+(?:and\s+)?|\s+and\s+)(has|is|was|does|lacks|meets|exceeds|shows|brings|holds|owns|leads|knows|works|seeks|needs|offers|matches|fits|demonstrates|understands|uses|wants|targets|appears|seems|falls|aligns|covers)\b/g
+
+/** "has" gives "have", "meets" gives "meet"; null when the word is not a verb this can conjugate. */
+function baseVerb(word: string): string | null {
+  const w = word.toLowerCase()
+  if (TO_BASE[w]) return TO_BASE[w]!
+  if (MODALS.has(w)) return word
+  if (!/^[a-z']+$/.test(word)) return null
+  if (/[^aeiou]ies$/.test(w) && w.length > 4) return `${word.slice(0, -3)}y`
+  if (/(?:ss|sh|ch|x|zz)es$/.test(w)) return word.slice(0, -2)
+  if (/[^su]s$/.test(w) && w.length > 2) return word.slice(0, -1)
+  return null
+}
+
+/** One sentence: possessives anywhere, the subject at the start or after a conjunction. */
+function secondPersonSentence(s: string): string {
+  let out = s.replace(/\b(the|this)\s+candidate['’]s\b/gi, m => (m[0] === 'T' ? 'Your' : 'your'))
+  let converted = false
+  out = out.replace(
+    /(^|\b(?:and|but|while|whereas|although|though|because|since|so)\s+)((?:the|this)\s+)?candidate\b(?!['’])(\s+(?:also|already|still|only|[a-z]+ly)\b)?\s+([A-Za-z']+)/gi,
+    (m, pre: string, det: string | undefined, adverb: string | undefined, verb: string) => {
+      // A bare "Candidate is" only at the start of a sentence.
+      if (!det && pre !== '') return m
+      const base = baseVerb(verb)
+      if (!base) return m
+      converted = true
+      const you = pre === '' ? 'You' : 'you'
+      return `${pre}${you}${adverb ?? ''} ${base}`
+    },
+  )
+  if (converted) out = out.replace(COORDINATED, (_, sep: string, verb: string) => `${sep}${baseVerb(verb) ?? verb}`)
+  return out
+}
+
+/**
+ * Match reasoning and summaries stored by older runs speak about "the candidate"; newer ones say
+ * "you". This rewrites only what it can do correctly: "the candidate's" as "your" anywhere, and
+ * "The candidate has" as "You have" at a sentence start or after a conjunction, when the next
+ * word is a verb it can conjugate. Anything else is left as written.
+ */
+export function secondPerson(text: string | null | undefined): string {
+  if (!text) return ''
+  if (!/candidate/i.test(text)) return text
+  return text.split(/((?<=[.!?])\s+)/).map((part, i) => (i % 2 === 0 ? secondPersonSentence(part) : part)).join('')
+}
+
+// ── Evidence check lines ──
+
+/** "The claim that ..." continues a sentence as "the claim that ..."; a name keeps its capital. */
+function continueSentence(text: string): string {
+  return /^(The|A|An|This|That|It|No|Nothing|One|Each|Every)\b/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text
+}
+
+/**
+ * One problem from the evidence check, as the producer now writes it: "X. The rewrite was also
+ * unsupported: the claim that ...". Lines stored before that read "X.; the rewrite was also
+ * unsupported (The claim ...))"; this turns them into the same shape. Other lines are unchanged.
+ */
+export function plainEvidenceLine(line: string | null | undefined): string {
+  if (!line) return ''
+  return line.replace(
+    /\.?;\s*the rewrite was also unsupported(?:\s*\(((?:[^()]|\([^()]*\))*)\))?/i,
+    (_, inner: string | undefined) => `. The rewrite was also unsupported${inner ? `: ${continueSentence(inner.trim().replace(/[.\s]+$/, ''))}` : ''}`,
+  ).replace(/\.\)$/, ')')
+}

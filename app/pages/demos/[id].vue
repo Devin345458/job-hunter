@@ -21,7 +21,7 @@ const discarding = ref(false)
 const rebuilding = ref(false)
 const previewing = ref(false)
 
-useHead(() => ({ title: demo.value ? `${demo.value.title} | Demo` : 'Demo project' }))
+useHead(() => ({ title: demo.value ? `${demo.value.title} · Demo projects · Job Hunter` : 'Demo projects · Job Hunter' }))
 
 /** A build or a preview build is running on the server, so the page refreshes itself. */
 const active = computed(() => !!demo.value && (!!demo.value.progress || demo.value.preview.status === 'building'))
@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
 
         <v-card-text>
           <div class="demo-detail__chips mb-4">
-            <DemoStatusChip :status="shownStatus" />
+            <DemoStatusChip :status="shownStatus" :stopped="!!demo.stoppedFor" />
             <v-chip v-if="demo.isSandbox" size="small" variant="outlined" prepend-icon="mdi-test-tube">
               Sandbox application
             </v-chip>

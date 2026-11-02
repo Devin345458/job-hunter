@@ -25,6 +25,8 @@ const reason = ref<RejectReasonCode | null>(null)
 const note = ref('')
 const skills = ref<string[]>([])
 const skillsMode = ref<RejectSkillsMode>('lack')
+/** A mode picked by hand stays; until then the mode follows the picked chips. */
+const modeTouched = ref(false)
 
 watch(() => props.modelValue, (open) => {
   if (open) {
@@ -32,8 +34,24 @@ watch(() => props.modelValue, (open) => {
     note.value = ''
     skills.value = []
     skillsMode.value = 'lack'
+    modeTouched.value = false
   }
 })
+
+/**
+ * Picked chips that are all under "In your knowledge base" default to "I have them but don't
+ * want to work with them"; any other pick keeps "I don't have these".
+ */
+watch(skills, (picked) => {
+  if (modeTouched.value || picked.length === 0) return
+  const allHave = picked.every(label => props.skillOptions.find(o => o.label === label)?.status === 'have')
+  skillsMode.value = allHave ? 'avoid' : 'lack'
+})
+
+function pickMode(mode: RejectSkillsMode) {
+  skillsMode.value = mode
+  modeTouched.value = true
+}
 
 const SKILL_GROUPS = [
   { key: 'missing', label: 'Not in your knowledge base', statuses: ['lack', 'unknown'] },
@@ -145,7 +163,7 @@ function confirm() {
                 class="rj__reason"
                 :class="{ 'rj__reason--on': skillsMode === m.value }"
                 :aria-checked="skillsMode === m.value"
-                @click="skillsMode = m.value"
+                @click="pickMode(m.value)"
               >
                 <v-icon :icon="skillsMode === m.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" size="18" />
                 <span>{{ m.label }}</span>

@@ -84,6 +84,14 @@ ${lines.map(l => `${l.id}: ${l.text}`).join('\n')}`,
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
+// The problem text the evidence check stores and the application page shows. A line whose rewrite
+// also failed reads "X. The rewrite was also unsupported: the claim that ...", never
+// "X.; the rewrite was also unsupported (The claim ...)" with a doubled closing parenthesis.
+const withoutEndPeriod = (s: string) => s.trim().replace(/[.;,\s]+$/, '')
+const asSentence = (s: string) => `${withoutEndPeriod(s)}.`
+/** "The claim that ..." continues a sentence as "the claim that ..."; a name keeps its capital. */
+const continueSentence = (s: string) => (/^(The|A|An|This|That|It|No|Nothing|One|Each|Every)\b/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s)
+
 export interface Grounding {
   entries: KnowledgeEntry[]
   posting: string | null
@@ -179,7 +187,8 @@ export async function verifyClaims(
       const c = recheck.get(o.id)
       const failed = c?.supported ? groundCheck({ id: o.id, text: o.final! }, c, g) : 'unsupported'
       if (!c?.supported || failed) {
-        o.problem = `${o.problem ?? 'Unsupported'}; the rewrite was also unsupported${c?.problem ? ` (${c.problem})` : failed && failed !== 'unsupported' ? ` (${failed})` : ''}`
+        const why = c?.problem || (failed && failed !== 'unsupported' ? failed : null)
+        o.problem = `${asSentence(o.problem ?? 'Unsupported')} The rewrite was also unsupported${why ? `: ${continueSentence(withoutEndPeriod(why))}` : ''}.`
         o.final = null
         o.status = 'dropped'
       }
@@ -212,7 +221,7 @@ export function evidenceReport(title: string, outcomes: ClaimOutcome[]): string 
   const rewritten = outcomes.filter(o => o.status === 'rewritten')
   const dropped = outcomes.filter(o => o.status === 'dropped')
   const lines = [`${title}: ${outcomes.length} lines checked against the knowledge base. ${supported} supported, ${rewritten.length} rewritten, ${dropped.length} dropped.`]
-  for (const o of rewritten) lines.push(`Rewritten: "${o.original}" became "${o.final}" (${o.problem ?? 'unsupported claim'})`)
-  for (const o of dropped) lines.push(`Dropped: "${o.original}" (${o.problem ?? 'unsupported claim'})`)
+  for (const o of rewritten) lines.push(`Rewritten: "${o.original}" became "${o.final}" (${withoutEndPeriod(o.problem ?? 'unsupported claim')})`)
+  for (const o of dropped) lines.push(`Dropped: "${o.original}" (${withoutEndPeriod(o.problem ?? 'unsupported claim')})`)
   return lines.join('\n')
 }

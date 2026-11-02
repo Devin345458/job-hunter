@@ -3,10 +3,10 @@ import { useDisplay } from 'vuetify'
 
 const { state } = useSnackbar()
 // Desktop: bottom left, over the navigation, clear of the review card's decision bar.
-// Phone: over the 56px app bar (menu button and page name), which nothing needs for the few
-// seconds a notice shows. Below the app bar the review page pins its count and Previous, Next,
-// Queue, and the decision bar sits at the bottom; a notice in either place covered what comes
-// next. Notices there keep to two lines so they stay inside the bar; errors show in full.
+// Phone: just under the 56px app bar, so the menu button and the page name stay visible and the
+// bottom navigation and the card's Reject and Approve stay free. On the review page it covers the
+// Previous, Next, and Queue row for the few seconds it shows; the queue moves on by itself after a
+// decision, and the close button dismisses it. Notices keep to two lines; errors show in full.
 const { mdAndUp } = useDisplay()
 const clamp = computed(() => !mdAndUp.value && state.color !== 'error')
 
@@ -40,15 +40,17 @@ function onAction() {
       <v-btn
         v-if="state.action"
         variant="text"
-        size="small"
+        :size="mdAndUp ? 'small' : 'default'"
+        class="app-snackbar__btn"
         @click="onAction"
       >
         {{ state.action.text }}
       </v-btn>
       <v-btn
         variant="text"
-        size="small"
+        :size="mdAndUp ? 'small' : 'default'"
         icon="mdi-close"
+        class="app-snackbar__btn"
         aria-label="Dismiss"
         @click="state.show = false"
       />
@@ -62,13 +64,12 @@ function onAction() {
     backdrop-filter: blur(12px);
   }
 
-  // Phone: sit in the app bar's band (top of the screen to 56px) instead of under it.
+  // Phone: under the app bar (56px plus the notch), across the width with a small gutter.
   &--phone {
-    padding-top: env(safe-area-inset-top, 0px) !important;
-    margin: 4px 8px !important;
+    margin: calc(56px + env(safe-area-inset-top, 0px) + 6px) 8px 0 !important;
 
     :deep(.v-snackbar__wrapper) {
-      min-height: 48px;
+      min-height: 52px;
     }
 
     :deep(.v-snackbar__content) {
@@ -77,6 +78,12 @@ function onAction() {
 
     :deep(.v-snackbar__actions) {
       margin-inline-end: 2px;
+    }
+
+    // Tap targets on a phone: 44px, corners still 8px from the global button settings.
+    .app-snackbar__btn {
+      min-width: 44px;
+      min-height: 44px;
     }
   }
 

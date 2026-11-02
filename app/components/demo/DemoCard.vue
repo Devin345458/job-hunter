@@ -16,6 +16,19 @@ const emit = defineEmits<{ rebuild: [] }>()
 const shownStatus = computed(() => props.demo.progress ? 'building' as const : props.demo.status)
 const hasPreview = computed(() => ['built', 'published'].includes(props.demo.status) && props.demo.preview.kind !== 'none')
 
+/**
+ * What approving the application does with a built demo, from the same approveEffect the detail
+ * page and the review card use: publish, publish and hand back for a by-hand submit, or nothing
+ * while the GitHub token is missing.
+ */
+const publishFact = computed(() => {
+  if (props.demo.status !== 'built') return null
+  const effect = props.demo.approveEffect
+  if (effect?.demoBlocked) return { icon: 'mdi-lock-alert-outline', tone: 'warning', text: 'Cannot be published: the GitHub token is not set' }
+  if (effect?.submit === 'manual') return { icon: 'mdi-lock-outline', tone: null, text: 'Publishes on approve, then you submit by hand' }
+  return { icon: 'mdi-lock-outline', tone: null, text: 'Publishes on approve' }
+})
+
 const testFacts = computed(() => {
   if (props.demo.testsPassed === true) return { icon: 'mdi-check-circle', color: 'success', text: 'Tests pass' }
   if (props.demo.testsPassed === false) return { icon: 'mdi-close-circle', color: 'error', text: 'Tests fail' }
@@ -42,7 +55,7 @@ const testFacts = computed(() => {
 
     <v-card-text class="pt-1">
       <div class="mb-3">
-        <DemoStatusChip :status="shownStatus" />
+        <DemoStatusChip :status="shownStatus" :stopped="!!demo.stoppedFor" />
       </div>
       <p v-if="jobLabel && demo.gapAddressed" class="demo-card__gap text-body-2 mb-2">
         Shows: {{ demo.gapAddressed }}
@@ -64,9 +77,9 @@ const testFacts = computed(() => {
           <v-icon icon="mdi-file-code-outline" size="18" />
           {{ demo.files.length }} files
         </span>
-        <span v-if="demo.status === 'built'" class="demo-card__fact">
-          <v-icon icon="mdi-lock-outline" size="18" />
-          Publishes on approve
+        <span v-if="publishFact" class="demo-card__fact" :class="publishFact.tone ? `text-${publishFact.tone}` : undefined">
+          <v-icon :icon="publishFact.icon" size="18" />
+          {{ publishFact.text }}
         </span>
       </div>
       <DemoBuildState :demo="demo" :busy="rebuilding" class="mt-3" @rebuild="emit('rebuild')" />

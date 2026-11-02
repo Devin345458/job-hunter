@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { decisions, jobs, questions } from '../db/schema'
 import type { RejectSkillOption, RejectSkillsMode, RejectSkillsRecord, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
+import { capitalize } from '#shared/utils/plain-text'
 import { loadKnowledge, upsertKnowledge } from './knowledge'
 import { ruleTerm } from './learned-score'
 import { GENERIC_TERMS } from './learning'
@@ -20,31 +21,145 @@ const MAX_OPTIONS = 24
 
 /** "Nice to have: Go in production" names Go in production. */
 const OPTIONAL_PREFIX = /^(nice to have|nice-to-have|bonus|plus|a plus|preferred|optional|desired)\s*:\s*/i
-/** Requirements that are tasks rather than skills ("Run CI/CD in GitHub Actions", "Design MySQL schemas"). */
-const TASK_START = /^(run|build|deploy|design|tune|write|lead|leading|own|ship|manage|create|develop|implement|maintain|drive|work|collaborate|communicate|mentor|mentoring|identify|resolve)\b/i
+/**
+ * Requirements that are tasks, activities, or conditions rather than skills ("Run CI/CD in
+ * GitHub Actions", "Designing APIs and integrations", "Evaluating AI quality", "Open to using AI").
+ */
+const TASK_START = /^(run|build|deploy|design|tune|write|lead|leading|own|ship|manage|create|develop|implement|maintain|drive|work|collaborate|communicate|mentor|mentoring|identify|resolve|coach|hire|grow|onboard|translate|explain|give|read|debug|evaluate|use|leverage|integrate|operate|measure|improve|deliver|support|scale|contribute|learn|partner|designing|building|evaluating|using|leveraging|integrating|operating|debugging|developing|implementing|managing|measuring|improving|creating|writing|running|deploying|delivering|shipping|supporting|scaling|maintaining|translating|coaching|hiring|explaining|contributing|played|previous|prior|interest|open to|comfortable|authorized|ability|able to|live)\b/i
+/** How much of a skill, not which one: "Go in production" names Go. */
+const AMOUNT_SUFFIX = /\s+(?:in (?:a )?production(?: environments?)?|at scale)\s*$/i
+/** "modern JavaScript" names JavaScript. */
+const LEADING_QUALIFIER = /^(?:modern|current|recent)\s+/i
 /** Requirement kinds that never name a stack. */
 const NOT_STACK_KINDS = new Set<Requirement['kind']>(['education', 'certification'])
 /** Requirement kinds whose lists ("Ruby, Java, Go, or Python") are split into one chip per skill. */
 const SPLIT_KINDS = new Set<Requirement['kind']>(['skill', 'language', 'framework', 'domain'])
+/**
+ * One capitalized word that names no stack. Requirement lines start with a capital, so a lone
+ * "Identity" (from "Identity and access management") or "Performance" reads like a name.
+ */
+const NOT_A_STACK = new Set(['identity', 'privacy', 'risk', 'compliance', 'governance', 'mentorship', 'leadership', 'ownership', 'collaboration', 'communication', 'teamwork', 'experience', 'interest', 'ability', 'familiarity', 'knowledge', 'understanding', 'proficiency', 'expertise', 'performance', 'reliability', 'scalability', 'quality', 'similar', 'other', 'etc', 'others'])
+/** Generic beyond the learning list: "Software-as-a-Service product" is SaaS. */
+const GENERIC_EXTRA = new Set(['software-as-a-service', 'enterprise software', 'kanban', 'waterfall', 'lean'])
 const STATUS_ORDER: Record<Requirement['status'], number> = { lack: 0, unknown: 0, partial: 1, have: 2 }
 
-/** The short skill name a requirement line names, or null when it is generic or not a skill. */
-export function rejectSkillLabel(text: string): string | null {
-  const label = cleanSkillSubject(text.replace(OPTIONAL_PREFIX, '').trim())
-  if (!label || TASK_START.test(label)) return null
-  const term = ruleTerm(label)
-  return term && !GENERIC_TERMS.has(term) ? label : null
+/**
+ * A one-word name the question cleaner leaves out: it treats a capital first letter as the
+ * start of a sentence, so "Python", "Go", "Clojure", and "Sidekiq" read as plain words there.
+ * Only stack requirement kinds call this, where a lone capitalized word is a name.
+ */
+function oneWordName(text: string): string | null {
+  const t = text
+    .replace(/\([^()]*\)/g, ' ')
+    .replace(/\b\d+\s*\+?\s*(?:years?|yrs?)\b(?:\s+of)?/gi, ' ')
+    .replace(/\s+/g, ' ').trim()
+    .replace(/^(?:at least|one of|either|with|using|in)\s+/i, '')
+    .replace(/^(?:solid|strong|deep|good|working|advanced|basic|proven|hands-on|excellent|exceptional|expert)\s+/i, '')
+    .replace(/^(?:understanding|knowledge|expertise|experience|proficiency|familiarity|fluency)\s+(?:of|in|with)\s+/i, '')
+    .replace(/\b(?:commercial|professional|hands-on)?\s*experience\b/gi, ' ')
+    .replace(/[.,;:]+$/, '')
+    .replace(/\s+/g, ' ').trim()
+  // "backend engineering in Java", "technical background in Clojure": the name at the end.
+  const name = /^[A-Z][A-Za-z0-9.+#/-]*$/.test(t) ? t : /\s(?:in|with)\s+([A-Z][A-Za-z0-9.+#/-]*)$/.exec(t)?.[1] ?? null
+  return !name || NOT_A_STACK.has(name.toLowerCase()) ? null : name
 }
 
-/** One label per skill in a list requirement: "a language like Ruby, Java, Go, or Python" gives Ruby, Java, Go, Python. */
+/**
+ * The short skill name a requirement line names, or null when it is generic or not a skill.
+ * `name` accepts a lone capitalized word ("Python"), for stack requirement kinds and list items.
+ */
+export function rejectSkillLabel(text: string, opts: { name?: boolean } = {}): string | null {
+  const raw = text.replace(OPTIONAL_PREFIX, '').replace(/\s+/g, ' ').trim()
+  if (TASK_START.test(raw)) return null
+  const t = raw.replace(/\s*\([^()]*\)/g, ' ').replace(/\s+/g, ' ').trim().replace(AMOUNT_SUFFIX, '').replace(/[.,;:]+$/, '').trim()
+  let label = cleanSkillSubject(t) ?? (opts.name ? oneWordName(t) : null)
+  if (!label) return null
+  label = label.replace(LEADING_QUALIFIER, '').replace(AMOUNT_SUFFIX, '').trim()
+  if (!label || TASK_START.test(label) || NOT_A_STACK.has(label.toLowerCase())) return null
+  // "or similar OOP languages", "another modern CMS": a stand-in, not a skill.
+  if (/^(?:similar|other|another|related|equivalent|comparable)\b/i.test(label)) return null
+  const term = ruleTerm(label)
+  const bare = term.replace(/\s+products?$/, '')
+  if (!term || GENERIC_TERMS.has(term) || GENERIC_TERMS.has(bare) || GENERIC_EXTRA.has(bare)) return null
+  return capitalize(label)
+}
+
+/** Each parenthesized group swapped for a marker, so splitting never cuts inside "(SSO, SAML)". */
+function maskParens(text: string): { masked: string; groups: string[] } {
+  const groups: string[] = []
+  let masked = ''
+  let buf = ''
+  let depth = 0
+  for (const c of text) {
+    if (c === '(') {
+      if (depth > 0) buf += c
+      depth++
+    }
+    else if (c === ')' && depth > 0) {
+      depth--
+      if (depth === 0) {
+        masked += `\u0001${groups.length}\u0001`
+        groups.push(buf)
+        buf = ''
+      }
+      else buf += c
+    }
+    else if (depth > 0) buf += c
+    else masked += c
+  }
+  // An unclosed parenthesis stays as text; the label cleaner drops what it cannot use.
+  if (depth > 0) masked += `(${buf}`
+  return { masked, groups }
+}
+
+function unmask(text: string, groups: string[]): string {
+  return text.replace(/\u0001(\d+)\u0001/g, (_, i: string) => `(${groups[Number(i)]})`)
+}
+
+/**
+ * Splits a list at its own separators: commas, semicolons, "or", "and", "and/or", "&", " + ",
+ * and a slash between two names of three or more characters ("HTML/CSS", never "CI/CD").
+ * Text inside parentheses must be masked first.
+ */
+function splitList(text: string): string[] {
+  return text
+    .split(/\s*[,;]\s*|\s+(?:and\/or|or|and|&|\+)\s+|(?<=[A-Za-z0-9.+#]{3})\/(?=[A-Za-z0-9.+#]{3})/i)
+    .map(p => p.replace(/^\s*(?:and\/or|or|and)\s+/i, '').trim())
+    .filter(Boolean)
+}
+
+/** Words that introduce examples: "such as", "e.g.", "including". */
+const EXAMPLES = /^(.*?)\b(?:like|such as|e\.g\.?,?|including|for example|using)\s+(.+)$/i
+
+function labelsOf(parts: string[]): string[] {
+  return parts.map(p => rejectSkillLabel(p, { name: true }))
+    .filter((l): l is string => !!l && l.split(' ').length <= 3)
+}
+
+/**
+ * One label per skill in a list requirement: "a language like Ruby, Java, Go, or Python" gives
+ * Ruby, Java, Go, Python. A parenthesized list adds its own names: "Identity and access
+ * management concepts (SSO, SAML, OIDC, SCIM)" gives SSO, SAML, OIDC, SCIM, and "Clojure or
+ * Frontend (React + Typescript)" gives Clojure, React, Typescript. Parentheses are split as a
+ * whole, so a chip is never a fragment cut out of them ("scope)", "Gemini)").
+ */
 function listLabels(text: string): string[] {
-  let t = text.replace(OPTIONAL_PREFIX, '')
-  const example = t.match(/\b(?:like|such as|e\.g\.?|including|for example)\s+(.+)$/i)
-  if (example) t = example[1]!
-  return t.split(/,|\/|&|;|\s+or\s+|\s+and\s+/i)
-    .map(p => p.replace(/^\s*(or|and)\s+/i, '').trim())
-    .map(rejectSkillLabel)
-    .filter((l): l is string => !!l && l.split(' ').length <= 2)
+  const { masked, groups } = maskParens(text.replace(OPTIONAL_PREFIX, ''))
+  const example = EXAMPLES.exec(masked)
+  const out = labelsOf(splitList(example ? example[2]! : masked).map(p => unmask(p, groups)))
+  for (const g of groups) {
+    const inner = g.trim()
+      .replace(/^(?:e\.g\.?|i\.e\.?|such as|including|like|for example)\s*,?\s*/i, '')
+      .replace(/,?\s*(?:etc\.?|and more|or similar|preferred|required)\s*$/i, '')
+    out.push(...labelsOf(splitList(maskParens(inner).masked)))
+  }
+  // "LLM integration patterns such as tool use, function calling": the examples are plain words,
+  // so the words before them name the skill.
+  if (out.length === 0 && example) {
+    const head = rejectSkillLabel(unmask(example[1]!, groups), { name: true })
+    if (head) out.push(head)
+  }
+  return out
 }
 
 /**
@@ -69,7 +184,7 @@ export function rejectSkillOptions(requirements: Requirement[], negative: Set<st
   const all: Array<RejectSkillOption & { term: string; i: number }> = []
   requirements.forEach((r, i) => {
     if (!r?.text || NOT_STACK_KINDS.has(r.kind)) return
-    const one = rejectSkillLabel(r.text)
+    const one = rejectSkillLabel(r.text, { name: SPLIT_KINDS.has(r.kind) })
     const labels = one ? [one] : SPLIT_KINDS.has(r.kind) ? listLabels(r.text) : []
     for (const label of labels) {
       const term = ruleTerm(label)
@@ -115,7 +230,7 @@ export function resolveRejectSkills(job: JobRow, reasonCode: string, rawSkills: 
     ...(score?.skills.matched ?? []),
     ...parseJson<string[]>(job.tags, []),
   ].filter((s): s is string => typeof s === 'string' && !!s.trim())
-  for (const s of raw) if (!allowed.has(norm(s))) allowed.set(norm(s), rejectSkillLabel(s) ?? s.trim().replace(/\s+/g, ' '))
+  for (const s of raw) if (!allowed.has(norm(s))) allowed.set(norm(s), rejectSkillLabel(s, { name: true }) ?? s.trim().replace(/\s+/g, ' '))
 
   const skills: RejectSkillsRecord['skills'] = []
   const seen = new Set<string>()

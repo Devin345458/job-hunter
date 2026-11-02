@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { DemoProjectView, DemoStatus, ReviewItem } from '#shared/types/pipeline'
-import { plainError } from '#shared/utils/plain-text'
+import { DEMO_STOP_TEXT, demoStopKind, plainError } from '#shared/utils/plain-text'
 
 // The demo project built for this application. Approve publishes it (repo plus resume site)
 // before the form is submitted, so its state is part of the decision.
@@ -22,7 +22,12 @@ const STATUS: Record<DemoStatus, { label: string; color: string; note: string }>
   discarded: { label: 'Discarded', color: 'secondary', note: 'Not used.' },
 }
 
-const meta = computed(() => STATUS[props.demo.status] ?? STATUS.proposed)
+/** Stopped on the Claude account (credit, key, budget), not on the build: said in the past tense, in a neutral color. */
+const stop = computed(() => (props.demo.status === 'failed' ? demoStopKind(props.demo.error) : null))
+const meta = computed(() => {
+  if (stop.value) return { label: 'Stopped', color: 'secondary', note: `${DEMO_STOP_TEXT[stop.value].replace(/^Stopped: /, '').replace(/^\w/, c => c.toUpperCase())}. The build itself did not fail, and the next pipeline run retries it. Approve will not publish a demo that is not built.` }
+  return STATUS[props.demo.status] ?? STATUS.proposed
+})
 /** A built demo's note says what approve does with it: blocked, publish then hand back, or publish then submit. */
 const note = computed(() => {
   const e = props.effect
@@ -94,7 +99,7 @@ function kb(bytes: number) {
       </div>
     </dl>
 
-    <div v-if="demo.error" class="demo__error" role="alert">
+    <div v-if="demo.error && !stop" class="demo__error" role="alert">
       <v-icon icon="mdi-alert-outline" size="16" />
       <span class="demo__error-text">{{ plainError(demo.error) }}</span>
     </div>

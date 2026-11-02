@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CompensationBreakdown, ScoreBreakdown } from '#shared/types/pipeline'
 import { money, moneyRange } from '~/composables/review/format'
-import { plainQuestionRefs } from '#shared/utils/plain-text'
+import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
 
 // Total compensation against Devin's floor. The scale draws base pay as a solid band, the
 // rest of the total estimate as a lighter extension, and the floor as a vertical rule, so
@@ -13,6 +13,8 @@ const props = defineProps<{
   listing?: { min: number | null; max: number | null; currency: string | null }
   /** Compact: the scale and headline only, no breakdown lines. */
   compact?: boolean
+  /** Inline: one line, "Pay $164k to $235k total · No floor set", for the phone summary under the score. */
+  inline?: boolean
 }>()
 
 const currency = computed(() => props.comp?.currency || props.listing?.currency || 'USD')
@@ -39,6 +41,12 @@ const headlineLabel = computed(() => {
   if (totalMin.value !== null || totalMax.value !== null) return 'estimated total per year'
   if (hasFigures.value) return 'base per year'
   return props.comp?.confidence === 'partial' ? 'some benefits stated, no figures' : 'the posting gives no pay figures'
+})
+
+/** The headline's kind in one word, for the inline line. */
+const inlineKind = computed(() => {
+  if (totalMin.value !== null || totalMax.value !== null) return 'total'
+  return hasFigures.value ? 'base' : ''
 })
 
 const verdict = computed(() => {
@@ -81,7 +89,13 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
 </script>
 
 <template>
-  <div class="comp">
+  <p v-if="inline" class="comp-inline">
+    <span class="comp-inline__label">Pay</span>
+    <span>{{ headline }}{{ inlineKind ? ` ${inlineKind}` : '' }}</span>
+    <span class="comp-inline__sep" aria-hidden="true">·</span>
+    <span :class="`comp-inline__tone--${verdict.tone}`">{{ verdict.text }}</span>
+  </p>
+  <div v-else class="comp">
     <div class="comp__head">
       <div>
         <div class="comp__figure">{{ headline }}</div>
@@ -161,13 +175,35 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
         </div>
       </dl>
       <p v-if="comp?.notes || score?.compensation.reasoning" class="comp__notes">
-        <span v-if="comp">{{ CONFIDENCE[comp.confidence] }}. </span>{{ plainQuestionRefs(score?.compensation.reasoning) }} {{ plainQuestionRefs(comp?.notes) }}
+        <span v-if="comp">{{ CONFIDENCE[comp.confidence] }}. </span>{{ secondPerson(plainQuestionRefs(score?.compensation.reasoning)) }} {{ secondPerson(plainQuestionRefs(comp?.notes)) }}
       </p>
     </template>
   </div>
 </template>
 
 <style scoped lang="scss">
+.comp-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+
+  &__label {
+    font-weight: 600;
+  }
+
+  &__sep,
+  &__tone--muted {
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__tone--success { color: rgb(var(--v-theme-success)); }
+  &__tone--error { color: rgb(var(--v-theme-error)); }
+}
+
 .comp {
   &__head {
     display: flex;

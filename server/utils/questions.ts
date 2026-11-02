@@ -944,7 +944,7 @@ export function askDailyQuestions(): QuestionRow[] {
     if (asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))) continue
     const row = askKnows(c.subject, {
       jobId: c.firstJob,
-      context: `${c.jobs.size === 1 ? 'An open job asks' : `${c.jobs.size} open jobs ask`} for ${c.subject}. Your answer goes into your knowledge base. A No means it is never claimed.`,
+      context: `${c.jobs.size === 1 ? 'An open job asks' : `${c.jobs.size} open jobs ask`} for ${c.subject.replace(/[.\s]+$/, '')}. Your answer goes into your knowledge base. A No means it is never claimed.`,
     })
     if (row && !before.has(row.id)) created.push(row)
   }

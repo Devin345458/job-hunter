@@ -54,7 +54,7 @@ const position = computed(() => {
   for (const key of ['decide', 'attention', 'sending', 'sent'] as const) {
     const list = groups.value[key]
     const i = list.findIndex(x => x.applicationId === selectedId.value)
-    if (i >= 0) return { text: `${GROUP_POSITION[key]} ${i + 1} of ${list.length}` }
+    if (i >= 0) return { label: GROUP_POSITION[key], count: `${i + 1} of ${list.length}` }
   }
   return null
 })
@@ -111,7 +111,7 @@ async function approve() {
     await queue.approve(item.applicationId)
     health.refresh()
     const next = wasRetry ? null : nextDecideAfter(item.applicationId, snapshot)
-    // The phone notice sits in the app bar and keeps to two lines; the queue button shows Sending.
+    // The phone notice sits under the app bar and keeps to two lines; the queue button shows Sending.
     snackbar.notify(
       `${wasRetry ? 'Retrying' : 'Approved'}: ${item.job.title} at ${item.job.company}.${isDesktop.value ? ' Following it under Sending.' : ''}`,
       'success',
@@ -299,7 +299,8 @@ const leftLabel = computed(() => {
       <div class="rv__mhead">
         <div>
           <p class="rv__left tabular" :class="{ 'rv__left--done': !groups.decide.length }">{{ leftLabel }}</p>
-          <p v-if="position" class="rv__pos tabular">{{ position.text }}</p>
+          <!-- Tabular figures give punctuation a digit-wide slot in Schibsted Grotesk ("Sending : 1"), so only the numbers use them. -->
+          <p v-if="position" class="rv__pos">{{ position.label }} <span class="tabular">{{ position.count }}</span></p>
         </div>
         <div class="rv__nav">
           <v-btn icon="mdi-chevron-left" variant="tonal" width="44" height="44" aria-label="Previous card" @click="step(-1)" />

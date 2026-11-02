@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import { knowledgeSource } from '~/composables/review/format'
+import { secondPerson } from '#shared/utils/plain-text'
 
 // Skills fit: matched and missing skills first, then each posting requirement with what the
 // knowledge base says about it.
@@ -21,7 +22,7 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
 
 <template>
   <div class="skills">
-    <p v-if="score?.skills.reasoning" class="skills__reason">{{ score.skills.reasoning }}</p>
+    <p v-if="score?.skills.reasoning" class="skills__reason">{{ secondPerson(score.skills.reasoning) }}</p>
 
     <div v-if="score" class="skills__sets">
       <div class="skills__set">

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
 import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
-import { fixPlurals, plainKnowledgeRefs } from '#shared/utils/plain-text'
+import { demoStopKind, fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
@@ -64,6 +64,27 @@ const skillsSummary = computed(() => {
   return `${s.matched.length} matched, ${missing}`
 })
 
+/**
+ * The phone summary under the score: "Matched 11 · Missing: Python, Infrastructure as code and 3
+ * more". Names are cut to fit two short lines; a parenthesized aside is dropped from a name.
+ */
+const MISSING_BUDGET = 44
+const glance = computed(() => {
+  const s = props.item.score?.skills
+  if (!s) return null
+  const names = s.missing.map(m => m.replace(/\s*\([^)]*\)/g, '').trim()).filter(Boolean)
+  const shown: string[] = []
+  let used = 0
+  for (const n of names) {
+    if (shown.length && used + n.length > MISSING_BUDGET) break
+    shown.push(n)
+    used += n.length + 2
+  }
+  const rest = names.length - shown.length
+  const missing = !names.length ? 'nothing' : rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.length === 2 ? shown.join(' and ') : shown.join(', ')
+  return { matched: s.matched.length, missing, none: !names.length }
+})
+
 const paySummary = computed(() => {
   const c = props.item.compensation
   if (!c) return props.item.job.salaryMin || props.item.job.salaryMax ? `Listing says ${moneyRange(props.item.job.salaryMin, props.item.job.salaryMax, props.item.job.salaryCurrency || 'USD')}` : 'Not extracted yet'
@@ -76,13 +97,17 @@ const paySummary = computed(() => {
   return parts.join(', ')
 })
 
+/** A failed build that stopped on the Claude account (credit, key, budget) rather than on the build. */
+const demoStopped = computed(() => props.item.demo?.status === 'failed' && !!demoStopKind(props.item.demo.error))
 const demoSummary = computed(() => {
   const d = props.item.demo
   if (!d) return ''
   const tests = d.testsPassed === true ? 'tests passed' : d.testsPassed === false ? 'tests failed' : 'tests not run'
-  return `${d.title}: ${d.status}, ${tests}`
+  return `${d.title}: ${demoStopped.value ? 'stopped' : d.status}, ${tests}`
 })
-const demoTone = computed(() => props.item.demo?.status === 'failed' || props.item.demo?.testsPassed === false ? 'error' : 'default')
+const demoTone = computed(() => (props.item.demo?.status === 'failed' && !demoStopped.value) || props.item.demo?.testsPassed === false ? 'error' : 'default')
+/** The gap summary, agreeing with the demo this card shows. */
+const gapLine = computed(() => plainKnowledgeRefs(fixPlurals(gapSummaryText(props.item.gap?.summary, props.item.demo))))
 
 const answers = computed(() => props.item.form.answers)
 const formSummary = computed(() => {
@@ -124,7 +149,7 @@ const letterPreview = computed(() => {
         </div>
         <h1 class="rc__title">{{ item.job.title }}</h1>
         <div class="rc__meta">
-          <span v-for="f in facts" :key="f.text"><v-icon :icon="f.icon" size="14" /> {{ f.text }}</span>
+          <span v-for="f in facts" :key="f.text" class="rc__fact"><v-icon :icon="f.icon" size="14" class="rc__fact-icon" /> <span class="rc__fact-text">{{ f.text }}</span></span>
           <span v-if="item.proposedAt"><v-icon icon="mdi-clock-outline" size="14" /> Proposed {{ timeAgo(item.proposedAt) }}</span>
         </div>
         <div class="rc__links">
@@ -147,8 +172,9 @@ const letterPreview = computed(() => {
             variant="text"
             height="44"
             append-icon="mdi-open-in-new"
+            class="rc__form-link"
           >
-            Form on {{ hostOf(item.job.applyUrl) }}
+            <span class="rc__form-text">Form on {{ hostOf(item.job.applyUrl) }}</span>
           </v-btn>
         </div>
       </header>
@@ -170,7 +196,22 @@ const letterPreview = computed(() => {
 
       <div class="rc__verdict">
         <div class="rc__panel">
-          <ReviewScoreLedger v-if="item.score" :score="item.score" />
+          <ReviewScoreLedger v-if="item.score" :score="item.score">
+            <template #summary>
+              <!-- Phone only: on a 390px screen the pay panel and the Skills fit section sit below the fold. -->
+              <div v-if="glance" class="rc__glance">
+                <p class="rc__glance-line">
+                  <span class="rc__glance-label">Matched</span> <span class="tabular">{{ glance.matched }}</span><span class="rc__glance-sep" aria-hidden="true"> · </span><span class="rc__glance-label">Missing:</span> <span :class="{ 'rc__glance-none': glance.none }">{{ glance.missing }}</span>
+                </p>
+                <ReviewCompFloor
+                  :comp="item.compensation"
+                  :score="item.score"
+                  :listing="{ min: item.job.salaryMin, max: item.job.salaryMax, currency: item.job.salaryCurrency }"
+                  inline
+                />
+              </div>
+            </template>
+          </ReviewScoreLedger>
           <p v-else class="rc__empty">Not scored yet.</p>
         </div>
         <div class="rc__panel">
@@ -198,7 +239,7 @@ const letterPreview = computed(() => {
 
         <ReviewSection v-if="item.demo" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
           <ReviewDemo :demo="item.demo" :effect="item.approveEffect" :company="company" />
-          <p v-if="item.gap?.summary" class="rc__gap">Gap analysis: {{ plainKnowledgeRefs(fixPlurals(item.gap.summary)) }}</p>
+          <p v-if="gapLine" class="rc__gap">Gap analysis: {{ gapLine }}</p>
         </ReviewSection>
 
         <ReviewSection
@@ -337,7 +378,7 @@ const letterPreview = computed(() => {
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
-    span {
+    > span {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -349,6 +390,39 @@ const letterPreview = computed(() => {
     flex-wrap: wrap;
     gap: 6px;
     margin-top: 12px;
+  }
+
+  &__fact-text {
+    min-width: 0;
+  }
+
+  &__glance {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    margin: -2px 0 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__glance-line {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+
+  &__glance-label {
+    font-weight: 600;
+  }
+
+  &__glance-sep,
+  &__glance-none {
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__block {
@@ -458,6 +532,49 @@ const letterPreview = computed(() => {
 
     &__verdict {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    // Decide without scrolling: the summary under the score, a long location list cut to two
+    // lines, and Posting and Form on one row.
+    &__glance {
+      display: flex;
+    }
+
+    &__fact {
+      align-items: flex-start !important;
+      min-width: 0;
+    }
+
+    &__fact-icon {
+      margin-top: 2px;
+    }
+
+    &__fact-text {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      overflow: hidden;
+    }
+
+    &__links {
+      flex-wrap: nowrap;
+      margin-top: 10px;
+    }
+
+    &__form-link {
+      flex: 0 1 auto;
+      min-width: 0;
+
+      :deep(.v-btn__content) {
+        min-width: 0;
+      }
+    }
+
+    &__form-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     &__bar {

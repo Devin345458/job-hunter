@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { QuestionListItem } from '#shared/types/learning'
+import { plainQuestionContext } from '#shared/utils/plain-text'
 import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
@@ -251,7 +252,7 @@ watch(() => props.pick?.nonce, () => {
         {{ question.question }}
       </h3>
       <p v-if="question.context && !shared && (mode === 'pending' || editing)" class="question-card__context text-body-2 text-medium-emphasis mt-1">
-        {{ question.context }}
+        {{ plainQuestionContext(question.context) }}
       </p>
 
       <div v-if="mode === 'pending' && waiters.length" class="question-card__waiters">

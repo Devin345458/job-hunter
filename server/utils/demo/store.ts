@@ -3,6 +3,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import { aiCalls, applications, demoProjects, jobs } from '../../db/schema'
 import type { DemoDetail, GapAnalysis, GapItem } from '#shared/types/pipeline'
 import { plainGap } from './gap-text'
+import { gapSummaryText } from '#shared/utils/plain-text'
 import { previewView } from './preview-state'
 import { buildProgress } from './progress'
 import { stopKind } from './stop-reason'
@@ -74,8 +75,10 @@ export function demoItem(gap: GapAnalysis | null): GapItem | null {
 export function toDemoDetail(d: DemoRow): DemoDetail {
   const row = getAppWithJob(d.applicationId)
   const stored = parseJson<GapAnalysis | null>(row?.app.gapAnalysisJson, null)
-  // Shown in plain words: real plurals, "you", and knowledge base references by name.
-  const gap = stored ? plainGap(stored) : null
+  // Shown in plain words: real plurals, "you", and knowledge base references by name. The summary
+  // names this demo when an analysis run after it was planned says "No demo planned."
+  const plain = stored ? plainGap(stored) : null
+  const gap = plain ? { ...plain, summary: gapSummaryText(plain.summary, d) } : null
   const itemIndex = stored?.items.findIndex(i => i.decision === 'demo' && i.requirement === d.gapAddressed) ?? -1
   return {
     ...toDemoView(d),

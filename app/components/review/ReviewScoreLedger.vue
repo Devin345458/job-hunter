@@ -52,6 +52,9 @@ function pct(w: number) {
       <span v-if="barPlus > 0" class="ledger__seg ledger__seg--plus" :style="{ width: `${barPlus}%` }" />
     </div>
 
+    <!-- The card's phone summary (matched and missing skills, pay) sits right under the score. -->
+    <slot name="summary" />
+
     <dl class="ledger__lines">
       <div class="ledger__line">
         <dt>Skills fit <span class="ledger__weight">weighted {{ pct(score.weights.skills) }}</span></dt>

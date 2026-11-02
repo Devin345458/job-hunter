@@ -4,6 +4,7 @@ import { questions } from '../../db/schema'
 import type { GapAnalysis, GapItem, Requirement } from '#shared/types/pipeline'
 import { availableToolchains, primaryLanguage } from './exec'
 import { getAppWithJob, storeGapAnalysis } from './store'
+import { plainQuestionContext } from '#shared/utils/plain-text'
 
 // Owned by the demo-projects unit. Application prep calls analyzeGaps once per application
 // and stores the result in applications.gap_analysis_json; demos:build refreshes it when a
@@ -48,6 +49,15 @@ const DecisionSchema = z.object({
 
 const YES = /^(y|yes|yeah|yep|true|i have|i do)\b/i
 const NO = /^(n|no|nope|false|never|i have not|i haven't|i do not|i don't|not really)\b/i
+
+/**
+ * A requirement as the end of a question's context sentence: without the "(kind: ...)" tag the
+ * gap prompt shows the model (which it can copy back), and with one final period, so "the U.S."
+ * never becomes "the U.S..".
+ */
+function asSentence(requirement: string): string {
+  return `${plainQuestionContext(requirement).trim().replace(/[.\s]+$/, '')}.`
+}
 
 function answerOf(subject: string): { kind: 'has_done' | 'knows'; answer: string; id: number } | null {
   const rows = useDb().select().from(questions)
@@ -157,7 +167,7 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
       }
       const q = askQuestion({
         question: c.question,
-        context: `${job.title} at ${job.company} asks for: ${c.requirement}. The knowledge base does not say whether you have this. ${c.codeShowable ? GAP_CONTEXT_CODE : GAP_CONTEXT_EXPERIENCE}`,
+        context: `${job.title} at ${job.company} asks for: ${asSentence(c.requirement)} The knowledge base does not say whether you have this. ${c.codeShowable ? GAP_CONTEXT_CODE : GAP_CONTEXT_EXPERIENCE}`,
         kind: c.askKind,
         subject,
         answerType: 'yes_no',

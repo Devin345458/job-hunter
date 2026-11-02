@@ -3,7 +3,7 @@ import type { DemoDetail } from '#shared/types/pipeline'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 
 definePageMeta({ layout: 'default' })
-useHead({ title: 'Demo projects' })
+useHead({ title: 'Demo projects · Job Hunter' })
 
 const snackbar = useSnackbar()
 const demos = ref<DemoDetail[]>([])

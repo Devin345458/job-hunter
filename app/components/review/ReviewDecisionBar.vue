@@ -47,6 +47,23 @@ const blockedReasons = computed<string[]>(() => {
   return out
 })
 
+/**
+ * The phone's one-line version of the consequence; the full sentence is one tap away under the
+ * info button, so the decision bar leaves the card readable on a 390px screen.
+ */
+const shortConsequence = computed(() => {
+  const effect = props.item.approveEffect
+  const company = props.item.job.company || hostOf(props.item.job.applyUrl)
+  const demo = demoWillPublish.value && !isRetry.value
+  if (props.item.isSandbox || effect?.submit === 'sandbox') return demo ? 'Publishes the demo, then sends it to the sandbox form.' : 'Sends it to the sandbox test form.'
+  if (effect?.submit === 'manual') return demo ? `Publishes the demo, then you submit on ${company}'s site.` : `Marks it for you to submit on ${company}'s site.`
+  return demo ? `Publishes the demo, then sends it to ${company}.` : `Sends the application to ${company}.`
+})
+const detailsOpen = ref(false)
+watch(() => props.item.applicationId, () => { detailsOpen.value = false })
+/** Only the plain consequence line has a short form; blockers and by-hand notes always show in full. */
+const hasShortForm = computed(() => !blockedReasons.value.length && !prepareFailed.value && !isManual.value)
+
 const consequence = computed(() => {
   const effect = props.item.approveEffect
   const company = props.item.job.company || hostOf(props.item.job.applyUrl)
@@ -68,14 +85,27 @@ const consequence = computed(() => {
         <span>{{ r }}</span>
       </p>
     </div>
-    <p v-else class="bar__line" role="status">
+    <p v-else class="bar__line" :class="{ 'bar__line--long': hasShortForm, 'bar__line--open': detailsOpen }" role="status" :id="`bar-detail-${item.applicationId}`">
       <template v-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
       <template v-else-if="isManual">
         <template v-if="item.submission?.manualReason">{{ item.submission.manualReason }}. </template>Submit it on the employer's site, or reject if you changed your mind.
       </template>
       <template v-else>{{ consequence }}</template>
     </p>
+    <p v-if="hasShortForm" class="bar__line bar__line--short" :class="{ 'bar__line--open': detailsOpen }">{{ shortConsequence }}</p>
     <div class="bar__buttons">
+      <v-btn
+        v-if="hasShortForm"
+        variant="text"
+        width="44"
+        height="48"
+        class="bar__info"
+        :icon="detailsOpen ? 'mdi-information' : 'mdi-information-outline'"
+        :aria-expanded="detailsOpen"
+        :aria-controls="`bar-detail-${item.applicationId}`"
+        aria-label="What approve does, in full"
+        @click="detailsOpen = !detailsOpen"
+      />
       <v-btn
         v-if="canReject"
         variant="outlined"
@@ -167,6 +197,12 @@ const consequence = computed(() => {
   &__reject {
     min-width: 112px;
   }
+
+  // Desktop shows the full sentence; the short line and its info button are for the phone.
+  &__line--short,
+  &__info {
+    display: none !important;
+  }
 }
 
 @media (max-width: 599.98px) {
@@ -191,6 +227,28 @@ const consequence = computed(() => {
 
     &__approve {
       min-width: 0;
+    }
+
+    // One line on the phone; the info button swaps in the full sentence.
+    &__line--long:not(.bar__line--open) {
+      display: none;
+    }
+
+    &__line--short {
+      display: block !important;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+
+      &.bar__line--open {
+        display: none !important;
+      }
+    }
+
+    &__info {
+      display: inline-flex !important;
+      flex: 0 0 44px !important;
+      min-width: 44px;
     }
   }
 }

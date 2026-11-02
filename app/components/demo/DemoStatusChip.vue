@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import type { DemoStatus } from '#shared/types/pipeline'
 
-const props = withDefaults(defineProps<{ status: DemoStatus; size?: string }>(), { size: 'small' })
+const props = withDefaults(defineProps<{
+  status: DemoStatus
+  size?: string
+  /** A failed build that stopped on the Claude account (credit, key, budget), not on the build itself. */
+  stopped?: boolean
+}>(), { size: 'small', stopped: false })
 
 const META: Record<DemoStatus, { label: string; color: string; icon: string }> = {
   proposed: { label: 'Planned', color: 'grey', icon: 'mdi-lightbulb-outline' },
@@ -12,8 +17,9 @@ const META: Record<DemoStatus, { label: string; color: string; icon: string }> =
   published: { label: 'Published', color: 'primary', icon: 'mdi-earth' },
   discarded: { label: 'Discarded', color: 'grey', icon: 'mdi-delete-outline' },
 }
+const STOPPED = { label: 'Stopped', color: 'grey', icon: 'mdi-pause-circle-outline' }
 
-const meta = computed(() => META[props.status] ?? { label: props.status, color: 'grey', icon: 'mdi-help-circle-outline' })
+const meta = computed(() => (props.status === 'failed' && props.stopped ? STOPPED : META[props.status] ?? { label: props.status, color: 'grey', icon: 'mdi-help-circle-outline' }))
 </script>
 
 <template>
