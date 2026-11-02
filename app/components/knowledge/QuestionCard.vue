@@ -53,6 +53,10 @@ const kindLabel = computed(() => {
 })
 
 const waiting = computed(() => props.question.waitingApplicationIds.length)
+/** Every application waiting on this question, with its company, when the server sent them. */
+const waiters = computed(() => props.question.waitingApplications ?? [])
+/** A shared question's stored context names whichever employer asked first, so it is hidden then. */
+const shared = computed(() => waiters.value.length > 1)
 
 const savedAs = computed(() => {
   const key = props.question.knowledgeKey
@@ -112,7 +116,7 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
           {{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}
         </v-chip>
         <NuxtLink
-          v-if="question.job"
+          v-if="question.job && !(mode === 'pending' && waiters.length)"
           :to="`/jobs/${question.job.id}`"
           class="question-card__job text-caption text-medium-emphasis"
         >
@@ -120,12 +124,21 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
         </NuxtLink>
       </div>
 
+
       <h3 class="question-card__question text-subtitle-1 font-weight-medium">
         {{ question.question }}
       </h3>
-      <p v-if="question.context && (mode === 'pending' || editing)" class="question-card__context text-body-2 text-medium-emphasis mt-1">
+      <p v-if="question.context && !shared && (mode === 'pending' || editing)" class="question-card__context text-body-2 text-medium-emphasis mt-1">
         {{ question.context }}
       </p>
+
+      <div v-if="mode === 'pending' && waiters.length" class="question-card__waiters">
+        <span class="question-card__waiters-label text-caption text-medium-emphasis">Waiting on this</span>
+        <NuxtLink v-for="w in waiters" :key="w.id" :to="`/review/${w.id}`" class="question-card__waiter text-body-2">
+          <span class="question-card__waiter-company">{{ w.company }}</span>
+          <span class="question-card__waiter-title text-medium-emphasis">{{ w.title }}</span>
+        </NuxtLink>
+      </div>
 
       <!-- Answered: what was saved and where -->
       <div v-if="mode === 'answered' && !editing" class="question-card__answer mt-3">
@@ -258,6 +271,42 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
   &__question {
     line-height: 1.4;
     text-wrap: pretty;
+  }
+
+  &__waiters {
+    display: flex;
+    flex-direction: column;
+    margin-top: 8px;
+  }
+
+  &__waiters-label {
+    margin-bottom: 2px;
+  }
+
+  &__waiter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 8px;
+    min-height: 44px;
+    padding: 4px 0;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+    @media (min-width: 600px) {
+      min-height: 32px;
+    }
+
+    &:hover .question-card__waiter-company,
+    &:focus-visible .question-card__waiter-company {
+      text-decoration: underline;
+    }
+  }
+
+  &__waiter-company {
+    color: rgb(var(--v-theme-primary));
+    font-weight: 500;
   }
 
   &__context {
