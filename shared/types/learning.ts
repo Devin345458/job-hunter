@@ -55,11 +55,36 @@ export interface DecisionCounts {
   byReason: Array<{ code: string; label: string; count: number }>
 }
 
+/** One row of the outcome rates: a job source, a score band, or every application. Counts, not percents. */
+export interface OutcomeRateRow {
+  key: string
+  label: string
+  /** Real applications that went out: submitted, or any employer outcome since. */
+  sent: number
+  /** The employer replied in some way, rejections included. */
+  heardBack: number
+  /** Reached an interview at any point (an offer counts, since it came through one). */
+  interviews: number
+  offers: number
+  rejected: number
+  noResponse: number
+}
+
+/** What employers did with the applications that went out. Recorded only; nothing here changes scores. */
+export interface OutcomeRates {
+  total: OutcomeRateRow
+  bySource: OutcomeRateRow[]
+  byBand: OutcomeRateRow[]
+  /** Sandbox applications that went out, left out of every rate. */
+  sandboxExcluded: number
+}
+
 export interface LearningOverview {
   decisions: DecisionCounts
   rules: LearnedRuleView[]
   search: SearchAdjustments
   lastRun: PipelineRunView | null
+  outcomes: OutcomeRates
 }
 
 export interface ScoreMoveView {

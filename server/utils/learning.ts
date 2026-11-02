@@ -9,6 +9,7 @@ import { aiStructured } from './ai'
 import { loadKnowledge } from './knowledge'
 import { askDailyQuestions } from './questions'
 import { htmlToText, nowSql, parseJson } from './review'
+import { outcomeRates } from './outcomes'
 import { queueStaleSkillJudgments, rescoreJobs } from './scoring'
 import { applyAllAnswersToOpenJobs } from './skill-claims'
 import {
@@ -639,7 +640,9 @@ export interface RecomputeResult {
  */
 export function recomputeRules(): RecomputeResult {
   const db = useDb()
-  const all = db.select().from(decisions).orderBy(decisions.id).all()
+  // Approve and reject only. Employer outcomes are decisions rows too (decision 'outcome'), and
+  // deriveRules reads anything that is not an approve as a rejection; outcomes never move a score.
+  const all = db.select().from(decisions).where(inArray(decisions.decision, ['approve', 'reject'])).orderBy(decisions.id).all()
   const jobIds = [...new Set(all.map(d => d.jobId))]
   const sandboxJobs = new Set(
     jobIds.length
@@ -766,7 +769,8 @@ export function listRuleViews(): LearnedRuleView[] {
 }
 
 export function decisionCounts(): DecisionCounts {
-  const rows = useDb().select({ decision: decisions.decision, reasonCode: decisions.reasonCode, isSandbox: decisions.isSandbox }).from(decisions).all()
+  const rows = useDb().select({ decision: decisions.decision, reasonCode: decisions.reasonCode, isSandbox: decisions.isSandbox })
+    .from(decisions).where(inArray(decisions.decision, ['approve', 'reject'])).all()
   const byReason = new Map<string, number>()
   for (const r of rows) if (r.decision === 'reject') byReason.set(r.reasonCode || 'other', (byReason.get(r.reasonCode || 'other') ?? 0) + 1)
   return {
@@ -792,7 +796,7 @@ export function learningOverview(): LearningOverview {
         host: run.host,
       }
     : null
-  return { decisions: decisionCounts(), rules: listRuleViews(), search: searchAdjustments(), lastRun }
+  return { decisions: decisionCounts(), rules: listRuleViews(), search: searchAdjustments(), lastRun, outcomes: outcomeRates() }
 }
 
 /** Recent score changes, newest first, each with the score the job had just before it. */
