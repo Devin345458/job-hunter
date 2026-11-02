@@ -319,4 +319,11 @@ p {
     position: relative;
     z-index: 1;
   }
+
+  // A one-word link in running text ("site") is narrower than 44px. Side padding with an equal
+  // negative margin widens the target and leaves every word where it was.
+  :root .tap-inline-links a {
+    padding-inline: 11px;
+    margin-inline: -11px;
+  }
 }
