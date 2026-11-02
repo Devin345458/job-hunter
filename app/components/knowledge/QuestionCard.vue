@@ -11,12 +11,17 @@ const props = defineProps<{
   mode: 'pending' | 'answered' | 'skipped'
   /** The answer value being saved right now, so only that button spins. */
   saving?: string | null
+  /** This question is the one loaded in the chat panel. */
+  asking?: boolean
+  /** A draft from the chat's "Use this draft". Each new nonce puts its text in the answer box; nothing is saved until Save. */
+  prefill?: { text: string; nonce: number } | null
 }>()
 
 const emit = defineEmits<{
   answer: [answer: string]
   skip: []
   reopen: []
+  ask: []
 }>()
 
 const COMP_FLOOR_SUBJECT = 'compensation floor'
@@ -97,6 +102,14 @@ function send(value: string) {
 // Leave edit mode once a saved answer comes back (a changed answer keeps status 'answered').
 watch(() => [props.question.status, props.question.answer, props.question.answeredAt], () => {
   editing.value = false
+})
+
+// "Use this draft" in the chat: the draft goes into the answer box for Devin to edit and save.
+watch(() => props.prefill?.nonce, () => {
+  const text = props.prefill?.text
+  if (!text || props.mode === 'skipped') return
+  if (props.mode === 'answered' || inputType.value === 'long') editing.value = true
+  draft.value = text
 })
 </script>
 
@@ -250,6 +263,17 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
     </v-card-text>
 
     <v-card-actions v-if="mode === 'pending' || mode === 'skipped' || (mode === 'answered' && !(editing && inputType === 'long'))" class="px-4 pb-3 pt-0 question-card__actions">
+      <v-btn
+        variant="text"
+        size="small"
+        :color="asking ? 'primary' : undefined"
+        prepend-icon="mdi-chat-question-outline"
+        :aria-pressed="!!asking"
+        class="question-card__ask"
+        @click="emit('ask')"
+      >
+        Ask about this
+      </v-btn>
       <v-spacer />
       <v-btn v-if="mode === 'pending'" variant="text" size="small" prepend-icon="mdi-skip-next" :disabled="busy" @click="emit('skip')">
         Skip
