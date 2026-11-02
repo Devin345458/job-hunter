@@ -62,7 +62,7 @@ function elapsed(startedAt: string) {
           {{ DEMO_STOP_TEXT[demo.stoppedFor] }}
         </div>
         <div>
-          The build itself did not fail. The next pipeline run, at {{ nextPipelineRunText() }} Central, retries it automatically.
+          The build itself did not fail. Scheduled runs retry it automatically, ahead of new demos, one demo per run. The next run is at {{ nextPipelineRunText() }} Central.
         </div>
       </v-alert>
       <v-alert v-else-if="demo.status === 'failed' && demo.error" type="error" variant="tonal" density="compact" class="text-body-2 mb-3 demo-build-state__wrap">

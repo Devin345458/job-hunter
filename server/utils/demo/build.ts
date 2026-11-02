@@ -33,7 +33,7 @@ export interface BuildLimits {
 export function buildLimits(): BuildLimits {
   const c = useRuntimeConfig()
   return {
-    maxTurns: Math.max(5, Number(c.demoMaxTurns) || 45),
+    maxTurns: Math.max(5, Number(c.demoMaxTurns) || 80),
     maxMs: Math.max(2, Number(c.demoMaxMinutes) || 25) * 60_000,
     maxCostUsd: Math.max(0.1, Number(c.demoMaxCostUsd) || 3),
   }
@@ -603,7 +603,7 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     .all()
 
   const stats = { candidates: apps.length, analyzed: 0, recommended: 0, built: 0, failed: 0, skipped: 0, interrupted: stuck.length, budgetStopped: false, costUsd: 0, demos: [] as Array<{ id: number; applicationId: number; slug: string; status: string; costUsd: number }> }
-  const queue: Array<{ applicationId: number; item: GapItem }> = []
+  const queue: Array<{ applicationId: number; item: GapItem; retry: boolean }> = []
   for (const { app } of apps) {
     let gap = parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)
     if ((!gap || gapAnalysisIsStale(gap)) && stats.analyzed < 20) {
@@ -630,8 +630,12 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
       stats.skipped++
       continue
     }
-    queue.push({ applicationId: app.id, item })
+    // A build stopped by the account (credit, key, budget) was promised a retry: it goes first.
+    const retry = existing.some(d => d.status === 'failed' && isBudgetFailure(d.error))
+    queue.push({ applicationId: app.id, item, retry })
   }
+  // Stable: retries first, then the rest by match score as the query ordered them.
+  queue.sort((a, b) => Number(b.retry) - Number(a.retry))
 
   for (const { applicationId, item } of queue.slice(0, max)) {
     // Reuse a failed (or never started) row so the history stays on one demo.
