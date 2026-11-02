@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { REJECT_REASONS, type RejectReasonCode, type RejectSkillsMode, type ReviewItem } from '#shared/types/pipeline'
 import { statusMeta } from '~/composables/review/format'
 
@@ -232,7 +233,7 @@ const leftLabel = computed(() => {
       <v-icon icon="mdi-inbox-outline" size="28" />
       <h1 class="rv__state-title">Nothing to review</h1>
       <p class="rv__state-text">
-        New applications land here after the daily run prepares them. The pipeline runs at 6:00 Central, or start it from Settings.
+        New applications land here after a run prepares them. The pipeline runs {{ PIPELINE_SCHEDULE_TEXT }}, or start it from Settings.
       </p>
       <div class="rv__state-actions">
         <v-btn color="primary" height="44" to="/settings#pipeline" prepend-icon="mdi-play-outline">Pipeline settings</v-btn>

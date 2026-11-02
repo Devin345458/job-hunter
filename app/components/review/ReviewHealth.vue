@@ -21,7 +21,7 @@ const runTone = computed(() => (outcome.value ? OUTCOME[outcome.value].color : '
 const runLabel = computed(() => {
   const r = run.value
   if (!r || !outcome.value) return 'No pipeline runs yet'
-  const what = r.task === 'pipeline:daily' ? 'Daily run' : taskLabel(r.task)
+  const what = r.task === 'pipeline:daily' ? 'Full run' : taskLabel(r.task)
   return `${what} ${OUTCOME[outcome.value].label}`
 })
 const problems = computed(() => (outcome.value === 'partial' ? run.value?.problems ?? [] : []))

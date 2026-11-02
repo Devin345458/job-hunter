@@ -209,7 +209,7 @@ onMounted(() => {
       <v-icon icon="mdi-briefcase-search-outline" size="64" class="mb-4" style="opacity: 0.3;" />
       <h3 class="text-h6 mb-2">No Jobs Found</h3>
       <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 400px; margin: 0 auto;">
-        Jobs appear here after a search runs. Set what to search for in Settings, then wait for the daily run or start one with Search now.
+        Jobs appear here after a search runs. Set what to search for in Settings, then wait for the next scheduled run or start one with Search now.
       </p>
       <div class="d-flex flex-wrap justify-center ga-3 mt-4">
         <v-btn
@@ -239,10 +239,10 @@ onMounted(() => {
         </v-card-title>
         <v-card-text class="px-6">
           <p class="text-body-2 mb-3">
-            This runs every active search configuration against the job boards right away, instead of waiting for the 6:00 daily run. It can take a minute.
+            This runs every active search configuration against the job boards right away, instead of waiting for the next scheduled run. It can take a minute.
           </p>
           <p class="text-body-2 text-medium-emphasis mb-0">
-            New postings are listed first under Newest until the daily run scores them. The run is logged in Settings under Recent runs.
+            New postings are listed first under Newest until the next scheduled run scores them. The run is logged in Settings under Recent runs.
           </p>
         </v-card-text>
         <v-card-actions class="px-6 pb-5">

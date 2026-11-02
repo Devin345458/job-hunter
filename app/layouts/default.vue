@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { PIPELINE_SCHEDULE_TEXT, nextPipelineRunText } from '#shared/utils/schedule'
+
+// Recomputed each minute so the sidebar's next run stays right on a page left open.
+const nextRun = ref(nextPipelineRunText())
+let nextRunTimer: ReturnType<typeof setInterval> | undefined
+onMounted(() => { nextRunTimer = setInterval(() => { nextRun.value = nextPipelineRunText() }, 60_000) })
+onBeforeUnmount(() => { if (nextRunTimer) clearInterval(nextRunTimer) })
 interface NavItem {
   title: string
   /** Label under the bottom navigation icon; must fit 78px at a 390px viewport. */
@@ -146,7 +153,7 @@ function badgeFor(item: NavItem): number {
         <div class="shell__foot">
           <div class="shell__schedule">
             <v-icon icon="mdi-clock-outline" size="14" />
-            <span>Pipeline runs daily at 6:00 Central</span>
+            <span>Pipeline runs {{ PIPELINE_SCHEDULE_TEXT }}. Next: {{ nextRun }}</span>
           </div>
           <v-btn
             variant="text"

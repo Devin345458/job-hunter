@@ -1,3 +1,4 @@
+import { askDailyQuestions } from '../../utils/questions'
 import { scoreJobs } from '../../utils/scoring'
 
 export default defineTask({
@@ -6,7 +7,13 @@ export default defineTask({
     description: 'Score enriched jobs on skills and total compensation, then rescore open jobs',
   },
   async run({ payload }) {
-    const outcome = await withRun('jobs:match', triggerOf(payload), log => scoreJobs({ log, jobIds: payloadJobIds(payload) }))
+    const outcome = await withRun('jobs:match', triggerOf(payload), async (log) => {
+      const stats = await scoreJobs({ log, jobIds: payloadJobIds(payload) })
+      // Ask about skills the newly read and scored jobs need now, not at tomorrow's learning step.
+      const asked = askDailyQuestions()
+      if (asked.length) log(`asked ${asked.length} new skill ${asked.length === 1 ? 'question' : 'questions'}`)
+      return { ...stats, skillQuestionsAsked: asked.length }
+    })
     return { result: outcome }
   },
 })

@@ -120,7 +120,8 @@ export default defineNuxtConfig({
     // Cron times are in the container's TZ (America/Chicago, set in the Dockerfile).
     // One daily chain runs every step in order: learn, search, enrich, match, prepare, demos.
     scheduledTasks: {
-      '0 6 * * *': ['pipeline:daily'],
+      // Keep in step with shared/utils/schedule.ts (PIPELINE_CRON), which the screens read.
+      '0 6-21/3 * * *': ['pipeline:daily'],
       '*/15 * * * *': ['system:heartbeat'],
     },
     externals: {

@@ -36,8 +36,8 @@ const prepareAttempt = computed(() => Number(/^prepare_failed attempt=(\d+)/.exe
 const failureText = computed(() => plainError(app.value?.formError))
 // The daily run retries a failed preparation until its third attempt (MAX_PREPARE_ATTEMPTS).
 const failureRetry = computed(() => prepareAttempt.value < 3
-  ? `Attempt ${prepareAttempt.value} of 3. The next daily run retries it automatically, or prepare it again now.`
-  : 'Three attempts failed, so the daily run stops retrying. Prepare it again when the cause is fixed.')
+  ? `Attempt ${prepareAttempt.value} of 3. The next scheduled run retries it automatically, or prepare it again now.`
+  : 'Three attempts failed, so the scheduled runs stop retrying. Prepare it again when the cause is fixed.')
 const statusText = computed(() => plainError(app.value?.statusDetail))
 const reviewable = computed(() => [...CAN_APPROVE, ...CAN_REJECT].includes(status.value as any))
 const accountAts = computed(() => ['workday', 'icims', 'taleo', 'successfactors'].includes(app.value?.job?.atsType ?? ''))

@@ -58,10 +58,10 @@ const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/
       <p class="prog__panel-text">{{ prepareReason || 'The preparation stopped with an error.' }}</p>
       <p class="prog__panel-hint">
         <template v-if="prepareAttempt < 3">
-          Nothing was written for this application yet. The next daily run retries it automatically (attempt {{ prepareAttempt }} of 3 so far), or prepare it again now.
+          Nothing was written for this application yet. The next scheduled run retries it automatically (attempt {{ prepareAttempt }} of 3 so far), or prepare it again now.
         </template>
         <template v-else>
-          Three attempts failed, so the daily run stops retrying it. Prepare it again once the cause is fixed.
+          Three attempts failed, so the scheduled runs stop retrying it. Prepare it again once the cause is fixed.
         </template>
       </p>
       <div class="prog__links">

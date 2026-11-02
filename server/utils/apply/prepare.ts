@@ -241,7 +241,7 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
     // The daily run retries it up to MAX_PREPARE_ATTEMPTS times; the prepare endpoint retries on demand.
     const message = String(e?.statusMessage || e?.message || e).split('\n')[0]!
     const attempt = prepareAttempts(existing?.formError ?? null) + 1
-    const retry = attempt < MAX_PREPARE_ATTEMPTS ? 'The next daily run retries it, or retry it now from the application page.' : 'Retry it from the application page.'
+    const retry = attempt < MAX_PREPARE_ATTEMPTS ? 'The next scheduled run retries it, or retry it now from the application page.' : 'Retry it from the application page.'
     setApplicationStatus(app.id, 'needs_manual', `Preparation failed: ${message}. ${retry}`, {
       formError: `${PREPARE_FAILED} attempt=${attempt}: ${message}\n${String(e?.stack || '').slice(0, 3500)}`,
     })

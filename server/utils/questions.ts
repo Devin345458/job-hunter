@@ -201,7 +201,7 @@ export function knowledgeCovers(subject: string): KnowledgeEntry | null {
 }
 
 /** Single words that name a trait or a whole field, not a skill someone can say yes or no to. */
-const GENERIC_WORDS = new Set(['learning', 'coding', 'programming', 'development', 'software', 'engineering', 'collaboration', 'teamwork', 'ownership', 'leadership', 'mentoring', 'problem solving', 'curiosity', 'creativity', 'debugging', 'architecture', 'design', 'quality', 'security', 'data', 'ai', 'ml', 'cloud', 'web', 'mobile', 'backend', 'frontend', 'full stack', 'fullstack'])
+const GENERIC_WORDS = new Set(['api', 'apis', 'rest', 'rest apis', 'sdks', 'saas', 'b2b', 'learning', 'coding', 'programming', 'development', 'software', 'engineering', 'collaboration', 'teamwork', 'ownership', 'leadership', 'mentoring', 'problem solving', 'curiosity', 'creativity', 'debugging', 'architecture', 'design', 'quality', 'security', 'data', 'ai', 'ml', 'cloud', 'web', 'mobile', 'backend', 'frontend', 'full stack', 'fullstack'])
 
 const HUMAN_LANGUAGE = /\b(english|spanish|french|german|portuguese|communication|written|verbal)\b/i
 
@@ -222,7 +222,9 @@ export function cleanSkillSubject(raw: string): string | null {
   t = t.replace(/\s+(is|are)\s+(a\s+)?(must|required|preferred|plus|nice to have)\b.*$/i, '')
   t = t.replace(/\b(commercial|professional)?\s*experience\b/gi, ' ')
   t = t.replace(/\(.*?\)/g, ' ').replace(/[.,;:]+$/, '').replace(/\s+/g, ' ').trim()
-  t = t.replace(/\s+(skills?|tools?|knowledge|concepts?|fundamentals|principles)$/i, '').trim()
+  t = t.replace(/\s+(skills?|tools?|knowledge|concepts?|fundamentals|principles|expertise|mindset|solutions?|background|capabilit(?:y|ies))$/i, '').trim()
+  t = t.replace(/\s+((back[\s-]?end|front[\s-]?end|full[\s-]?stack|software|application)\s+)?(development|practices|programming)$/i, '').trim()
+  t = t.replace(/^(associated|related|relevant|modern|common|core|key|various|multiple)\s+(frameworks?|tools?|technologies)\s+/i, '').trim()
   if (t.length < 2 || t.length > 32) return null
   if (GENERIC_WORDS.has(t.toLowerCase())) return null
   if (HUMAN_LANGUAGE.test(t)) return null
@@ -234,8 +236,19 @@ export function cleanSkillSubject(raw: string): string | null {
   // Fragments of a sentence ("the other", "any of these").
   if (/^(the|a|an|this|that|these|those|other|any|some|each|all)\b/i.test(t)) return null
   if (t.split(' ').length > 3) return null
+  // Job titles, not skills ("Senior Salesforce Developer").
+  if (/\b(senior|junior|staff|principal|lead|developer|engineer|manager|architect|specialist|analyst)s?\b/i.test(t)) return null
+  // Generic phrases of plain lowercase words ("scalable data solutions", "integration"); a named
+  // tool has a capital letter, a digit, or a symbol ("Databricks", "S3", "C#", "Next.js").
+  // Requirement text starts sentences with a capital, so the first letter does not count.
+  const plain = t.charAt(0).toLowerCase() + t.slice(1)
+  const known = KNOWN_LOWERCASE_SKILLS.has(plain.toLowerCase())
+  if (/^[a-z][a-z -]*$/.test(plain) && !known) return null
   return DISPLAY_ALIASES[t.toLowerCase()] ?? t
 }
+
+/** Lowercase skills worth asking about as written; any other all-lowercase phrase is too generic. */
+const KNOWN_LOWERCASE_SKILLS = new Set(['machine learning', 'infrastructure-as-code', 'unit testing', 'test-driven development', 'microservices', 'kubernetes', 'docker', 'terraform', 'graphql', 'redis', 'kafka', 'linux', 'bash', 'webpack', 'vite', 'jest', 'vitest', 'cypress', 'playwright', 'accessibility', 'websockets', 'oauth', 'sso', 'ci/cd', 'event sourcing', 'distributed systems', 'system design', 'computer vision', 'data pipelines', 'stream processing'])
 
 const DISPLAY_ALIASES: Record<string, string> = { golang: 'Go', nodejs: 'Node.js', reactjs: 'React', 'react.js': 'React', vuejs: 'Vue', 'vue.js': 'Vue', k8s: 'Kubernetes' }
 
@@ -670,7 +683,14 @@ export function askCompFloor(opts: AskOptions = {}): QuestionRow | null {
   })
 }
 
-const MAX_NEW_DAILY_QUESTIONS = 5
+/**
+ * Not a daily quota: every skill worth asking is asked as soon as the jobs that need it are
+ * scored. This only stops a runaway (a bad parse of many postings); the rest wait for the next run.
+ */
+const MAX_NEW_SKILL_QUESTIONS_PER_RUN = 40
+
+/** Skill questions come only from open jobs scoring at least this; the prepare threshold is 70. */
+const QUESTION_SCORE_FLOOR = 50
 
 /**
  * Called by learn:daily. Asks for the pay floor when it is unknown, and asks "Do you know X?"
@@ -729,33 +749,36 @@ export function askDailyQuestions(): QuestionRow[] {
   const floor = askCompFloor()
   if (floor && !before.has(floor.id)) created.push(floor)
 
-  const open = db.select({ id: jobs.id, requirementsJson: jobs.requirementsJson, isSandbox: jobs.isSandbox })
+  const open = db.select({ id: jobs.id, requirementsJson: jobs.requirementsJson, isSandbox: jobs.isSandbox, matchScore: jobs.matchScore })
     .from(jobs).where(notInArray(jobs.status, CLOSED_JOB_STATUSES)).all()
-    .filter(j => !j.isSandbox && j.requirementsJson)
-  const wanted = new Map<string, { subject: string; jobs: Set<number>; mustHave: boolean; firstJob: number }>()
+    // Only jobs worth applying to: below this score no answer would bring a job near the
+    // prepare threshold, and those postings are where the noise comes from.
+    .filter(j => !j.isSandbox && j.requirementsJson && j.matchScore != null && j.matchScore >= QUESTION_SCORE_FLOOR)
+  const scoreOf = new Map(open.map(j => [j.id, j.matchScore]))
+  const wanted = new Map<string, { subject: string; jobs: Set<number>; mustHave: boolean; firstJob: number; value: number }>()
   for (const j of open) {
     for (const r of parseJson<Requirement[]>(j.requirementsJson, [])) {
       if (r.status !== 'unknown' || !['language', 'framework', 'skill'].includes(r.kind)) continue
       const subject = cleanSkillSubject(r.text)
       if (!subject) continue
       const key = ruleTerm(subject)
-      const w = wanted.get(key) ?? { subject, jobs: new Set<number>(), mustHave: false, firstJob: j.id }
-      w.jobs.add(j.id)
+      const w = wanted.get(key) ?? { subject, jobs: new Set<number>(), mustHave: false, firstJob: j.id, value: 0 }
+      if (!w.jobs.has(j.id)) {
+        w.jobs.add(j.id)
+        // How much the answer is worth: better-matching jobs count more, and a must-have more
+        // than a nice-to-have. Unscored jobs count as middling.
+        w.value += ((scoreOf.get(j.id) ?? QUESTION_SCORE_FLOOR) / 100) * (r.mustHave ? 1.5 : 1)
+      }
       w.mustHave ||= r.mustHave
       wanted.set(key, w)
     }
   }
   const candidates = [...wanted.values()]
     .filter(w => w.mustHave || w.jobs.size >= 2)
-    .sort((a, b) => b.jobs.size - a.jobs.size || Number(b.mustHave) - Number(a.mustHave))
+    .sort((a, b) => b.value - a.value || b.jobs.size - a.jobs.size)
   const asked = new Set(db.select({ subject: questions.subject }).from(questions).where(eq(questions.kind, 'knows')).all().map(r => r.subject).filter(Boolean).map(x => ruleTerm(x!)))
-  // The cap is per local day, not per run, so manual runs do not pile on more questions.
-  const askedToday = db.select({ id: questions.id }).from(questions)
-    .where(and(eq(questions.kind, 'knows'), isNull(questions.applicationId), sql`${questions.askedAt} >= datetime('now', 'localtime', 'start of day', 'utc')`))
-    .all().length
-  const allowance = Math.max(0, MAX_NEW_DAILY_QUESTIONS - askedToday)
   for (const c of candidates) {
-    if (created.length >= allowance) break
+    if (created.length >= MAX_NEW_SKILL_QUESTIONS_PER_RUN) break
     if (asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))) continue
     const row = askKnows(c.subject, {
       jobId: c.firstJob,
