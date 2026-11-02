@@ -13,7 +13,9 @@ interface NavItem {
 const navItems: NavItem[] = [
   { title: 'Review', short: 'Review', icon: 'mdi-inbox-arrow-down-outline', to: '/', also: ['/review'], inBottomNav: true },
   { title: 'Jobs', short: 'Jobs', icon: 'mdi-briefcase-search-outline', to: '/jobs', inBottomNav: true },
-  { title: 'Applications', short: 'Applied', icon: 'mdi-file-document-check-outline', to: '/applications', inBottomNav: true },
+  // One name everywhere: the bottom bar used to say "Applied" for the page called Applications.
+  { title: 'Applications', short: 'Applications', icon: 'mdi-file-document-check-outline', to: '/applications', inBottomNav: true },
+  { title: 'Demo projects', short: 'Demos', icon: 'mdi-flask-outline', to: '/demos' },
   { title: 'Questions', short: 'Questions', icon: 'mdi-comment-question-outline', to: '/questions', inBottomNav: true },
   { title: 'Learning', short: 'Learning', icon: 'mdi-chart-timeline-variant', to: '/learning' },
   { title: 'Knowledge base', short: 'Knowledge', icon: 'mdi-book-account-outline', to: '/knowledge' },
