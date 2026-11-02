@@ -374,6 +374,10 @@ export interface DemoDetail extends DemoProjectView {
   progress: DemoBuildProgress | null
   /** Why a failed build stopped, when the daily run retries it on its own: out of credit, key rejected, or daily budget. */
   stoppedFor: 'credit' | 'key' | 'budget' | null
+  /** Failed, and the application's current gap analysis no longer plans this demo: it will not be retried. */
+  noLongerPlanned: boolean
+  /** Why it is no longer planned, from the current gap analysis. */
+  notNeededReason: string | null
   preview: DemoPreview
 }
 

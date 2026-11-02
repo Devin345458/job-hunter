@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, decisions, demoProjects, jobs, questions } from '../db/schema'
+import { demoNoLongerPlanned } from './demo/store'
 import type {
   ApplicationStatus,
   CompensationBreakdown,
@@ -138,8 +139,9 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
       error: app.formError,
     },
     gap: parseJson<GapAnalysis | null>(app.gapAnalysisJson, null),
-    demo: demo ? toDemoView(demo) : null,
-    approveEffect: approveEffect(app, job, demo?.status),
+    // A failed demo the current gap analysis no longer plans is not part of this application anymore.
+    demo: demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? toDemoView(demo) : null,
+    approveEffect: approveEffect(app, job, demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? demo.status : undefined),
     openQuestions: openQuestions.map(toQuestionView),
     submission: parseJson<SubmissionResult | null>(app.submissionJson, null),
     submitError: app.submitError,

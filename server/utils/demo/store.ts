@@ -72,6 +72,17 @@ export function demoItem(gap: GapAnalysis | null): GapItem | null {
   return gap?.items.find(i => i.decision === 'demo' && i.demoIdea) ?? null
 }
 
+/**
+ * A failed demo whose application's current gap analysis no longer plans it (Devin's answers since
+ * then cover the gap). It will never be retried, so the pages say so instead of promising a retry.
+ */
+export function demoNoLongerPlanned(d: { status: string; gapAddressed: string | null }, gapAnalysisJson: string | null | undefined): boolean {
+  if (d.status !== 'failed') return false
+  const gap = parseJson<GapAnalysis | null>(gapAnalysisJson, null)
+  if (!gap) return false
+  return !gap.items.some(i => i.decision === 'demo' && i.requirement === d.gapAddressed)
+}
+
 export function toDemoDetail(d: DemoRow): DemoDetail {
   const row = getAppWithJob(d.applicationId)
   const stored = parseJson<GapAnalysis | null>(row?.app.gapAnalysisJson, null)
@@ -97,7 +108,12 @@ export function toDemoDetail(d: DemoRow): DemoDetail {
     gapItem: itemIndex >= 0 ? gap!.items[itemIndex]! : null,
     gap,
     progress: buildProgress(d.id),
-    stoppedFor: d.status === 'failed' ? stopKind(d.error) : null,
+    stoppedFor: d.status === 'failed' && itemIndex >= 0 ? stopKind(d.error) : null,
+    noLongerPlanned: demoNoLongerPlanned(d, row?.app.gapAnalysisJson),
+    // What the current analysis decided for this gap instead (reframe or skip), in plain words.
+    notNeededReason: demoNoLongerPlanned(d, row?.app.gapAnalysisJson)
+      ? (gap?.items.find(i => i.requirement === d.gapAddressed)?.rationale ?? null)
+      : null,
     preview: previewView(d),
   }
 }

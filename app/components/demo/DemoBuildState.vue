@@ -50,6 +50,13 @@ function elapsed(startedAt: string) {
       <v-alert v-if="interrupted" type="warning" variant="tonal" density="compact" class="text-body-2 mb-3">
         This build is not running anymore. The server restarted while it ran.
       </v-alert>
+      <v-alert v-else-if="demo.noLongerPlanned" type="info" variant="tonal" density="compact" icon="mdi-check-circle-outline" class="text-body-2 mb-3 demo-build-state__wrap">
+        <div class="font-weight-bold">Not needed anymore</div>
+        <div>
+          Your answers since this build cover the gap<template v-if="demo.notNeededReason">: {{ demo.notNeededReason }}</template><template v-else>.</template>
+          It will not be built again on its own. Discard it, or build it anyway.
+        </div>
+      </v-alert>
       <v-alert
         v-else-if="demo.status === 'failed' && demo.stoppedFor"
         type="warning"
