@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, like, lt, or, sql } from 'drizzle-orm'
 import { appSettings, pipelineRuns, repoCommits, repoFacts, repoSources, repoSuggestions } from '../../db/schema'
-import type { RepoIdentities, RepoOwnerGroup, RepoSettingsView, RepoTokenView, RepoView } from '#shared/types/repos'
+import type { RepoFindView, RepoIdentities, RepoOwnerGroup, RepoSettingsView, RepoTokenView, RepoView } from '#shared/types/repos'
 import { loadKnowledge, profileValue } from '../knowledge'
-import { tokenAccounts, readTokens, type TokenAccount } from './github'
+import { isSsoSkip, tokenAccounts, readTokens, type TokenAccount } from './github'
 import { removeRepoCache } from './git'
+import { findProgress } from './find-state'
 
 // Settings > GitHub evidence: which repos the read tokens can see, which ones Devin switched on,
 // and which commit authors count as him. Repos owned by his own login are on by default, except
@@ -100,28 +101,101 @@ export function saveIdentities(input: { emails?: unknown; logins?: unknown } | n
 
 const CANDIDATES_KEY = 'repo_identity_candidates'
 
+type CandidatesByRepo = Record<string, Record<string, number>>
+
+function storedCandidates(): CandidatesByRepo {
+  const row = useDb().select().from(appSettings).where(eq(appSettings.key, CANDIDATES_KEY)).get()
+  try {
+    const parsed = row ? JSON.parse(row.valueJson) : null
+    // Stored per repo since indexing went to 30 repos a run. The older shape was per email.
+    if (parsed?.byRepo && typeof parsed.byRepo === 'object') return parsed.byRepo as CandidatesByRepo
+    const out: CandidatesByRepo = {}
+    for (const [email, v] of Object.entries((parsed ?? {}) as Record<string, { commits?: number; repos?: string[] }>)) {
+      for (const repo of v?.repos ?? []) (out[repo] ??= {})[email] = Math.max(1, Math.round((v.commits ?? 1) / Math.max(1, v.repos!.length)))
+    }
+    return out
+  }
+  catch {
+    return {}
+  }
+}
+
 /**
  * Emails on commits whose author name is one of his logins, that GitHub links to no account, and
- * that he has not listed. Written by each full repos:index run. Settings offers each one to add.
+ * that he has not listed, per repo. Each index run replaces the entries of the repos it indexed and
+ * keeps the rest, since one run covers at most 30 repos. Settings offers each email to add.
  */
-export function saveIdentityCandidates(candidates: Record<string, { commits: number; repos: string[] }>) {
-  const valueJson = JSON.stringify(candidates)
+export function saveIdentityCandidates(indexed: Record<string, Record<string, number>>) {
+  const byRepo = { ...storedCandidates(), ...indexed }
+  for (const [repo, emails] of Object.entries(byRepo)) if (!Object.keys(emails).length) delete byRepo[repo]
+  const valueJson = JSON.stringify({ byRepo })
   useDb().insert(appSettings).values({ key: CANDIDATES_KEY, valueJson, updatedAt: nowSqlText() })
     .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSqlText() } }).run()
 }
 
-export function identityCandidates(listed: string[]): Array<{ email: string; commits: number; repos: string[] }> {
-  const row = useDb().select().from(appSettings).where(eq(appSettings.key, CANDIDATES_KEY)).get()
-  let all: Record<string, { commits: number; repos: string[] }> = {}
-  try {
-    all = row ? JSON.parse(row.valueJson) : {}
-  }
-  catch {}
+export function identityCandidates(listed: string[], includedNames?: Set<string>): Array<{ email: string; commits: number; repos: string[] }> {
   const have = new Set(listed.map(e => e.toLowerCase()))
-  return Object.entries(all)
-    .filter(([email]) => !have.has(email.toLowerCase()))
-    .map(([email, v]) => ({ email, commits: v.commits, repos: v.repos }))
-    .sort((a, b) => b.commits - a.commits)
+  const byEmail = new Map<string, { commits: number; repos: string[] }>()
+  for (const [repo, emails] of Object.entries(storedCandidates())) {
+    if (includedNames && !includedNames.has(repo)) continue
+    for (const [email, n] of Object.entries(emails)) {
+      if (have.has(email.toLowerCase())) continue
+      const c = byEmail.get(email) ?? { commits: 0, repos: [] }
+      c.commits += n
+      c.repos.push(repo)
+      byEmail.set(email, c)
+    }
+  }
+  return [...byEmail.entries()].map(([email, v]) => ({ email, ...v })).sort((a, b) => b.commits - a.commits)
+}
+
+// ── Find repos with my commits (stored result) ──
+
+const FIND_KEY = 'repo_commit_search'
+/** repos:index runs the commit search again when the stored one is older than this. */
+export const FIND_TTL_MS = 24 * 60 * 60_000
+
+/** The last commit search: every repo holding his commits, with a count each. */
+export interface StoredFind {
+  startedAt: string
+  /** When it finished. */
+  at: string
+  seconds: number
+  requests: number
+  /** Distinct commits found, across every repo. */
+  commits: number
+  byRepo: Record<string, number>
+  /** Plain notes: a range GitHub could not split, a login GitHub does not know, a time cap. */
+  notes: string[]
+  /** Organizations whose results GitHub left out for SSO. */
+  ssoOrgs: string[]
+  /** The last attempt's error, when it failed. The counts above are then the previous good search. */
+  error: string | null
+  errorAt: string | null
+}
+
+export function storedFind(): StoredFind | null {
+  const row = useDb().select().from(appSettings).where(eq(appSettings.key, FIND_KEY)).get()
+  if (!row) return null
+  try {
+    return JSON.parse(row.valueJson) as StoredFind
+  }
+  catch {
+    return null
+  }
+}
+
+export function saveFind(find: StoredFind) {
+  const valueJson = JSON.stringify(find)
+  useDb().insert(appSettings).values({ key: FIND_KEY, valueJson, updatedAt: nowSqlText() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSqlText() } }).run()
+}
+
+/** True when no search ran, or the last one (or the last failed attempt) is over a day old. */
+export function findIsStale(): boolean {
+  const f = storedFind()
+  const times = [f?.at, f?.errorAt].filter((t): t is string => !!t).map(t => new Date(`${t.replace(' ', 'T')}Z`).getTime()).filter(Number.isFinite)
+  return !times.length || Date.now() - Math.max(...times) > FIND_TTL_MS
 }
 
 // ── Repo list ──
@@ -155,15 +229,19 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
         pushedAt: r.pushed_at || null,
         tokenIndex: a.index,
         listedAt: at,
-        updatedAt: at,
       }
-      db.insert(repoSources).values({ fullName: r.full_name, ...values, included: personal.has(r.owner.login.toLowerCase()) && !r.fork })
+      // updatedAt is left alone on a re-list: repos:index orders its queue by the last index or
+      // attempt, which updatedAt records.
+      db.insert(repoSources).values({ fullName: r.full_name, ...values, included: personal.has(r.owner.login.toLowerCase()) && !r.fork, updatedAt: at })
         .onConflictDoUpdate({ target: repoSources.fullName, set: values }).run()
     }
   }
-  // Only forget repos when every token answered. A failed token must not wipe its repos.
+  // Only forget repos when every token answered. A failed token must not wipe its repos. Repos the
+  // commit search found (a public repo he contributed to that /user/repos does not list) stay.
   if (!failed.length) {
+    const found = storedFind()?.byRepo ?? {}
     const gone = db.select().from(repoSources).where(or(lt(repoSources.listedAt, at), sql`${repoSources.listedAt} is null`)).all()
+      .filter(g => !(found[g.fullName]! > 0))
     for (const g of gone) forgetRepoData(g.fullName)
     if (gone.length) db.delete(repoSources).where(inArray(repoSources.fullName, gone.map(g => g.fullName))).run()
   }
@@ -195,12 +273,47 @@ export function setRepoIncluded(fullName: string, included: boolean): RepoRow {
   return db.select().from(repoSources).where(eq(repoSources.fullName, fullName)).get()!
 }
 
+/**
+ * Switch many repos at once.
+ * on: the repos holding his commits (by the last commit search) that are off, never forks. With an
+ * owner, only that owner's. Repos without his commits stay off.
+ * off: every repo of one owner that is on, forgetting what was indexed from each.
+ */
+export function setReposIncludedBulk(opts: { owner?: string | null; included: boolean }): { changed: number; owners: number } {
+  const db = useDb()
+  const owner = opts.owner?.trim() || null
+  if (!opts.included && !owner) throw createError({ statusCode: 400, statusMessage: 'Turning repos off in bulk needs an owner' })
+  const rows = owner
+    ? db.select().from(repoSources).where(eq(repoSources.owner, owner)).all()
+    : db.select().from(repoSources).all()
+  if (owner && !rows.length) throw createError({ statusCode: 404, statusMessage: 'No repos from that owner are in the list. Refresh the list and try again.' })
+  let targets: RepoRow[]
+  if (opts.included) {
+    const found = storedFind()?.byRepo
+    if (!found) throw createError({ statusCode: 409, statusMessage: 'Find the repos with your commits first.' })
+    targets = rows.filter(r => !r.included && !r.isFork && (found[r.fullName] ?? 0) > 0)
+  }
+  else {
+    targets = rows.filter(r => r.included)
+  }
+  const names = targets.map(r => r.fullName)
+  const at = nowSqlText()
+  db.transaction((tx) => {
+    for (let i = 0; i < names.length; i += 400) {
+      tx.update(repoSources).set({ included: opts.included, updatedAt: at }).where(inArray(repoSources.fullName, names.slice(i, i + 400))).run()
+    }
+  })
+  if (!opts.included) for (const name of names) forgetRepoData(name)
+  return { changed: names.length, owners: new Set(targets.map(r => r.owner)).size }
+}
+
 export function includedRepos(): RepoRow[] {
   return useDb().select().from(repoSources).where(eq(repoSources.included, true)).all()
 }
 
-function toRepoView(r: RepoRow): RepoView {
+function toRepoView(r: RepoRow, found: Record<string, number> | null): RepoView {
   return {
+    yourCommits: found ? (found[r.fullName] ?? 0) : null,
     fullName: r.fullName,
     name: r.name,
     isPrivate: r.isPrivate,
@@ -239,16 +352,25 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
   }
   const personal = personalLogins(accounts)
   const rows = db.select().from(repoSources).all()
+  const find = storedFind()
+  const found = find?.at ? find.byRepo : null
+  const hasCommits = (r: RepoRow) => !!found && (found[r.fullName] ?? 0) > 0
   const byOwner = new Map<string, RepoRow[]>()
   for (const r of rows) byOwner.set(r.owner, [...(byOwner.get(r.owner) ?? []), r])
   const groups: RepoOwnerGroup[] = [...byOwner.entries()].map(([owner, list]) => ({
     owner,
     personal: personal.has(owner.toLowerCase()),
     ownerType: list[0]?.ownerType ?? null,
+    withCommits: found ? list.filter(r => hasCommits(r) && !r.isFork).length : null,
+    withCommitsOff: found ? list.filter(r => hasCommits(r) && !r.isFork && !r.included).length : null,
+    sso: list.some(r => r.included && isSsoSkip(r.skipReason)) || accounts.some(a => a.ssoOrgs.some(o => o.toLowerCase() === owner.toLowerCase())),
+    // Repos with his commits first (most first), then the most recently pushed.
     repos: list
-      .sort((a, b) => (b.pushedAt ?? '').localeCompare(a.pushedAt ?? '') || a.name.localeCompare(b.name))
-      .map(toRepoView),
-  })).sort((a, b) => Number(b.personal) - Number(a.personal) || a.owner.localeCompare(b.owner, 'en', { sensitivity: 'base' }))
+      .sort((a, b) => (found?.[b.fullName] ?? 0) - (found?.[a.fullName] ?? 0) || (b.pushedAt ?? '').localeCompare(a.pushedAt ?? '') || a.name.localeCompare(b.name))
+      .map(r => toRepoView(r, found)),
+  })).sort((a, b) => Number(b.personal) - Number(a.personal)
+    || (b.withCommits ?? 0) - (a.withCommits ?? 0)
+    || a.owner.localeCompare(b.owner, 'en', { sensitivity: 'base' }))
 
   const tokens: RepoTokenView[] = accounts.map((a) => {
     const counts = new Map<string, number>()
@@ -258,9 +380,34 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
       source: a.source,
       login: a.login,
       owners: [...counts.entries()].map(([owner, repos]) => ({ owner, repos })).sort((x, y) => y.repos - x.repos),
+      ssoOrgs: a.ssoOrgs,
       error: a.error,
     }
   })
+
+  // SSO: organizations a token listing or the commit search left out, plus owners whose repos the
+  // indexer could not read for SSO.
+  const ssoOrgs = new Map<string, string>()
+  for (const o of [...accounts.flatMap(a => a.ssoOrgs), ...(find?.ssoOrgs ?? [])]) ssoOrgs.set(o.toLowerCase(), o)
+  for (const r of rows) if (r.included && isSsoSkip(r.skipReason)) ssoOrgs.set(r.owner.toLowerCase(), r.owner)
+
+  const on = rows.filter(r => r.included)
+  const eligible = found ? rows.filter(r => hasCommits(r) && !r.isFork && !r.included) : []
+  const progress = findProgress()
+  const findView: RepoFindView = {
+    running: !!progress,
+    progress,
+    at: find?.at || null,
+    seconds: find?.at ? find.seconds : null,
+    commits: find?.at ? find.commits : 0,
+    repos: found ? Object.keys(found).length : 0,
+    owners: found ? new Set(Object.keys(found).map(n => n.split('/')[0]!.toLowerCase())).size : 0,
+    notes: find?.notes ?? [],
+    error: find?.error ?? null,
+    errorAt: find?.errorAt ?? null,
+    turnOn: { repos: eligible.length, owners: new Set(eligible.map(r => r.owner)).size, otherOwners: [...new Set(eligible.filter(r => !personal.has(r.owner.toLowerCase())).map(r => r.owner))] },
+  }
+
   const identities = currentIdentities(accounts)
   const lastIndex = db.select().from(pipelineRuns).where(and(eq(pipelineRuns.task, 'repos:index'), sql`${pipelineRuns.status} != 'skipped'`)).orderBy(desc(pipelineRuns.id)).limit(1).get()
   const indexedCommits = db.select({ n: sql<number>`count(*)` }).from(repoCommits).get()?.n ?? 0
@@ -269,10 +416,19 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
     tokens,
     groups,
     identities,
-    unlistedEmails: identityCandidates(identities.emails),
+    unlistedEmails: identityCandidates(identities.emails, new Set(on.map(r => r.fullName))),
     defaultIdentities: defaultIdentities(accounts),
     listedAt: db.select({ at: sql<string | null>`max(${repoSources.listedAt})` }).from(repoSources).get()?.at ?? null,
     indexedCommits,
+    index: {
+      included: on.length,
+      indexed: on.filter(r => !!r.indexedAt).length,
+      oversized: on.filter(r => (r.sizeKb ?? 0) > MAX_REPO_KB).length,
+      sso: on.filter(r => !r.indexedAt && isSsoSkip(r.skipReason)).length,
+      failed: on.filter(r => !!r.indexError).length,
+    },
+    find: findView,
+    ssoOrgs: [...ssoOrgs.values()].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })),
     lastIndex: lastIndex ? { id: lastIndex.id, status: lastIndex.status, startedAt: lastIndex.startedAt, finishedAt: lastIndex.finishedAt } : null,
     listError,
   }

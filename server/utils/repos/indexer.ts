@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { repoCommits, repoFacts, repoSources } from '../../db/schema'
-import { commitLogins, repoLanguages, tokenAccounts, tokenAt } from './github'
+import { commitLogins, isSsoError, repoLanguages, ssoMessage, tokenAccounts, tokenAt } from './github'
+import { findMyRepos } from './commit-search'
 import { gitOk, prepareRepoCache, remoteUrl, repoCacheDir, repoCacheRoot, runGit } from './git'
-import { MAX_REPO_KB, currentIdentities, forgetRepoData, includedRepos, refreshRepoList, saveIdentityCandidates, type RepoRow } from './settings'
+import { MAX_REPO_KB, currentIdentities, findIsStale, forgetRepoData, refreshRepoList, saveIdentityCandidates, type RepoRow } from './settings'
 
 // repos:index. For each repo switched on in Settings it keeps:
 // - a partial clone (commits and trees only) in <dataDir>/repo-cache, updated with fetch later
@@ -16,6 +17,8 @@ import { MAX_REPO_KB, currentIdentities, forgetRepoData, includedRepos, refreshR
 // Code by anyone else is never indexed.
 
 export const MAX_COMMITS_PER_REPO = 5000
+/** Repos one repos:index run clones or fetches, so a scheduled run never waits long on GitHub. */
+export const MAX_REPOS_PER_RUN = 30
 /** A commit touching this many files (a vendored import, a mass rename) is listed but its diff is not searched. */
 export const LARGE_COMMIT_FILES = 300
 const MAX_BLOBS_PER_REPO = 40_000
@@ -226,6 +229,8 @@ export interface RepoIndexResult {
   dependencies: number
   /** Unlisted emails on name-only commits GitHub links to no account, with commit counts. */
   candidates?: Record<string, number>
+  /** GitHub refused the repo for SAML SSO: the owner needs the token authorized. */
+  sso?: boolean
   note?: string
 }
 
@@ -391,6 +396,14 @@ export async function indexRepo(row: RepoRow, ids: Identities, log: (m: string) 
   }
   catch (e: any) {
     const msg = String(e?.message ?? e).slice(0, 500)
+    // An organization that enforces SAML SSO is not a failure of the run: the token needs
+    // authorizing for it, which Settings says. What was indexed before stays.
+    if (isSsoError(msg)) {
+      const text = ssoMessage(row.owner)
+      setRow({ skipReason: text, indexError: null })
+      log(`${row.fullName}: ${text}`)
+      return { ...base, status: 'skipped', sso: true, note: text }
+    }
     setRow({ indexError: msg })
     log(`${row.fullName}: failed (${msg})`)
     return { ...base, status: 'failed', note: msg }
@@ -408,17 +421,46 @@ export interface IndexRunStats extends Record<string, unknown> {
   indexed: number
   skipped: number
   failed: number
+  /** Switched-on repos left for later runs by the 30-a-run cap. */
+  waiting: number
   newCommits: number
   commits: number
   perRepo: Record<string, { his: number; all: number | null; status: string; note?: string }>
   errors: string[]
   unlistedEmails?: number
+  /** Organizations whose repos need the token authorized for SAML SSO. */
+  ssoOrgs?: string[]
+  /** The daily commit search, when this run did it. */
+  find?: { repos: number; owners: number; commits: number; seconds: number } | { error: string }
   note?: string
 }
 
-/** Index every repo switched on. payload.repos limits the run to those full names (still only switched-on ones). */
+/**
+ * The switched-on repos in the order repos:index takes them: never tried first (most recently
+ * pushed first), then the oldest index or attempt first. updatedAt records the last index or
+ * attempt (a re-list does not touch it), so a repo that fails every run goes to the back instead
+ * of taking a slot ahead of the rest. Repos over 500 MB are left out: they are never cloned.
+ */
+export function indexQueue(): RepoRow[] {
+  const db = useDb()
+  const neverTried = sql`(${repoSources.indexedAt} is null and ${repoSources.indexError} is null and ${repoSources.skipReason} is null)`
+  return db.select().from(repoSources)
+    .where(and(eq(repoSources.included, true), sql`coalesce(${repoSources.sizeKb}, 0) <= ${MAX_REPO_KB}`))
+    .orderBy(
+      sql`case when ${neverTried} then 0 else 1 end`,
+      sql`case when ${neverTried} then ${repoSources.pushedAt} end desc`,
+      sql`coalesce(${repoSources.updatedAt}, ${repoSources.indexedAt}) asc`,
+    )
+    .all()
+}
+
+/**
+ * Index the repos switched on, at most 30 a run. payload.repos limits the run to those full names
+ * (still only switched-on ones). Once a day the run first searches GitHub for every repo holding
+ * his commits (findMyRepos), so the counts in Settings stay current.
+ */
 export async function runRepoIndex(opts: { repos?: string[] }, log: (m: string) => void): Promise<IndexRunStats> {
-  const stats: IndexRunStats = { repos: 0, indexed: 0, skipped: 0, failed: 0, newCommits: 0, commits: 0, perRepo: {}, errors: [] }
+  const stats: IndexRunStats = { repos: 0, indexed: 0, skipped: 0, failed: 0, waiting: 0, newCommits: 0, commits: 0, perRepo: {}, errors: [] }
   const accounts = await tokenAccounts({ fresh: true })
   if (!accounts.length) {
     stats.note = 'No GitHub read token is set (NUXT_GITHUB_READ_TOKENS, NUXT_GITHUB_READ_TOKEN, or NUXT_GITHUB_TOKEN), so nothing was indexed.'
@@ -431,18 +473,49 @@ export async function runRepoIndex(opts: { repos?: string[] }, log: (m: string) 
     stats.note = 'No author emails or logins are set in Settings, so no commit counts as yours yet.'
     return stats
   }
-  prepareRepoCache()
-  let repos = includedRepos()
-  if (opts.repos?.length) repos = repos.filter(r => opts.repos!.includes(r.fullName))
-  stats.repos = repos.length
-  const candidates: Record<string, { commits: number; repos: string[] }> = {}
-  for (const row of repos) {
-    const res = await indexRepo(row, ids, log)
-    for (const [email, n] of Object.entries(res.candidates ?? {})) {
-      const c = candidates[email] ??= { commits: 0, repos: [] }
-      c.commits += n
-      c.repos.push(row.fullName)
+  if (!opts.repos?.length && findIsStale()) {
+    try {
+      const f = await findMyRepos(log, accounts)
+      stats.find = { repos: Object.keys(f.byRepo).length, owners: new Set(Object.keys(f.byRepo).map(n => n.split('/')[0]!.toLowerCase())).size, commits: f.commits, seconds: f.seconds }
     }
+    catch (e: any) {
+      // The search failing does not stop the index: the repos switched on are known without it.
+      stats.find = { error: String(e?.message ?? e).slice(0, 300) }
+      log(`the commit search failed (${stats.find.error})`)
+    }
+  }
+  prepareRepoCache()
+  const db = useDb()
+
+  // Over 500 MB: never cloned. Marked here without touching GitHub, outside the 30-a-run cap.
+  for (const row of db.select().from(repoSources).where(and(eq(repoSources.included, true), sql`coalesce(${repoSources.sizeKb}, 0) > ${MAX_REPO_KB}`)).all()) {
+    if (opts.repos?.length && !opts.repos.includes(row.fullName)) continue
+    if (row.skipReason?.startsWith('Over 500 MB')) continue
+    const res = await indexRepo(row, ids, log)
+    stats.perRepo[row.fullName] = { his: 0, all: null, status: res.status, note: res.note }
+    stats.skipped++
+  }
+
+  let queue = indexQueue()
+  if (opts.repos?.length) queue = queue.filter(r => opts.repos!.includes(r.fullName))
+  const candidates: Record<string, Record<string, number>> = {}
+  const ssoBlocked = new Set<string>()
+  let attempted = 0
+  for (const row of queue) {
+    // One SSO refusal per owner per run is enough to know: the owner's other repos wait.
+    if (ssoBlocked.has(row.owner.toLowerCase())) {
+      db.update(repoSources).set({ skipReason: ssoMessage(row.owner), updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 19) }).where(eq(repoSources.fullName, row.fullName)).run()
+      stats.skipped++
+      continue
+    }
+    if (attempted >= MAX_REPOS_PER_RUN) {
+      stats.waiting++
+      continue
+    }
+    attempted++
+    const res = await indexRepo(row, ids, log)
+    if (res.status === 'indexed') candidates[row.fullName] = res.candidates ?? {}
+    if (res.sso) ssoBlocked.add(row.owner.toLowerCase())
     stats.perRepo[row.fullName] = { his: res.his, all: res.all, status: res.status, ...(res.note ? { note: res.note } : {}) }
     stats.newCommits += res.newCommits
     stats.commits += res.his
@@ -453,9 +526,11 @@ export async function runRepoIndex(opts: { repos?: string[] }, log: (m: string) 
       stats.errors.push(`${row.fullName}: ${res.note ?? 'failed'}`)
     }
   }
-  // Only a full run replaces the offered emails. A run limited to some repos would drop the rest.
-  if (!opts.repos?.length) saveIdentityCandidates(candidates)
-  stats.unlistedEmails = Object.keys(candidates).length
+  stats.repos = Object.keys(stats.perRepo).length
+  if (ssoBlocked.size) stats.ssoOrgs = [...ssoBlocked].map(o => queue.find(r => r.owner.toLowerCase() === o)?.owner ?? o)
+  if (stats.waiting) log(`${stats.waiting} switched-on repos wait for the next runs (${MAX_REPOS_PER_RUN} a run)`)
+  // The offered emails are kept per repo: this run replaces only the repos it indexed.
+  saveIdentityCandidates(candidates)
+  stats.unlistedEmails = new Set(Object.values(candidates).flatMap(c => Object.keys(c))).size
   return stats
 }
-

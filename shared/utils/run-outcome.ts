@@ -21,6 +21,8 @@ export const TASK_LABELS: Record<string, string> = {
   'demos:preview': 'Build a demo preview',
   'repos:index': 'Index GitHub commits',
   'repos:suggest': 'Suggest answers from GitHub',
+  // Started from Settings > GitHub evidence, and once a day inside repos:index.
+  'repos:find': 'Find repos with your commits',
   'system:heartbeat': 'Scheduler heartbeat',
 }
 
