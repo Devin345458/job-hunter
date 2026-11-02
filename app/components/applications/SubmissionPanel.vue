@@ -1,15 +1,28 @@
 <script setup lang="ts">
-import type { SubmissionResult } from '#shared/types/pipeline'
+import type { ReviewItem, SubmissionResult } from '#shared/types/pipeline'
 import { clockTime } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
+import { approveSentence } from './approve-text'
 
 // What happened on submit: sent automatically (with the confirmation the employer showed and a
 // screenshot of it), handed back for a manual submit (with the reason), or failed (with the error).
+// Before any of that, it says what Approve will do for this application.
 const props = defineProps<{
   applicationId: number
   submission: SubmissionResult | null
   submitError: string | null
+  status?: string | null
+  approveEffect?: ReviewItem['approveEffect'] | null
+  company?: string | null
 }>()
+
+const emptyText = computed(() => {
+  const s = props.status ?? ''
+  if (s === 'declined') return 'Nothing was submitted. You rejected this application.'
+  if (['approved', 'publishing', 'submitting'].includes(s)) return 'Approved. The submit is under way, and the result shows here when it finishes.'
+  if (s === 'needs_manual') return 'Nothing was submitted by the pipeline. This application is yours to submit by hand on the employer\'s site.'
+  return `Nothing has been submitted. ${approveSentence(props.approveEffect, props.company)}`
+})
 
 const shotOpen = ref(false)
 const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kind=submission`)
@@ -46,7 +59,7 @@ const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kin
       </v-btn>
       <img v-if="shotOpen" :src="shotUrl" alt="Screenshot of the page after submitting" class="sp__shot" loading="lazy">
     </template>
-    <p v-else-if="!submitError" class="sp__empty">Nothing has been submitted. Only Approve sends an application.</p>
+    <p v-else-if="!submitError" class="sp__empty">{{ emptyText }}</p>
   </div>
 </template>
 

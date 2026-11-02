@@ -1,14 +1,19 @@
 <script lang="ts">
 import { GROUP_LABEL, statusesIn } from '~/composables/review/format'
 
-// Filter strip for the applications list: one chip per stage with its count. "To decide" and
-// "Needs you" use the review queue's groups, so both pages count the same applications.
+// Filter strip for the applications list: one chip per stage with its count. The stages follow
+// the review queue's groups with one difference: an application waiting on Devin's answers
+// (needs_input, tagged "Needs your answer") counts under "Needs you" here, not "To decide", so
+// the tab agrees with the tag on its cards. The review queue still lists it among the cards
+// left to decide, so its "left to decide" count is this page's To decide plus those.
 export type StageKey = 'all' | 'decide' | 'needs_you' | 'working' | 'sent' | 'closed'
+
+const WAITING_ON_YOU: string[] = ['needs_input']
 
 export const STAGES: Array<{ key: StageKey; label: string; statuses: string[] }> = [
   { key: 'all', label: 'All', statuses: [] },
-  { key: 'decide', label: GROUP_LABEL.decide, statuses: statusesIn('decide') },
-  { key: 'needs_you', label: GROUP_LABEL.attention, statuses: statusesIn('attention') },
+  { key: 'decide', label: GROUP_LABEL.decide, statuses: statusesIn('decide').filter(s => !WAITING_ON_YOU.includes(s)) },
+  { key: 'needs_you', label: GROUP_LABEL.attention, statuses: [...WAITING_ON_YOU, ...statusesIn('attention')] },
   { key: 'working', label: 'In progress', statuses: ['preparing', ...statusesIn('sending')] },
   { key: 'sent', label: GROUP_LABEL.sent, statuses: [...statusesIn('sent'), 'response_received', 'interviewing', 'offer'] },
   { key: 'closed', label: GROUP_LABEL.closed, statuses: ['declined', 'rejected', 'draft', 'ready'] },
