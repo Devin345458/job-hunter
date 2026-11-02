@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { properName } from '~/composables/review/format'
 import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import type { Job, JobStatus } from '~/composables/useJobs'
 import { ATS_LABELS } from '~/components/jobs/format'
@@ -194,7 +195,7 @@ onMounted(() => {
             <v-card-text>
               <div class="d-flex flex-wrap align-center ga-2 mb-4">
                 <v-chip
-                  v-if="job.location"
+                  v-if="job.location && !/^\s*remote\s*$/i.test(job.location)"
                   variant="outlined"
                   prepend-icon="mdi-map-marker-outline"
                   size="small"
@@ -218,7 +219,7 @@ onMounted(() => {
                   size="small"
                   :color="job.remoteType === 'remote' ? 'accent' : undefined"
                 >
-                  {{ job.remoteType }}
+                  {{ job.remoteType.charAt(0).toUpperCase() + job.remoteType.slice(1) }}
                 </v-chip>
 
                 <v-chip
@@ -227,7 +228,7 @@ onMounted(() => {
                   prepend-icon="mdi-web"
                   size="small"
                 >
-                  {{ job.source }}
+                  Found on {{ properName(job.source) }}
                 </v-chip>
               </div>
 
