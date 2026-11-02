@@ -450,7 +450,7 @@ export function scoreCompensation(comp: CompensationBreakdown | null, prefs: Com
   const parts: string[] = []
   const gapNotes: string[] = []
 
-  if (floor == null) gapNotes.push(`Your lowest acceptable pay is unknown, so no floor was applied${questionIds.floorQuestionId ? ` (asked in question #${questionIds.floorQuestionId})` : ''}.`)
+  if (floor == null) gapNotes.push(`Your lowest acceptable pay is unknown, so no floor was applied${questionIds.floorQuestionId ? ` (asked on the Questions page)` : ''}.`)
 
   const postingMid = totalMidpoint(comp)
   const currency = comp ? normalizeCurrency(comp.currency) : 'USD'
@@ -476,7 +476,7 @@ export function scoreCompensation(comp: CompensationBreakdown | null, prefs: Com
       parts.push(`Fully paid health insurance adds ${usd(prefs.healthValue.value)} at the value you gave, for ${usd(estimate)} in total.`)
     }
     else {
-      gapNotes.push(`The posting offers fully paid health insurance, but you have not said what that is worth to you, so it is not counted${questionIds.healthQuestionId ? ` (asked in question #${questionIds.healthQuestionId})` : ''}.`)
+      gapNotes.push(`The posting offers fully paid health insurance, but you have not said what that is worth to you, so it is not counted${questionIds.healthQuestionId ? ` (asked on the Questions page)` : ''}.`)
     }
   }
 

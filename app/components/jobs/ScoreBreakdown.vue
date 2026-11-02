@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { plainQuestionRefs } from '#shared/utils/plain-text'
 import type { QuestionView, ScoreBreakdown } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
 
@@ -127,7 +128,7 @@ function signed(n: number) {
           </dd>
         </dl>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ score.compensation.reasoning }}
+          {{ plainQuestionRefs(score.compensation.reasoning) }}
         </p>
       </section>
 

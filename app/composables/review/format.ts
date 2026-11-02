@@ -1,5 +1,5 @@
 import type { AnswerSource, ApplicationStatus, FormAnswer, PipelineRunView, ReviewItem } from '#shared/types/pipeline'
-import { capitalize } from '#shared/utils/plain-text'
+import { capitalize, plainQuestionRefs } from '#shared/utils/plain-text'
 
 // Status vocabulary and formatting shared by every review component. Lives in a nested folder
 // so Nuxt does not auto-import these generic names app-wide; import them explicitly.
@@ -153,8 +153,8 @@ export function answerSourceText(a: Pick<FormAnswer, 'source' | 'sourceDetail' |
     if (found) return `${label}: how you found the job${found[1] ? ` (${found[1]})` : ''}`
     return `${label}: ${knowledgeRef(detail)}`
   }
-  if (a.source === 'skipped' || a.source === 'eeo_decline') return detail || label
-  return detail ? `${label}: ${detail}` : label
+  if (a.source === 'skipped' || a.source === 'eeo_decline') return plainQuestionRefs(detail) || label
+  return detail ? `${label}: ${plainQuestionRefs(detail)}` : label
 }
 
 /** A form blocker without its internal key: "captcha: Google reCAPTCHA is..." becomes "Google reCAPTCHA is...". */

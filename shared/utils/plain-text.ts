@@ -83,6 +83,23 @@ const KEY_PHRASES: RegExp[] = [
   /(?:\b401\s+)?invalid x-api-key\b\.?/gi,
 ]
 
+/**
+ * Question numbers are internal ids. "Optional: asked you as question #12" becomes "Optional:
+ * your answer is open on the Questions page", "You skipped question #12" becomes "You skipped
+ * this question", "(asked in question #5)" becomes "(asked on the Questions page)", and
+ * "question #7: Yes" becomes "Your answer: Yes".
+ */
+export function plainQuestionRefs(text: string | null | undefined): string {
+  if (!text) return ''
+  return text
+    .replace(/^Optional: asked you as question #\d+\.?/i, 'Optional: your answer is open on the Questions page')
+    .replace(/^You skipped question #\d+\.?/i, 'You skipped this question')
+    .replace(/\(asked in question #\d+\)/gi, '(asked on the Questions page)')
+    .replace(/^question #\d+ answered /i, 'Your answer ')
+    .replace(/^question #\d+:\s*/i, 'Your answer: ')
+    .replace(/\bquestion #\d+/gi, 'a question on the Questions page')
+}
+
 /** Upper-cases the first letter when the first word is all lowercase; "hCaptcha" and "iCIMS" stay as written. */
 export function capitalize(text: string): string {
   const first = /^\S*/.exec(text)![0]
