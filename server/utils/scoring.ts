@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { z } from 'zod'
-import { jobs, questions, scoreHistory } from '../db/schema'
+import { applications, jobs, questions, scoreHistory } from '../db/schema'
 import type { CompensationBreakdown, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import { aiSpentToday, aiStructured, AiBudgetExceeded } from './ai'
 import { askCompQuestions, type CompPreferences, type CompScore, FLOOR_SUBJECT, HEALTH_SUBJECT, loadCompPreferences, scoreCompensation } from './compensation'
@@ -258,6 +258,46 @@ export async function scoreJobs(opts: { jobIds?: number[]; limit?: number; fresh
  * 'open' means every scored job whose status is new or reviewed.
  * Writes a job only when its breakdown changed, and a score_history row only when the final changed.
  */
+/**
+ * After Devin answers a skill or experience question, the skills judgment of other open jobs that
+ * name that skill is out of date (rescoreJobs only recombines stored scores). This clears their
+ * scoredAt so the next jobs:match run judges their skills again with the new knowledge base.
+ * Only open jobs scoring 50 or more, without a submitted or declined application, so a common
+ * skill does not queue hundreds of Claude calls. A subject of three characters or fewer ("Go")
+ * must match as a whole word with its own capitalization; longer ones ignore case.
+ */
+export function queueSkillRescore(subject: string | null | undefined, exceptJobIds: number[] = [], answeredAt: string | null = null): number {
+  const s = (subject ?? '').trim()
+  if (s.length < 2) return 0
+  const esc = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = s.length <= 3 ? new RegExp(`(^|[^A-Za-z0-9])${esc}([^A-Za-z0-9]|$)`) : new RegExp(`(^|[^A-Za-z0-9])${esc}([^A-Za-z0-9]|$)`, 'i')
+  const db = useDb()
+  const closed = new Set(db.select({ jobId: applications.jobId }).from(applications)
+    .where(inArray(applications.status, ['submitted', 'declined', 'approved', 'submitting'])).all().map(r => r.jobId))
+  const rows = db.select({ id: jobs.id, breakdown: jobs.scoreBreakdown, scoredAt: jobs.scoredAt }).from(jobs)
+    .where(and(isNotNull(jobs.scoredAt), sql`${jobs.matchScore} >= 50`, sql`${jobs.status} not in ('rejected', 'expired')`))
+    .all()
+    .filter(r => !closed.has(r.id) && !exceptJobIds.includes(r.id) && (!answeredAt || (r.scoredAt ?? '') < answeredAt) && re.test(r.breakdown ?? ''))
+  if (!rows.length) return 0
+  db.update(jobs).set({ scoredAt: null }).where(inArray(jobs.id, rows.map(r => r.id))).run()
+  return rows.length
+}
+
+/**
+ * Skill judgments made before a related answer: for every answered skill or experience question,
+ * open jobs that name its subject and were scored before the answer are queued for re-scoring.
+ * Catches answers given before queueSkillRescore existed, and any path that missed it. Idempotent:
+ * a re-scored job is newer than the answer and is left alone.
+ */
+export function queueStaleSkillJudgments(): number {
+  const answered = useDb().select({ subject: questions.subject, answeredAt: questions.answeredAt }).from(questions)
+    .where(and(eq(questions.status, 'answered'), inArray(questions.kind, ['knows', 'has_done']), isNotNull(questions.answeredAt)))
+    .all()
+  let queued = 0
+  for (const q of answered) queued += queueSkillRescore(q.subject, [], q.answeredAt)
+  return queued
+}
+
 export async function rescoreJobs(jobIds: number[] | 'open', reason: 'rescore' | 'rule_change'): Promise<{ rescored: number }> {
   const db = useDb()
   const rows = jobIds === 'open'

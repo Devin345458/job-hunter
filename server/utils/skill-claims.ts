@@ -472,3 +472,56 @@ async function freshScore(jobId: number): Promise<JobRescoreResult> {
     previousScore,
   }
 }
+
+/**
+ * Applies an answered skill or experience question to every open job's requirement statuses, the
+ * same way a tapped chip changes its own job: a requirement whose text is the same skill becomes
+ * Have after Yes, Partly after Some experience (from Unknown or Missing), Missing after No (from
+ * Unknown or Partly). A Have is never lowered. Changed jobs are queued for a fresh skills score.
+ * Without this, statuses judged at enrichment kept saying Unknown after Devin answered.
+ * Idempotent; sandbox jobs and jobs with a submitted, approved, or declined application are left alone.
+ */
+export function applyAnswerToOpenJobs(subject: string | null | undefined, answer: string | null | undefined, evidence: string | null): number {
+  const yn = answer ? parseYesNo(answer) : null
+  if (!subject?.trim() || !yn || !evidence) return 0
+  const key = skillClaimKey(subject)
+  if (!key) return 0
+  const db = useDb()
+  const closed = new Set(db.select({ jobId: applications.jobId }).from(applications)
+    .where(inArray(applications.status, ['submitted', 'declined', 'approved', 'submitting'])).all().map(r => r.jobId))
+  const open = db.select().from(jobs).all()
+    .filter(j => j.requirementsJson && !j.isSandbox && !closed.has(j.id) && !['rejected', 'expired'].includes(j.status ?? ''))
+  let changedJobs = 0
+  for (const job of open) {
+    const reqs = parseJson<Requirement[]>(job.requirementsJson, [])
+    let changed = 0
+    const next = reqs.map((r) => {
+      if (skillClaimKey(r.text) !== key) return r
+      let status: Requirement['status'] = r.status
+      if (yn === 'yes' && r.status !== 'have') status = 'have'
+      else if (yn === 'some' && (r.status === 'unknown' || r.status === 'lack')) status = 'partial'
+      else if (yn === 'no' && (r.status === 'unknown' || r.status === 'partial')) status = 'lack'
+      if (status === r.status) return r
+      changed++
+      return { ...r, status, evidence }
+    })
+    if (!changed) continue
+    db.update(jobs).set({ requirementsJson: JSON.stringify(next), scoredAt: null }).where(eq(jobs.id, job.id)).run()
+    changedJobs++
+  }
+  return changedJobs
+}
+
+/** Every answered skill or experience question applied to open jobs (catches answers given before this existed). */
+export function applyAllAnswersToOpenJobs(): number {
+  const rows = useDb().select().from(questions)
+    .where(and(eq(questions.status, 'answered'), inArray(questions.kind, ['knows', 'has_done'])))
+    .all()
+  let n = 0
+  for (const q of rows) {
+    const k = q.knowledgeKey ?? ''
+    const i = k.indexOf(':')
+    n += applyAnswerToOpenJobs(q.subject, q.answer, i > 0 ? `${k.slice(0, i)}/${k.slice(i + 1)}` : null)
+  }
+  return n
+}

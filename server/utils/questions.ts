@@ -26,7 +26,8 @@ import { loadKnowledge, setKnowledgeIfChanged, upsertKnowledge, type KnowledgeEn
 import { dataPath } from './paths'
 import { ruleTerm, ruleWordMatch } from './learned-score'
 import { nowSql, parseJson, referencedQuestionIds } from './review'
-import { rescoreJobs } from './scoring'
+import { queueSkillRescore, rescoreJobs } from './scoring'
+import { applyAnswerToOpenJobs } from './skill-claims'
 
 export type QuestionRow = InferSelectModel<typeof questions>
 
@@ -693,6 +694,11 @@ export async function answerQuestion(id: number, rawAnswer: string, example?: st
   }).where(eq(questions.id, id)).run()
 
   const { refreshed, unavailable } = await refreshWaitingApplications(toRefresh)
+  // Other open jobs that name this skill get their skills judged again on the next scheduled run.
+  if (q.kind === 'knows' || q.kind === 'has_done') {
+    applyAnswerToOpenJobs(q.subject, normalized, `${entry.category}/${entry.key}`)
+    queueSkillRescore(q.subject, q.jobId ? [q.jobId] : [])
+  }
   const affected = affectedJobIds(q, waiting)
   const rescored = affected === 'open' || affected.length
     ? (await rescoreJobs(affected, 'rescore')).rescored

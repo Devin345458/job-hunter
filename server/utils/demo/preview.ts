@@ -96,7 +96,8 @@ async function buildWebPreview(root: string, r: Runner, log: (line: string) => v
     const res = await r.install()
     if (res && res.code !== 0) return { ...base, status: 'failed', error: `Installing dependencies failed (${outcome(res)}): ${tail(res.output)}` }
   }
-  const argv = ['npx', '--no', 'vite', 'build', '--base', './', '--outDir', PREVIEW_DIR, '--emptyOutDir', '--logLevel', 'warn']
+  // "--": npm reads options it knows (--json, --loglevel) as its own unless they come after it.
+  const argv = ['npx', '--no', '--', 'vite', 'build', '--base', './', '--outDir', PREVIEW_DIR, '--emptyOutDir', '--logLevel', 'warn']
   let res = await r.run(argv, BUILD_MS)
   if (res.code !== 0 && !r.installed()) {
     // node_modules can come from another platform (a copied data volume) or be incomplete.
@@ -213,8 +214,8 @@ async function runTestList(root: string, runner: TestRunner, r: Runner): Promise
   const once = async (): Promise<{ res: RunResult; cases: DemoTestCase[]; parseError: string | null }> => {
     rmSync(join(root, TEST_REPORT_FILE), { force: true })
     let res: RunResult
-    if (runner === 'vitest') res = await r.run(['npx', '--no', 'vitest', 'run', '--reporter=json', `--outputFile=${TEST_REPORT_FILE}`], TEST_MS)
-    else if (runner === 'jest') res = await r.run(['npx', '--no', 'jest', '--json', `--outputFile=${TEST_REPORT_FILE}`], TEST_MS)
+    if (runner === 'vitest') res = await r.run(['npx', '--no', '--', 'vitest', 'run', '--reporter=json', `--outputFile=${TEST_REPORT_FILE}`], TEST_MS)
+    else if (runner === 'jest') res = await r.run(['npx', '--no', '--', 'jest', '--json', `--outputFile=${TEST_REPORT_FILE}`], TEST_MS)
     else if (runner === 'node-test') res = await r.run(['npm', 'test'], TEST_MS, { NODE_OPTIONS: '--test-reporter=tap --test-reporter-destination=stdout' })
     else res = await r.run(['go', 'test', '-json', './...'], TEST_MS)
     let cases: DemoTestCase[] = []

@@ -9,7 +9,8 @@ import { aiStructured } from './ai'
 import { loadKnowledge } from './knowledge'
 import { askDailyQuestions } from './questions'
 import { htmlToText, nowSql, parseJson } from './review'
-import { rescoreJobs } from './scoring'
+import { queueStaleSkillJudgments, rescoreJobs } from './scoring'
+import { applyAllAnswersToOpenJobs } from './skill-claims'
 import {
   RULE_ABOVE_SENIOR_MARKERS,
   RULE_JUNIOR_MARKERS,
@@ -846,8 +847,13 @@ export async function runDailyLearning(log: (msg: string) => void) {
   log(`${result.decisionsUsed} decisions, ${result.specs} rules, ${result.changes.length} changed`)
   // 3. Ask what the pipeline needs to know and the knowledge base does not say.
   const asked = askDailyQuestions()
-  // 4. Rescore open jobs with the new rules.
+  // 4. Rescore open jobs with the new rules, and queue skill judgments older than a related answer
+  //    for the next jobs:match.
   const { rescored } = await rescoreJobs('open', 'rule_change')
+  const answersApplied = applyAllAnswersToOpenJobs()
+  if (answersApplied) log(`${answersApplied} open jobs had requirement statuses updated from your answers`)
+  const skillRejudge = queueStaleSkillJudgments()
+  log(`${skillRejudge} jobs queued to have their skills judged again after your answers`)
   const activeRules = db.select({ id: learnedRules.id }).from(learnedRules)
     .where(and(eq(learnedRules.active, true), gt(learnedRules.evidenceCount, 0))).all().length
   return {
@@ -860,5 +866,7 @@ export async function runDailyLearning(log: (msg: string) => void) {
     noteErrors,
     questionsAsked: asked.length,
     rescored,
+    skillRejudge,
+    answersApplied,
   }
 }
