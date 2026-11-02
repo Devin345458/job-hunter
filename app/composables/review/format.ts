@@ -98,7 +98,8 @@ export function clockTime(value: string | null | undefined): string {
 export function money(n: number | null | undefined, currency = 'USD'): string {
   if (n === null || n === undefined) return ''
   const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : `${currency} `
-  if (Math.abs(n) >= 10000) return `${symbol}${Math.round(n / 1000)}k`
+  // Uppercase K, as the job card and job page write it.
+  if (Math.abs(n) >= 10000) return `${symbol}${Math.round(n / 1000)}K`
   return `${symbol}${Math.round(n).toLocaleString('en-US')}`
 }
 
@@ -252,6 +253,24 @@ const STAT_LABEL: Record<string, string> = {
 }
 
 const STAT_HIDDEN = new Set(['tz', 'local', 'outcome', 'stopReason'])
+
+export interface RunDemo { id: number; name: string; state: string }
+
+/**
+ * The demos a run built or previewed, by name, with how each ended: "Invoice Three Way Matcher",
+ * "built" or "preview failed". Runs recorded before titles were kept show the demo's slug.
+ */
+export function runDemos(stats: Record<string, unknown> | null): RunDemo[] {
+  const raw = stats?.demos
+  const list = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : []
+  return list.filter(d => typeof d?.id === 'number').map((d) => {
+    const preview = typeof d.preview === 'string' ? d.preview : null
+    const state = preview
+      ? (preview === 'none' ? 'no preview' : `preview ${preview}`)
+      : typeof d.status === 'string' ? d.status : ''
+    return { id: d.id as number, name: String(d.title || d.slug || `Demo ${d.id}`), state }
+  })
+}
 
 /** A run's numbers as "38 failed, 22 without posting text, AI cost $0.00". Booleans, lists, and nested detail are left out. */
 export function statsText(stats: Record<string, unknown> | null): string {

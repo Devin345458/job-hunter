@@ -267,6 +267,9 @@ const letterPreview = computed(() => {
             :filled-at="item.form.filledAt"
             :form-error="item.form.error"
             :question-hint="questionHint"
+            :status="item.status"
+            :submitted-at="item.submission?.submittedAt ?? null"
+            :submit-method="item.submission?.method ?? null"
           />
         </ReviewSection>
 

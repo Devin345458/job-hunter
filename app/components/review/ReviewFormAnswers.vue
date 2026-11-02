@@ -20,6 +20,8 @@ const props = defineProps<{
   status?: string | null
   /** When the submit happened, for a submitted application. */
   submittedAt?: string | null
+  /** How it was submitted: by the pipeline, or by hand on the employer's site. */
+  submitMethod?: 'automated' | 'manual' | null
 }>()
 
 const SENT = ['submitted', 'response_received', 'interviewing', 'offer', 'rejected']
@@ -34,6 +36,27 @@ const submitState = computed(() => {
   if (s === 'declined') return 'Not submitted. You rejected it.'
   return 'Not submitted.'
 })
+
+/**
+ * When the resume and cover letter files reach the employer, following the application's status.
+ * The fill stored "attached only after you approve", which stops being true at approve. Null
+ * while that stored wording is still right.
+ */
+const attachState = computed<string | null>(() => {
+  const s = props.status
+  if (!s) return null
+  if (SENT.includes(s)) return props.submitMethod === 'manual' ? 'for you to attach on the employer\'s form' : 'attached with the submission'
+  if (s === 'needs_manual') return 'for you to attach on the employer\'s form'
+  if (['approved', 'publishing', 'submitting'].includes(s)) return 'attached as the submission goes out'
+  return null
+})
+
+/** Where an answer came from, with a file field's attachment said for the application's status. */
+function sourceText(a: FormAnswer): string {
+  const text = answerSourceText(a)
+  if (!attachState.value || (a.source !== 'resume' && a.source !== 'cover_letter')) return text
+  return text.replace(/attached only after you approve/i, attachState.value)
+}
 
 const CONF: Record<FormAnswer['confidence'], { label: string; color: string }> = {
   high: { label: 'Sure', color: 'success' },
@@ -138,9 +161,10 @@ function isLong(a: FormAnswer) {
             {{ expanded.has(a.fieldId) ? 'Show less' : 'Show all' }}
           </button>
           <div class="fa__meta">
-            <span>{{ answerSourceText(a) }}</span>
+            <span>{{ sourceText(a) }}</span>
             <span class="fa__conf" :class="`text-${CONF[a.confidence].color}`">{{ CONF[a.confidence].label }}</span>
-            <span v-if="isDryRunNote(a)">Attached when you approve</span>
+            <!-- After approve the source line says when the file is attached, so the dry-run note would repeat or contradict it. -->
+            <span v-if="isDryRunNote(a) && !attachState">Attached when you approve</span>
             <span v-else-if="a.fillError" class="text-error">Not filled: {{ plainError(a.fillError) }}</span>
           </div>
           <ReviewCopyButton

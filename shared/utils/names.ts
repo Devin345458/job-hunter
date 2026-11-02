@@ -49,3 +49,35 @@ export function properNamesIn(text: string): string {
     .replace(SOURCE_LIST, (_m, list: string) => `${list.split(', ').map(properName).join(', ')} search failed`)
     .replace(SOURCE_WORD, id => properName(id))
 }
+
+// Well-known technology names as their makers write them. Requirement lines copy whatever the
+// posting typed ("React + Typescript"), and the reject dialog's chips are built from them.
+const SKILL_NAMES: Record<string, string> = {
+  typescript: 'TypeScript',
+  javascript: 'JavaScript',
+  github: 'GitHub',
+  postgresql: 'PostgreSQL',
+  mysql: 'MySQL',
+  graphql: 'GraphQL',
+  nodejs: 'Node.js',
+  nextjs: 'Next.js',
+  vuejs: 'Vue.js',
+  oauth: 'OAuth',
+  ios: 'iOS',
+}
+
+/** Lowercase, without spaces, dots, or hyphens: "Node JS", "node.js", and "NodeJS" share a key. */
+function skillKey(name: string): string {
+  return name.toLowerCase().replace(/[\s.-]+/g, '')
+}
+
+/**
+ * A skill name with well-known technologies spelled their own way: "Typescript" becomes
+ * "TypeScript", "nodejs" becomes "Node.js", and "Typescript and Github" becomes "TypeScript and
+ * GitHub". The whole name is tried first, then each word. Names the map does not know come back unchanged.
+ */
+export function properSkillName(name: string): string {
+  const whole = SKILL_NAMES[skillKey(name)]
+  if (whole) return whole
+  return name.replace(/[A-Za-z][A-Za-z.]*[A-Za-z]/g, word => SKILL_NAMES[skillKey(word)] ?? word)
+}

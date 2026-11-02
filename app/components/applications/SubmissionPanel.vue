@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewItem, SubmissionResult } from '#shared/types/pipeline'
 import { clockTime } from '~/composables/review/format'
-import { plainError } from '#shared/utils/plain-text'
+import { plainConfirmation, plainError } from '#shared/utils/plain-text'
 import { approveSentence } from './approve-text'
 
 // What happened on submit: sent automatically (with the confirmation the employer showed and a
@@ -47,7 +47,7 @@ const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kin
         </template>
         <template v-if="submission.confirmationText">
           <dt>Employer said</dt>
-          <dd class="sp__quote">{{ submission.confirmationText }}</dd>
+          <dd class="sp__quote">{{ plainConfirmation(submission.confirmationText) }}</dd>
         </template>
         <template v-if="submission.finalUrl">
           <dt>Final page</dt>

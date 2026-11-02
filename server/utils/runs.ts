@@ -15,18 +15,21 @@ function now() {
  * refuses to start a second copy of the same task while one is running in this process.
  * The row's host column is os.hostname(), which inside Docker is the container id, so
  * the dashboard can show that a run happened in the deployed container.
+ * `lockKey` narrows "the same task": a rebuild of one demo does not block a rebuild of another.
  */
 export async function withRun<T extends Record<string, unknown>>(
   task: string,
   trigger: RunTrigger,
   fn: (log: (msg: string) => void) => Promise<T>,
+  opts: { lockKey?: string } = {},
 ): Promise<{ runId: number; status: 'succeeded' | 'failed' | 'skipped'; stats: T | null; error: string | null }> {
   const db = useDb()
-  if (running.has(task)) {
+  const lock = opts.lockKey ?? task
+  if (running.has(lock)) {
     const row = db.insert(pipelineRuns).values({ task, trigger, status: 'skipped', finishedAt: now(), host: hostname(), error: 'Another run of this task is still in progress' }).returning().get()
     return { runId: row.id, status: 'skipped', stats: null, error: row.error }
   }
-  running.add(task)
+  running.add(lock)
   const row = db.insert(pipelineRuns).values({ task, trigger, status: 'running', host: hostname() }).returning().get()
   const log = (msg: string) => console.log(`[${task}#${row.id}] ${msg}`)
   log(`started (${trigger})`)
@@ -49,7 +52,7 @@ export async function withRun<T extends Record<string, unknown>>(
     return { runId: row.id, status: 'failed', stats: null, error }
   }
   finally {
-    running.delete(task)
+    running.delete(lock)
   }
 }
 

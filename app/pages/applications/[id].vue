@@ -310,6 +310,7 @@ const submissionSummary = computed(() => {
             :question-hint="questionHint"
             :status="app.status"
             :submitted-at="review.submission?.submittedAt ?? null"
+            :submit-method="review.submission?.method ?? null"
           />
           <p v-else class="ad__empty">
             {{ accountAts ? 'This employer uses an applicant-account system, so there is no form to fill. Apply by hand with the resume and cover letter below.' : working ? 'The form is filled after the resume and cover letter are ready.' : 'The form has not been filled yet.' }}

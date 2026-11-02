@@ -285,15 +285,42 @@ export async function refreshPreview(demoId: number, log: (line: string) => void
   }
 }
 
-/** For POST /api/demos/:id/preview: claims the preview now (so a second click gets a 409), builds in the background. */
+/**
+ * For POST /api/demos/:id/preview: claims the preview now (so a second click gets a 409), builds in
+ * the background, and records the run in pipeline_runs as demos:preview (trigger manual) with the
+ * demo and the preview's outcome, so the run log explains a preview started from the demo page.
+ * withRun calls the build before its first await, so the claim still happens before this returns.
+ */
 export function startPreview(demoId: number): void {
   const lines: string[] = []
-  const done = refreshPreview(demoId, line => lines.push(line))
-  done
-    .then(() => appendBuildLog(demoId, clipOutput(lines.join('\n'), 4000)))
-    .catch((e: any) => {
+  const demo = getDemo(demoId)
+  void withRun('demos:preview', 'manual', async (log) => {
+    try {
+      const { shape, record } = await refreshPreview(demoId, (line) => {
+        lines.push(line)
+        log(line)
+      })
+      const failed = record?.status === 'failed'
+      return {
+        ...(failed ? { failed: 1 } : {}),
+        ...(failed && record?.error ? { errors: [record.error] } : {}),
+        demos: [{
+          id: demoId,
+          applicationId: demo?.applicationId ?? null,
+          slug: demo?.slug ?? null,
+          title: demo?.title ?? null,
+          status: demo?.status ?? null,
+          preview: record ? record.status : 'none',
+          ...(shape.kind === 'none' && shape.note ? { note: shape.note } : {}),
+        }],
+      }
+    }
+    catch (e: any) {
       lines.push(`preview: error: ${e?.message || e}`)
+      throw e
+    }
+    finally {
       appendBuildLog(demoId, clipOutput(lines.join('\n'), 4000))
-      console.error(`[demos] preview for demo ${demoId} failed:`, e)
-    })
+    }
+  }, { lockKey: `demos:preview#${demoId}` })
 }

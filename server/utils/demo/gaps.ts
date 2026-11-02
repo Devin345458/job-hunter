@@ -4,6 +4,7 @@ import { questions } from '../../db/schema'
 import type { GapAnalysis, GapItem, Requirement } from '#shared/types/pipeline'
 import { availableToolchains, primaryLanguage } from './exec'
 import { getAppWithJob, storeGapAnalysis } from './store'
+import { demoLanguageName, noIdeaSentence, noToolchainSentence, oneDemoSentence, tooLargeSentence, wrongLanguageSentence } from './gap-text'
 import { plainQuestionContext } from '#shared/utils/plain-text'
 
 // Owned by the demo-projects unit. Application prep calls analyzeGaps once per application
@@ -202,6 +203,7 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
 
   // ── Step 3: decide for confirmed gaps ──
   const lackOf = new Map<GapItem, boolean>()
+  const subjectOf = new Map<GapItem, string>()
   if (confirmed.length > 0) {
     const toolchains = await availableToolchains()
     const languages = [...new Set(toolchains.flatMap(t => t.languages))]
@@ -248,6 +250,7 @@ Plain American English. No dashes. Quote the knowledge base as written; never ad
       const d = decisions.find(x => x.index === i)
       const item: GapItem = { ...c.item }
       lackOf.set(item, c.status === 'lack')
+      subjectOf.set(item, c.subject)
       if (!d) {
         items.push({ ...item, decision: 'skip', rationale: 'No decision was returned for this gap.' })
         continue
@@ -257,26 +260,28 @@ Plain American English. No dashes. Quote the knowledge base as written; never ad
       item.demoIdea = d.decision === 'demo' && d.demoIdea
         ? { title: d.demoIdea.title, summary: d.demoIdea.summary, stack: d.demoIdea.stack, scopeHours: d.demoIdea.scopeHours }
         : null
+      // When a hard rule refuses the demo Claude recommended, the row says so in one sentence of
+      // its own; Claude's rationale argues for the demo, so it is not kept.
       if (item.decision === 'demo') {
         const lang = primaryLanguage(item.demoIdea?.stack ?? [])
         const subjectLang = primaryLanguage([c.subject])
         if (!item.demoIdea) {
           item.decision = 'skip'
-          item.rationale = `${d.rationale} No project idea came back, so no demo is planned.`
+          item.rationale = noIdeaSentence(c.subject)
         }
         else if (!languages.includes(lang)) {
           item.decision = 'skip'
-          item.rationale = `A demo would need ${lang === 'other' ? 'a toolchain' : `the ${lang} toolchain`}, which the build server does not have. ${d.rationale}`
+          item.rationale = noToolchainSentence(c.subject, demoLanguageName(lang, [c.subject, ...item.demoIdea.stack]))
           item.demoIdea = null
         }
         else if (subjectLang !== 'other' && subjectLang !== lang) {
           item.decision = 'skip'
-          item.rationale = `The gap is ${c.subject}, but the project idea is written in ${lang}, so it would not show the skill. ${d.rationale}`
+          item.rationale = wrongLanguageSentence(c.subject, demoLanguageName(lang, item.demoIdea.stack))
           item.demoIdea = null
         }
         else if (item.demoIdea.scopeHours > MAX_DEMO_HOURS) {
           item.decision = 'skip'
-          item.rationale = `The project idea needs about ${item.demoIdea.scopeHours} hours, too large for a small credible demo. ${d.rationale}`
+          item.rationale = tooLargeSentence(c.subject, item.demoIdea.scopeHours)
           item.demoIdea = null
         }
       }
@@ -293,7 +298,7 @@ Plain American English. No dashes. Quote the knowledge base as written; never ad
     for (const i of demos) {
       if (i === keep) continue
       i.decision = 'skip'
-      i.rationale = `Only one demo is built per application; "${keep.demoIdea?.title}" was chosen instead. ${i.rationale}`
+      i.rationale = oneDemoSentence(subjectOf.get(i), keep.demoIdea?.title)
       i.demoIdea = null
     }
   }

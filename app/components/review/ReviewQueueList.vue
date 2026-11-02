@@ -19,11 +19,17 @@ const sections = computed(() => [
   { key: 'sent', label: 'Sent recently', items: props.groups.sent, empty: null },
 ].filter(s => s.items.length > 0 || s.empty))
 
+/**
+ * Base pay, the figure the job card and the review card show, labeled so it is never read as the
+ * total. Only a posting with no base figure falls back to the estimated total, labeled as such.
+ */
 function pay(item: ReviewItem) {
   const c = item.compensation
-  const lo = c?.totalEstimateMin ?? c?.baseAnnualMin ?? item.job.salaryMin
-  const hi = c?.totalEstimateMax ?? c?.baseAnnualMax ?? item.job.salaryMax
-  return moneyRange(lo, hi, c?.currency || item.job.salaryCurrency || 'USD')
+  const currency = c?.currency || item.job.salaryCurrency || 'USD'
+  const base = moneyRange(c?.baseAnnualMin ?? item.job.salaryMin, c?.baseAnnualMax ?? item.job.salaryMax, currency)
+  if (base) return `${base} base`
+  const total = moneyRange(c?.totalEstimateMin, c?.totalEstimateMax, currency)
+  return total ? `${total} est. total` : ''
 }
 
 function blockingCount(item: ReviewItem) {

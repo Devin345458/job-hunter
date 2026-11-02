@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { PipelineRunView } from '#shared/types/pipeline'
-import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, statsText } from '~/composables/review/format'
+import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsText } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
 
@@ -164,6 +164,12 @@ onMounted(() => {
               <li v-for="p in r.problems" :key="p" class="text-warning">{{ p }}</li>
             </ul>
             <div v-if="statsText(r.stats)">Result: {{ statsText(r.stats) }}</div>
+            <div v-if="runDemos(r.stats).length">
+              {{ runDemos(r.stats).length === 1 ? 'Demo' : 'Demos' }}:
+              <template v-for="(d, i) in runDemos(r.stats)" :key="d.id">
+                <NuxtLink :to="`/demos/${d.id}`" class="pp__demo-link">{{ d.name }}</NuxtLink>{{ d.state ? ` (${d.state})` : '' }}{{ i < runDemos(r.stats).length - 1 ? ', ' : '' }}
+              </template>
+            </div>
             <div v-if="r.error" class="pp__run-error">{{ plainError(r.error) }}</div>
           </div>
         </v-expand-transition>
@@ -366,6 +372,10 @@ onMounted(() => {
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     overflow-wrap: anywhere;
+  }
+
+  &__demo-link {
+    color: rgb(var(--v-theme-primary));
   }
 
   &__run-error {

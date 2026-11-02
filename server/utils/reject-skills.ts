@@ -2,6 +2,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { decisions, jobs, questions } from '../db/schema'
 import type { RejectSkillOption, RejectSkillsMode, RejectSkillsRecord, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
+import { properSkillName } from '#shared/utils/names'
 import { capitalize } from '#shared/utils/plain-text'
 import { loadKnowledge, upsertKnowledge } from './knowledge'
 import { ruleTerm } from './learned-score'
@@ -81,7 +82,8 @@ export function rejectSkillLabel(text: string, opts: { name?: boolean } = {}): s
   const term = ruleTerm(label)
   const bare = term.replace(/\s+products?$/, '')
   if (!term || GENERIC_TERMS.has(term) || GENERIC_TERMS.has(bare) || GENERIC_EXTRA.has(bare)) return null
-  return capitalize(label)
+  // Before capitalize, so "ios" becomes "iOS" rather than "Ios".
+  return capitalize(properSkillName(label))
 }
 
 /** Each parenthesized group swapped for a marker, so splitting never cuts inside "(SSO, SAML)". */

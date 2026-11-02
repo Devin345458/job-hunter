@@ -255,9 +255,22 @@ export const DEMO_STOP_TEXT: Record<DemoStopKind, string> = {
 
 // ── Gap analysis ──
 
+/** How the gap summary names a demo in each status. */
+const DEMO_STATE: Record<string, string> = {
+  proposed: 'Demo planned',
+  building: 'Demo being built',
+  built: 'Demo built',
+  publishing: 'Demo being published',
+  published: 'Demo published',
+  failed: 'Demo build failed',
+}
+
 /**
- * The gap summary, agreeing with the demo that exists. An analysis that ran again after the demo
- * was planned (a question answered since) can say "No demo planned." while the demo is there.
+ * The gap summary, agreeing with the demo that exists and saying what state it is in. The stored
+ * summary says "Demo planned: X (for Y)." from the day it was planned, even after X was built,
+ * and an analysis that ran again later (a question answered since) can say "No demo planned."
+ * while the demo is there. Pass null for a demo the current analysis no longer plans, so the
+ * summary never names it.
  */
 export function gapSummaryText(
   summary: string | null | undefined,
@@ -266,7 +279,29 @@ export function gapSummaryText(
   if (!summary) return ''
   if (!demo || demo.status === 'discarded') return summary
   const gap = demo.gapAddressed?.trim()
-  return summary.replace(/\bNo demo planned\./, `Demo: ${demo.title}${gap ? ` (for ${gap})` : ''}.`)
+  const named = `${DEMO_STATE[demo.status] ?? 'Demo'}: ${demo.title}${gap ? ` (for ${gap})` : ''}.`
+  if (/\bNo demo planned\./.test(summary)) return summary.replace(/\bNo demo planned\./, named)
+  // The requirement can hold parentheses of its own, so the phrase ends at the period before the
+  // next count ("2 questions waiting on you.") or at the end. A different demo planned since is left as written.
+  return summary.replace(
+    /\bDemo planned: ([\s\S]+?) \(for [\s\S]*?\)\.(?=\s+\d|\s*$)/,
+    (whole, title: string) => (title.trim().toLowerCase() === demo.title.trim().toLowerCase() ? named : whole),
+  )
+}
+
+// ── Confirmation pages ──
+
+/**
+ * A confirmation page's text as older submits stored it, with the page's blocks run together:
+ * "Thank you for applying Your application was received." reads "Thank you for applying. Your
+ * application was received." Text that already has its periods comes back unchanged.
+ */
+export function plainConfirmation(text: string | null | undefined): string {
+  if (!text) return ''
+  return text.replace(
+    /\b(thank you for (?:applying|your application|your interest)|thanks for applying|application (?:was |has been )?(?:received|submitted|sent))(?=\s+[A-Z])/gi,
+    '$1.',
+  )
 }
 
 // ── Question context ──
@@ -288,11 +323,11 @@ export function plainQuestionContext(text: string | null | undefined): string {
 
 const TO_BASE: Record<string, string> = {
   'has': 'have', 'is': 'are', 'was': 'were', 'does': 'do', 'doesn\'t': 'don\'t', 'isn\'t': 'aren\'t',
-  'hasn\'t': 'haven\'t', 'wasn\'t': 'weren\'t', 'focuses': 'focus',
+  'hasn\'t': 'haven\'t', 'wasn\'t': 'weren\'t', 'focuses': 'focus', 'goes': 'go',
 }
 const MODALS = new Set(['would', 'could', 'can', 'will', 'should', 'may', 'might', 'must', 'cannot', 'can\'t', 'won\'t', 'wouldn\'t'])
 /** Verbs that share a subject after a comma, "and", or "but": "You have AWS, has led teams, but is ...". */
-const COORDINATED = /(,\s+(?:and\s+|but\s+)?|\s+(?:and|but)\s+)(has|is|was|does|lacks|meets|exceeds|shows|brings|holds|owns|leads|knows|works|seeks|needs|offers|matches|fits|demonstrates|understands|uses|wants|targets|appears|seems|falls|aligns|covers)\b/g
+const COORDINATED = /(,\s+(?:and\s+|but\s+)?|\s+(?:and|but)\s+)(has|is|was|does|lacks|meets|exceeds|shows|brings|holds|owns|leads|knows|works|seeks|needs|offers|matches|fits|demonstrates|understands|uses|wants|targets|appears|seems|falls|aligns|covers|prefers|learns|values|cares|builds|writes|designs|ships|enjoys|thrives|picks|takes|makes|likes)\b/g
 
 /** "has" gives "have", "meets" gives "meet"; null when the word is not a verb this can conjugate. */
 function baseVerb(word: string): string | null {
@@ -349,6 +384,67 @@ export function secondPerson(text: string | null | undefined): string {
   if (!text) return ''
   if (!/candidate/i.test(text)) return text
   return text.split(/((?<=[.!?])\s+)/).map((part, i) => (i % 2 === 0 ? secondPersonSentence(part) : part)).join('')
+}
+
+// ── Text about Devin in the second person ──
+
+/** True when a word placed after `before` starts a sentence, a parenthesis, or a quote. */
+function startsSentence(before: string): boolean {
+  return /(?:^|[.!?]["”’')\]]*\s+|[("“]\s*)$/.test(before)
+}
+
+/** "Devin" or "he" doing something, then up to two adverbs ("only partially") and the next word. */
+const PERSON_SUBJECT = /\b(?:Devin(?:\s+Hollister-Graham)?|[Hh]e)\b(?!['’-])((?:\s+(?:also|already|still|only|always|never|often|currently|consistently|[a-z]+ly)\b){0,2})\s+([A-Za-z']+)/g
+/** Where the subject's own clause ends; a verb after it belongs to someone else. */
+const PERSON_CLAUSE_END = /\b(?:while|whereas|although|though|because|since|which|who|where|when|if|unless|that)\b|[;:()"“”]|\.(?=\s|$)/i
+
+/**
+ * Text the evidence check and the tailoring notes write about Devin in the third person, said to
+ * him: "Devin established development processes" reads "You established development processes",
+ * "Devin has 6+ years" reads "You have 6+ years", "Devin's background" and "his career" read
+ * "your background" and "your career", and "true for Devin" reads "true for you". The verb after
+ * "Devin" or "he" and the verbs that share it ("has X and is Y") take the "you" form; a past tense
+ * stays as written. The stored text is unchanged; this is for display.
+ */
+export function secondPersonDevin(text: string | null | undefined): string {
+  if (!text) return ''
+  if (!/\b(?:Devin|[Hh]e|[Hh]is|[Hh]im|himself)\b/.test(text)) return text
+  const cap = (word: string, whole: string, offset: number) => (startsSentence(whole.slice(0, offset)) ? word.charAt(0).toUpperCase() + word.slice(1) : word)
+  let out = text
+    .replace(/\bDevin(?:\s+Hollister-Graham)?['’]s\b/g, (_m, offset: number, whole: string) => cap('your', whole, offset))
+    .replace(/\b[Hh]is\b/g, (_m, offset: number, whole: string) => cap('your', whole, offset))
+    .replace(/\bhimself\b/g, 'yourself')
+    .replace(/\b[Hh]im\b/g, (_m, offset: number, whole: string) => cap('you', whole, offset))
+    // "true for Devin", "attributed to Devin": an object, so no verb follows that needs changing.
+    .replace(/\b(to|for|about|by|with|of|from|than|on|asked|tell|told)\s+Devin(?:\s+Hollister-Graham)?\b(?!['’])/gi, '$1 you')
+
+  let built = ''
+  let last = 0
+  PERSON_SUBJECT.lastIndex = 0
+  for (let m = PERSON_SUBJECT.exec(out); m; m = PERSON_SUBJECT.exec(out)) {
+    const [all, adverbs = '', verb = ''] = m
+    const end = m.index + all.length
+    const after = out.slice(end)
+    const stop = PERSON_CLAUSE_END.exec(after)
+    const clause = after.slice(0, stop ? stop.index : after.length)
+      .replace(COORDINATED, (_, sep: string, v: string) => `${sep}${baseVerb(v) ?? v}`)
+    built += `${out.slice(last, m.index)}${cap('you', out, m.index)}${adverbs} ${baseVerb(verb) ?? verb}${clause}`
+    last = end + (stop ? stop.index : after.length)
+    PERSON_SUBJECT.lastIndex = last
+  }
+  out = built + out.slice(last)
+  // A "Devin" left over sits before punctuation ("Devin, who ..."), so it has no verb to change.
+  return out.replace(/\bDevin(?:\s+Hollister-Graham)?\b(?!['’])/g, (_m, offset: number, whole: string) => cap('you', whole, offset))
+}
+
+/**
+ * One evidence check line ('"<resume line>" became "<new line>" (<reason>)') with the reason said
+ * to Devin. The quoted resume and letter text is shown exactly as written.
+ */
+export function secondPersonReason(line: string | null | undefined): string {
+  if (!line) return ''
+  const at = line.indexOf('" (')
+  return at === -1 ? secondPersonDevin(line) : line.slice(0, at + 2) + secondPersonDevin(line.slice(at + 2))
 }
 
 // ── Evidence check lines ──
