@@ -222,7 +222,15 @@ onBeforeUnmount(() => {
           </dl>
 
           <v-alert v-if="demo.status === 'built'" type="info" variant="tonal" density="compact" class="mt-4 text-body-2" icon="mdi-lock-outline">
-            Not published. Approving the application pushes it to {{ demo.plannedRepoUrl }} and adds a card to your resume site, then submits.
+            <template v-if="demo.approveEffect?.demoBlocked">
+              Not published. {{ demo.approveEffect.demoBlocked }}, so approving its application stays off until it is set or this demo is discarded.
+            </template>
+            <template v-else-if="demo.approveEffect?.submit === 'manual'">
+              Not published. Approving the application pushes it to {{ demo.plannedRepoUrl }} and adds a card to your resume site, then marks the application for you to submit on the employer's site.
+            </template>
+            <template v-else>
+              Not published. Approving the application pushes it to {{ demo.plannedRepoUrl }} and adds a card to your resume site, then submits.
+            </template>
           </v-alert>
           <v-alert v-if="demo.status === 'published' && demo.repoUrl" type="success" variant="tonal" density="compact" class="mt-4 text-body-2 demo-detail__wrap">
             Published to {{ demo.repoUrl }}

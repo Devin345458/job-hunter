@@ -353,6 +353,8 @@ export interface DemoProjectView {
 
 /** GET /api/demos/:id. The demo plus what the detail page needs around it. */
 export interface DemoDetail extends DemoProjectView {
+  /** What approving the application would do (see ReviewItem.approveEffect); null when the application is gone. */
+  approveEffect?: { submit: 'sandbox' | 'automatic' | 'manual'; manualReason: string | null; demoBlocked: string | null } | null
   applicationId: number
   jobId: number
   isSandbox: boolean
