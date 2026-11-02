@@ -61,6 +61,34 @@ async function approve() {
   }
 }
 
+// Prepare again: the card shows "Preparing again" and follows the row until it is done.
+const preparing = ref(false)
+let prepareTimer: ReturnType<typeof setTimeout> | null = null
+
+async function prepareAgain() {
+  if (!item.value || preparing.value) return
+  preparing.value = true
+  const appId = item.value.applicationId
+  try {
+    await $fetch(`/api/applications/${appId}/prepare`, { method: 'POST' })
+    snackbar.notify('Preparing again. This page updates when it is done.', 'info', { timeout: 6000 })
+    const until = Date.now() + 5 * 60_000
+    const follow = async () => {
+      const next = await queue.fetchOne(appId)
+      if (next?.status === 'preparing' && Date.now() < until) prepareTimer = setTimeout(follow, 3000)
+      else health.refresh()
+    }
+    await follow()
+  }
+  catch (e: any) {
+    snackbar.notify(e?.data?.statusMessage || e?.message || 'Could not start preparing it again', 'error', { timeout: -1 })
+  }
+  finally {
+    preparing.value = false
+  }
+}
+onBeforeUnmount(() => { if (prepareTimer) clearTimeout(prepareTimer) })
+
 const rejectOpen = ref(false)
 const rejecting = ref(false)
 const rejectError = ref<string | null>(null)
@@ -139,10 +167,12 @@ async function answer(questionId: number, value: string | null, skip = false) {
         :approving="approving"
         :refreshing="queue.refreshing.value.has(item.applicationId)"
         :saving-question-id="savingQuestionId"
+        :preparing="preparing"
         @approve="approve"
         @reject="() => { rejectError = null; rejectOpen = true }"
         @answer="(qid, a) => answer(qid, a)"
         @skip="qid => answer(qid, null, true)"
+        @prepare="prepareAgain"
       />
       <ReviewRejectDialog
         v-model="rejectOpen"

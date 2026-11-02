@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import type { AnswerSource, FormAnswer, FormSnapshot } from '#shared/types/pipeline'
-import { answerText, clockTime, hostOf } from '~/composables/review/format'
+import { useDisplay } from 'vuetify'
+import type { FormAnswer, FormSnapshot } from '#shared/types/pipeline'
+import { answerSourceText, answerText, blockerText, clockTime, hostOf } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
 
 // The employer form as the pipeline filled it: every field's value, where the value came
 // from, and how sure the pipeline is, beside a screenshot of the filled page. In copy mode
@@ -12,17 +14,9 @@ const props = defineProps<{
   filledAt: string | null
   formError: string | null
   copyMode?: boolean
+  /** Where the question a field waits on sits on this page ("in Answer first, above"). */
+  questionHint?: (questionId: number) => string
 }>()
-
-const SOURCE: Record<AnswerSource, string> = {
-  knowledge: 'Knowledge base',
-  resume: 'Resume',
-  cover_letter: 'Cover letter',
-  generated: 'Written by the pipeline',
-  question: 'Your answer',
-  eeo_decline: 'Declined (EEO)',
-  skipped: 'Left blank',
-}
 
 const CONF: Record<FormAnswer['confidence'], { label: string; color: string }> = {
   high: { label: 'Sure', color: 'success' },
@@ -30,6 +24,27 @@ const CONF: Record<FormAnswer['confidence'], { label: string; color: string }> =
   low: { label: 'Unsure', color: 'error' },
 }
 
+// A failed preparation stops before the form step; its reason is shown with the preparation.
+const errorText = computed(() => {
+  if (!props.formError) return ''
+  if (/^prepare_failed/.test(props.formError)) return 'Not filled: preparation failed before the form step.'
+  return plainError(props.formError)
+})
+
+/** Files are never attached in the dry run; that is expected, not an error. */
+function isDryRunNote(a: FormAnswer) {
+  return !!a.fillError && /not attached in the dry run/i.test(a.fillError)
+}
+
+function waitingText(a: FormAnswer) {
+  const where = a.needsQuestionId && props.questionHint ? props.questionHint(a.needsQuestionId) : ''
+  return where ? `Waiting on your answer ${where}` : 'Waiting on your answer'
+}
+
+// Full size: the whole page width in a dialog on a wide screen. On a phone the dialog fills the
+// screen and the screenshot keeps its real width, so the text stays readable and pans.
+const { smAndDown } = useDisplay()
+const fitWidth = ref(false)
 const shotOpen = ref(false)
 const copiedId = ref<string | null>(null)
 // Long answers are clamped to a few lines; tapping "Show all" opens one in full.
@@ -63,14 +78,15 @@ function isLong(a: FormAnswer) {
 
 <template>
   <div class="fa">
-    <div v-if="formError" class="fa__error" role="alert">
+    <div v-if="errorText" class="fa__error" role="alert">
       <v-icon icon="mdi-alert-outline" size="16" />
-      {{ formError }}
+      <span class="fa__error-text">{{ errorText }}</span>
     </div>
 
     <div v-if="snapshot?.blockers?.length" class="fa__blockers">
       <div v-for="b in snapshot.blockers" :key="b" class="fa__blocker">
-        <v-icon icon="mdi-lock-outline" size="16" /> {{ b }}
+        <v-icon icon="mdi-lock-outline" size="16" />
+        <span class="fa__error-text">{{ blockerText(b) }}</span>
       </div>
     </div>
 
@@ -82,15 +98,16 @@ function isLong(a: FormAnswer) {
             <span v-if="fieldsById.get(a.fieldId)?.required" class="fa__req" aria-label="required">*</span>
           </div>
           <div class="fa__value" :class="{ 'fa__value--empty': !answerText(a.value), 'fa__value--long': isLong(a), 'fa__value--open': expanded.has(a.fieldId) }">
-            {{ answerText(a.value) || (a.needsQuestionId ? 'Waiting on your answer above' : 'Blank') }}
+            {{ answerText(a.value) || (a.needsQuestionId ? waitingText(a) : 'Blank') }}
           </div>
           <button v-if="isLong(a)" type="button" class="fa__more" @click="toggle(a.fieldId)">
             {{ expanded.has(a.fieldId) ? 'Show less' : 'Show all' }}
           </button>
           <div class="fa__meta">
-            <span>{{ SOURCE[a.source] ?? a.source }}{{ a.sourceDetail ? ` (${a.source === 'knowledge' ? a.sourceDetail.replace(':', ': ') : a.sourceDetail})` : '' }}</span>
+            <span>{{ answerSourceText(a) }}</span>
             <span class="fa__conf" :class="`text-${CONF[a.confidence].color}`">{{ CONF[a.confidence].label }}</span>
-            <span v-if="a.fillError" class="text-error">Fill error: {{ a.fillError }}</span>
+            <span v-if="isDryRunNote(a)">Attached when you approve</span>
+            <span v-else-if="a.fillError" class="text-error">Not filled: {{ plainError(a.fillError) }}</span>
           </div>
           <v-btn
             v-if="copyMode && answerText(a.value)"
@@ -119,13 +136,24 @@ function isLong(a: FormAnswer) {
 
     <p v-if="copyError" class="fa__copy-error" role="alert">{{ copyError }}</p>
 
-    <v-dialog v-model="shotOpen" max-width="960" scrollable>
+    <v-dialog v-model="shotOpen" max-width="960" :fullscreen="smAndDown" scrollable>
       <v-card>
         <div class="fa__dialog-head">
           <span>Filled form</span>
-          <v-btn icon="mdi-close" variant="text" aria-label="Close" @click="shotOpen = false" />
+          <div class="fa__dialog-actions">
+            <v-btn
+              v-if="smAndDown"
+              variant="text"
+              height="44"
+              :prepend-icon="fitWidth ? 'mdi-magnify-plus-outline' : 'mdi-fit-to-page-outline'"
+              @click="fitWidth = !fitWidth"
+            >
+              {{ fitWidth ? 'Actual size' : 'Fit width' }}
+            </v-btn>
+            <v-btn icon="mdi-close" variant="text" width="44" height="44" aria-label="Close" @click="shotOpen = false" />
+          </div>
         </div>
-        <v-card-text class="pa-0">
+        <v-card-text class="pa-0 fa__pan" :class="{ 'fa__pan--actual': smAndDown && !fitWidth }">
           <img :src="screenshotUrl ?? undefined" alt="Screenshot of the filled employer form" class="fa__full">
         </v-card-text>
       </v-card>
@@ -138,7 +166,7 @@ function isLong(a: FormAnswer) {
   &__error,
   &__blocker {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     font-size: 0.8125rem;
     padding: 8px 12px;
@@ -268,6 +296,7 @@ function isLong(a: FormAnswer) {
   &__shot-btn {
     display: block;
     width: 100%;
+    min-height: 44px;
     max-height: 320px;
     overflow: hidden;
     border-radius: 8px;
@@ -301,10 +330,32 @@ function isLong(a: FormAnswer) {
     font-weight: 600;
   }
 
+  &__dialog-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  &__error-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
   &__full {
     display: block;
     width: 100%;
     height: auto;
+  }
+
+  // Phone, actual size: the screenshot keeps its own width and the card scrolls both ways.
+  &__pan--actual {
+    overflow: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  &__pan--actual &__full {
+    width: auto;
+    max-width: none;
   }
 }
 </style>

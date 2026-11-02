@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DemoProjectView } from '#shared/types/pipeline'
+import { plainError } from '#shared/utils/plain-text'
 
 // Summary of one demo project, for the review dashboard and the demos list.
 const props = defineProps<{
@@ -61,8 +62,8 @@ const testFacts = computed(() => {
           Publishes on approve
         </span>
       </div>
-      <v-alert v-if="demo.status === 'failed' && demo.error" type="error" variant="tonal" density="compact" class="mt-3 text-body-2">
-        {{ demo.error }}
+      <v-alert v-if="demo.status === 'failed' && demo.error" type="error" variant="tonal" density="compact" class="mt-3 text-body-2 demo-card__error">
+        {{ plainError(demo.error) }}
       </v-alert>
     </v-card-text>
 
@@ -88,6 +89,10 @@ const testFacts = computed(() => {
 
   &__subtitle {
     white-space: normal;
+  }
+
+  &__error {
+    overflow-wrap: anywhere;
   }
 
   &__gap,

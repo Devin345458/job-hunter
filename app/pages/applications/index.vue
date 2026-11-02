@@ -8,7 +8,8 @@ definePageMeta({ layout: 'default' })
 useHead({ title: 'Applications · Job Hunter' })
 
 const { applications, loading, error, fetchApplications } = useApplications()
-const search = ref('')
+// Vuetify's clear button sets a clearable field's model to null, not ''.
+const search = ref<string | null>('')
 const stage = ref<StageKey>('all')
 
 const stageOf = (status: string): StageKey => STAGES.find(s => s.key !== 'all' && s.statuses.includes(status))?.key ?? 'closed'
@@ -23,7 +24,7 @@ const counts = computed(() => {
 })
 
 const shown = computed(() => {
-  const q = search.value.trim().toLowerCase()
+  const q = (search.value ?? '').trim().toLowerCase()
   return applications.value.filter((a: ApplicationWithJob) =>
     (stage.value === 'all' || stageOf(a.status) === stage.value)
     && (!q || `${a.job?.company ?? ''} ${a.job?.title ?? ''}`.toLowerCase().includes(q)))

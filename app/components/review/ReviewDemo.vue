@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DemoProjectView, DemoStatus } from '#shared/types/pipeline'
+import { plainError } from '#shared/utils/plain-text'
 
 // The demo project built for this application. Approve publishes it (repo plus resume site)
 // before the form is submitted, so its state is part of the decision.
@@ -67,11 +68,11 @@ function kb(bytes: number) {
       <div class="demo__fact">
         <dt>Files</dt>
         <dd>
-          <span>{{ demo.files.length }} files, {{ totalKb }} KB</span>
+          <span>{{ demo.files.length }} file{{ demo.files.length === 1 ? '' : 's' }}, {{ totalKb }} KB</span>
           <ul class="demo__files">
             <li v-for="f in demo.files" :key="f.path">
               <span class="demo__path">{{ f.path }}</span>
-              <span class="demo__muted">{{ kb(f.bytes) }}</span>
+              <span class="demo__muted demo__size">{{ kb(f.bytes) }}</span>
             </li>
           </ul>
         </dd>
@@ -79,7 +80,8 @@ function kb(bytes: number) {
     </dl>
 
     <div v-if="demo.error" class="demo__error" role="alert">
-      <v-icon icon="mdi-alert-outline" size="16" /> {{ demo.error }}
+      <v-icon icon="mdi-alert-outline" size="16" />
+      <span class="demo__error-text">{{ plainError(demo.error) }}</span>
     </div>
 
     <div class="demo__toggles">
@@ -91,7 +93,9 @@ function kb(bytes: number) {
       </v-btn>
     </div>
     <v-expand-transition>
-      <div v-show="readmeOpen" class="demo__readme">{{ demo.readme }}</div>
+      <div v-show="readmeOpen" class="demo__readme">
+        <DemoReadme v-if="demo.readme" :source="demo.readme" />
+      </div>
     </v-expand-transition>
     <v-expand-transition>
       <pre v-show="outputOpen" class="demo__output">{{ demo.testOutput }}</pre>
@@ -198,6 +202,18 @@ function kb(bytes: number) {
   }
 
   &__path {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  &__size {
+    flex-shrink: 0;
+    margin-left: 12px;
+    white-space: nowrap;
+  }
+
+  &__error-text {
+    min-width: 0;
     overflow-wrap: anywhere;
   }
 
@@ -221,8 +237,8 @@ function kb(bytes: number) {
   }
 
   &__readme {
-    white-space: pre-wrap;
     font-size: 0.8125rem;
+    overflow-wrap: anywhere;
     line-height: 1.6;
     padding: 14px 16px;
     border-radius: 8px;

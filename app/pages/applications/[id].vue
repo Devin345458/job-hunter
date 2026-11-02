@@ -2,7 +2,8 @@
 import type { InferSelectModel } from 'drizzle-orm'
 import type { applications, jobs } from '~~/server/db/schema'
 import type { ReviewItem } from '#shared/types/pipeline'
-import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, timeAgo } from '~/composables/review/format'
+import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, properName, timeAgo } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
 
 // One application's full record: where it stands, what the pipeline prepared (resume, cover
 // letter, the filled employer form with its screenshot), the evidence check behind every line,
@@ -31,12 +32,26 @@ const review = computed(() => app.value?.review ?? null)
 const status = computed(() => app.value?.status ?? '')
 const working = computed(() => WORKING.includes(status.value))
 const prepareFailed = computed(() => /^prepare_failed/.test(app.value?.formError ?? ''))
-const failureText = computed(() => ((app.value?.formError ?? '').split('\n')[0] ?? '').replace(/^prepare_failed attempt=(\d+): /, 'Attempt $1: '))
+const prepareAttempt = computed(() => Number(/^prepare_failed attempt=(\d+)/.exec(app.value?.formError ?? '')?.[1] ?? 0))
+const failureText = computed(() => plainError(app.value?.formError))
+// The daily run retries a failed preparation until its third attempt (MAX_PREPARE_ATTEMPTS).
+const failureRetry = computed(() => prepareAttempt.value < 3
+  ? `Attempt ${prepareAttempt.value} of 3. The next daily run retries it automatically, or prepare it again now.`
+  : 'Three attempts failed, so the daily run stops retrying. Prepare it again when the cause is fixed.')
+const statusText = computed(() => plainError(app.value?.statusDetail))
 const reviewable = computed(() => [...CAN_APPROVE, ...CAN_REJECT].includes(status.value as any))
 const accountAts = computed(() => ['workday', 'icims', 'taleo', 'successfactors'].includes(app.value?.job?.atsType ?? ''))
 const showQuestions = computed(() => ANSWERS_MATTER.includes(status.value) && !!review.value?.openQuestions.length)
 const canPrepare = computed(() => REPREPARE.includes(status.value))
-const canRefill = computed(() => REFILL.includes(status.value) && !!app.value?.job?.applyUrl && !accountAts.value)
+// Filling the form again reuses the stored resume and letter; a failed preparation has neither.
+const canRefill = computed(() => REFILL.includes(status.value) && !!app.value?.job?.applyUrl && !accountAts.value && !prepareFailed.value)
+/** "Ashby form at jobs.ashbyhq.com", or "Form at host" when the form system is not one we name. */
+const formFact = computed(() => {
+  const ats = review.value?.form.snapshot?.atsType || app.value?.job?.atsType
+  const host = app.value?.job?.applyUrl ? hostOf(app.value.job.applyUrl) : ''
+  const named = ats && !['other', 'unknown'].includes(ats) ? `${properName(ats)} form` : host ? 'Form' : ''
+  return named && host ? `${named} at ${host}` : named
+})
 const canRefresh = computed(() => status.value === 'needs_input')
 
 useHead(() => ({ title: app.value?.job ? `${app.value.job.company} · Applications · Job Hunter` : 'Application · Job Hunter' }))
@@ -126,10 +141,15 @@ async function saveNotes() {
   }
 }
 
+/** Where a question a form field waits on sits on this page. */
+function questionHint(id: number) {
+  return showQuestions.value && review.value?.openQuestions.some(q => q.id === id) ? 'under Questions for you, above' : ''
+}
+
 // ── Section summaries ──
 const formSummary = computed(() => {
   const f = review.value?.form
-  if (!f?.snapshot) return f?.error ? 'The form could not be used' : accountAts.value ? 'Account required, no form' : 'Not filled yet'
+  if (!f?.snapshot) return prepareFailed.value ? 'Not filled' : f?.error ? 'The form could not be used' : accountAts.value ? 'Account required, no form' : 'Not filled yet'
   const filled = f.answers.filter(a => a.filled).length
   const blockers = f.snapshot.blockers.length
   return `${filled} of ${f.snapshot.fields.length} fields filled${blockers ? `, ${blockers} blocker${blockers === 1 ? '' : 's'}` : ''}`
@@ -190,17 +210,17 @@ const submissionSummary = computed(() => {
       <header class="ad__head">
         <div class="ad__eyebrow">
           <span class="ad__company">{{ app.job?.company || 'Unknown company' }}</span>
-          <ApplicationsStatusTag :status="app.status" />
+          <ApplicationsStatusTag :status="app.status" :form-error="app.formError" />
           <span v-if="app.isSandbox" class="ad__sandbox">Sandbox</span>
         </div>
         <h1 class="ad__title">{{ app.job?.title || 'Unknown role' }}</h1>
-        <p v-if="app.statusDetail" class="ad__detail" :class="{ 'ad__detail--working': working }" aria-live="polite">
+        <p v-if="statusText && !prepareFailed" class="ad__detail" :class="{ 'ad__detail--working': working }" aria-live="polite">
           <v-progress-circular v-if="working" indeterminate size="14" width="2" color="info" />
-          {{ app.statusDetail }}
+          {{ statusText }}
         </p>
         <div class="ad__meta">
           <span v-if="app.job?.location"><v-icon icon="mdi-map-marker-outline" size="15" />{{ app.job.location }}</span>
-          <span v-if="review?.form.snapshot?.atsType || app.job?.atsType"><v-icon icon="mdi-form-select" size="15" />{{ review?.form.snapshot?.atsType || app.job?.atsType }} form{{ app.job?.applyUrl ? ` at ${hostOf(app.job.applyUrl)}` : '' }}</span>
+          <span v-if="formFact"><v-icon icon="mdi-form-select" size="15" />{{ formFact }}</span>
           <span v-if="app.job?.matchScore != null" class="tabular"><v-icon icon="mdi-target" size="15" />Match {{ app.job.matchScore }}</span>
           <span><v-icon icon="mdi-clock-outline" size="15" />Updated {{ timeAgo(app.updatedAt) }}</span>
         </div>
@@ -216,6 +236,7 @@ const submissionSummary = computed(() => {
         <div>
           <div class="ad__alert-title">Preparation failed</div>
           <div class="ad__alert-text">{{ failureText }}</div>
+          <div class="ad__alert-text ad__alert-text--muted">{{ failureRetry }}</div>
         </div>
       </div>
 
@@ -283,7 +304,8 @@ const submissionSummary = computed(() => {
             :screenshot-url="review.form.screenshotUrl"
             :filled-at="review.form.filledAt"
             :form-error="review.form.error"
-            :copy-mode="app.status === 'needs_manual'"
+            :copy-mode="app.status === 'needs_manual' && !prepareFailed"
+            :question-hint="questionHint"
           />
           <p v-else class="ad__empty">
             {{ accountAts ? 'This employer uses an applicant-account system, so there is no form to fill. Apply by hand with the resume and cover letter below.' : working ? 'The form is filled after the resume and cover letter are ready.' : 'The form has not been filled yet.' }}
@@ -404,6 +426,8 @@ const submissionSummary = computed(() => {
 
   &__alert-title { font-weight: 600; font-size: 0.875rem; }
   &__alert-text { font-size: 0.8125rem; color: rgba(var(--v-theme-on-surface), 0.86); overflow-wrap: anywhere; }
+  &__alert-text--muted { margin-top: 4px; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
+  &__alert > div { min-width: 0; }
 
   &__actions {
     display: flex;

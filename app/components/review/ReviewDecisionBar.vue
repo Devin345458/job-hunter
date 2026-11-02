@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
-import { CAN_APPROVE, CAN_REJECT, hostOf } from '~/composables/review/format'
+import { CAN_APPROVE, CAN_REJECT, hostOf, plural } from '~/composables/review/format'
 
 // The decision, pinned to the bottom of the card. Approve is one tap on a plain primary
 // button (never a swipe); the line beside it says exactly what that tap sends and to whom.
@@ -20,9 +20,10 @@ const canApprove = computed(() => CAN_APPROVE.includes(props.item.status) && blo
 const canReject = computed(() => CAN_REJECT.includes(props.item.status))
 const isRetry = computed(() => props.item.status === 'submit_failed')
 const isManual = computed(() => props.item.status === 'needs_manual')
+const prepareFailed = computed(() => isManual.value && /^prepare_failed/.test(props.item.form.error ?? ''))
 // An approved application that came back as submit by hand (captcha, or real submits switched
 // off) can try the automated submit again; the server reuses the original approve decision.
-const canRetryManual = computed(() => isManual.value && props.item.submission?.method === 'manual')
+const canRetryManual = computed(() => isManual.value && !prepareFailed.value && props.item.submission?.method === 'manual')
 const demoWillPublish = computed(() => props.item.demo?.status === 'built')
 
 const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : 'Approve and submit'))
@@ -30,11 +31,11 @@ const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : 'Approve a
 /** Why approve is off, said in the bar rather than a tooltip so it reads on a phone. */
 const blockedReason = computed(() => {
   if (props.item.status === 'needs_input') {
-    if (blocking.value > 0) return `Answer ${blocking.value} question${blocking.value === 1 ? '' : 's'} above to unlock approve.`
+    if (blocking.value > 0) return `Answer ${plural(blocking.value, 'question')} above to unlock approve.`
     if (props.refreshing) return 'Updating the form answers with what you said.'
     return 'Answers saved. Approve unlocks when the pipeline marks this ready.'
   }
-  if (blocking.value > 0) return `Answer ${blocking.value} question${blocking.value === 1 ? '' : 's'} above to unlock approve.`
+  if (blocking.value > 0) return `Answer ${plural(blocking.value, 'question')} above to unlock approve.`
   return null
 })
 
@@ -55,6 +56,7 @@ const consequence = computed(() => {
         <v-icon icon="mdi-lock-outline" size="15" />
         {{ blockedReason }}
       </template>
+      <template v-else-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
       <template v-else-if="isManual">
         <template v-if="item.submission?.manualReason">{{ item.submission.manualReason }}. </template>Submit it on the employer's site, or reject if you changed your mind.
       </template>

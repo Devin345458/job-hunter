@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DemoDetail } from '#shared/types/pipeline'
+import { plainError } from '#shared/utils/plain-text'
 
 definePageMeta({ layout: 'default' })
 
@@ -165,7 +166,7 @@ onMounted(load)
             Published to {{ demo.repoUrl }}
           </v-alert>
           <v-alert v-if="demo.error" type="error" variant="tonal" density="compact" class="mt-4 text-body-2 demo-detail__wrap">
-            {{ demo.error }}
+            {{ plainError(demo.error) }}
           </v-alert>
         </v-card-text>
 
@@ -234,7 +235,7 @@ onMounted(load)
                       {{ f.path }}
                     </v-list-item-title>
                     <template #append>
-                      <span class="text-caption text-medium-emphasis">{{ formatBytes(f.bytes) }}</span>
+                      <span class="text-caption text-medium-emphasis ms-3 text-no-wrap">{{ formatBytes(f.bytes) }}</span>
                     </template>
                   </v-list-item>
                   <p v-if="!sortedFiles.length" class="text-body-2 text-medium-emphasis pa-4">

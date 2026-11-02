@@ -1,9 +1,22 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
 import { clockTime, hostOf } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
 
-// What happened after approve: a step track while the server works, then the outcome.
-const props = defineProps<{ item: ReviewItem }>()
+// What happened after approve: a step track while the server works, then the outcome. A card
+// whose preparation failed never reached approve, so it says that instead and offers a retry.
+const props = defineProps<{ item: ReviewItem; preparing?: boolean }>()
+const emit = defineEmits<{ prepare: [] }>()
+
+/** Preparation threw before anything could be submitted (form_error starts with prepare_failed). */
+const prepareFailed = computed(() => /^prepare_failed/.test(props.item.form.error ?? ''))
+const prepareAttempt = computed(() => Number(/^prepare_failed attempt=(\d+)/.exec(props.item.form.error ?? '')?.[1] ?? 0))
+const prepareReason = computed(() => plainError(props.item.form.error))
+const detailText = computed(() => plainError(props.item.statusDetail))
+const submitErrorText = computed(() => {
+  const t = plainError(props.item.submitError)
+  return t && t !== detailText.value ? t : ''
+})
 
 const hasDemoStep = computed(() => {
   const s = props.item.demo?.status
@@ -32,12 +45,46 @@ const steps = computed<Step[]>(() => {
 })
 
 const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/api/files/screenshot/${props.item.applicationId}?kind=submission` : null)
-const errorOpen = ref(false)
 </script>
 
 <template>
   <div class="prog">
-    <ol class="prog__steps" aria-label="Progress after approve">
+    <!-- Preparation failed: nothing was written, so there is nothing to submit by hand yet -->
+    <div v-if="item.status === 'needs_manual' && prepareFailed" class="prog__panel prog__panel--error prog__panel--first" role="alert">
+      <div class="prog__panel-title">
+        <v-icon icon="mdi-alert-octagon-outline" size="18" />
+        Preparation failed
+      </div>
+      <p class="prog__panel-text">{{ prepareReason || 'The preparation stopped with an error.' }}</p>
+      <p class="prog__panel-hint">
+        <template v-if="prepareAttempt < 3">
+          Nothing was written for this application yet. The next daily run retries it automatically (attempt {{ prepareAttempt }} of 3 so far), or prepare it again now.
+        </template>
+        <template v-else>
+          Three attempts failed, so the daily run stops retrying it. Prepare it again once the cause is fixed.
+        </template>
+      </p>
+      <div class="prog__links">
+        <v-btn color="primary" height="44" prepend-icon="mdi-restart" :loading="preparing" @click="emit('prepare')">
+          Prepare again
+        </v-btn>
+        <v-btn :to="`/applications/${item.applicationId}`" variant="tonal" height="44" prepend-icon="mdi-file-document-outline">
+          Application details
+        </v-btn>
+      </div>
+    </div>
+
+    <!-- Preparing again (started from this card) -->
+    <div v-else-if="item.status === 'preparing'" class="prog__panel prog__panel--info prog__panel--first" role="status">
+      <div class="prog__panel-title">
+        <v-progress-circular indeterminate size="16" width="2" />
+        Preparing again
+      </div>
+      <p class="prog__panel-text">{{ detailText || 'Tailoring the resume' }}</p>
+      <p class="prog__panel-hint">It comes back to the review queue when the resume, cover letter, and form are ready.</p>
+    </div>
+
+    <ol v-else class="prog__steps" aria-label="Progress after approve">
       <li
         v-for="s in steps"
         :key="s.key"
@@ -55,8 +102,8 @@ const errorOpen = ref(false)
       </li>
     </ol>
 
-    <p v-if="item.statusDetail && !['submitted', 'submit_failed', 'needs_manual'].includes(item.status)" class="prog__detail" role="status">
-      {{ item.statusDetail }}
+    <p v-if="detailText && !['submitted', 'submit_failed', 'needs_manual', 'preparing'].includes(item.status)" class="prog__detail" role="status">
+      {{ detailText }}
     </p>
 
     <!-- Submitted -->
@@ -83,27 +130,20 @@ const errorOpen = ref(false)
         <v-icon icon="mdi-alert-octagon-outline" size="18" />
         Submit failed
       </div>
-      <p class="prog__panel-text">{{ item.statusDetail || 'The submit step stopped with an error.' }}</p>
+      <p class="prog__panel-text">{{ detailText || 'The submit step stopped with an error.' }}</p>
+      <p v-if="submitErrorText" class="prog__panel-text">{{ submitErrorText }}</p>
       <p class="prog__panel-hint">
         Retry runs the same submit again. If the error came after the form was sent, check {{ hostOf(item.job.applyUrl) || 'the employer site' }} first so you do not apply twice.
       </p>
-      <template v-if="item.submitError">
-        <v-btn variant="text" height="44" class="prog__more" :prepend-icon="errorOpen ? 'mdi-chevron-up' : 'mdi-chevron-down'" @click="errorOpen = !errorOpen">
-          {{ errorOpen ? 'Hide error details' : 'Show error details' }}
-        </v-btn>
-        <v-expand-transition>
-          <pre v-show="errorOpen" class="prog__error">{{ item.submitError }}</pre>
-        </v-expand-transition>
-      </template>
     </div>
 
     <!-- Manual -->
-    <div v-else-if="item.status === 'needs_manual'" class="prog__panel prog__panel--warning">
+    <div v-else-if="item.status === 'needs_manual' && !prepareFailed" class="prog__panel prog__panel--warning">
       <div class="prog__panel-title">
         <v-icon icon="mdi-hand-pointing-right" size="18" />
         Submit this one yourself
       </div>
-      <p class="prog__panel-text">{{ item.statusDetail || 'The pipeline cannot submit this form.' }}</p>
+      <p class="prog__panel-text">{{ detailText || 'The pipeline cannot submit this form.' }}</p>
       <p class="prog__panel-hint">
         Open the form, paste the answers below with the copy buttons, and attach the resume PDF.
       </p>
@@ -192,6 +232,11 @@ const errorOpen = ref(false)
 
   &__panel {
     margin-top: 12px;
+
+    &--first {
+      margin-top: 0;
+    }
+
     padding: 14px 16px;
     border-radius: 8px;
     border: 1px solid;
@@ -199,6 +244,7 @@ const errorOpen = ref(false)
     &--success { border-color: rgba(var(--v-theme-success), 0.35); background: rgba(var(--v-theme-success), 0.06); }
     &--error { border-color: rgba(var(--v-theme-error), 0.4); background: rgba(var(--v-theme-error), 0.06); }
     &--warning { border-color: rgba(var(--v-theme-warning), 0.4); background: rgba(var(--v-theme-warning), 0.06); }
+    &--info { border-color: rgba(var(--v-theme-info), 0.4); background: rgba(var(--v-theme-info), 0.06); }
   }
 
   &__panel-title {
@@ -212,6 +258,7 @@ const errorOpen = ref(false)
   &__panel--success &__panel-title { color: rgb(var(--v-theme-success)); }
   &__panel--error &__panel-title { color: rgb(var(--v-theme-error)); }
   &__panel--warning &__panel-title { color: rgb(var(--v-theme-warning)); }
+  &__panel--info &__panel-title { color: rgb(var(--v-theme-info)); }
 
   &__sandbox {
     font-size: 0.6875rem;
@@ -244,21 +291,6 @@ const errorOpen = ref(false)
     flex-wrap: wrap;
     gap: 8px;
     margin-top: 12px;
-  }
-
-  &__more {
-    margin: 6px 0 0 -12px;
-  }
-
-  &__error {
-    font-size: 0.75rem;
-    line-height: 1.5;
-    padding: 10px 12px;
-    border-radius: 6px;
-    background: rgb(var(--v-theme-sunken));
-    overflow-x: auto;
-    white-space: pre;
-    margin: 4px 0 0;
   }
 }
 </style>
