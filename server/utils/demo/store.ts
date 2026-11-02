@@ -2,6 +2,9 @@ import { and, desc, eq, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { aiCalls, applications, demoProjects, jobs } from '../../db/schema'
 import type { DemoDetail, GapAnalysis, GapItem } from '#shared/types/pipeline'
+import { previewView } from './preview-state'
+import { buildProgress } from './progress'
+import { stopKind } from './stop-reason'
 
 export type DemoRow = InferSelectModel<typeof demoProjects>
 export type AppRow = InferSelectModel<typeof applications>
@@ -78,12 +81,16 @@ export function toDemoDetail(d: DemoRow): DemoDetail {
     applicationStatus: (row?.app.status ?? 'draft') as DemoDetail['applicationStatus'],
     job: { title: row?.job.title ?? '', company: row?.job.company ?? '' },
     plannedRepoUrl: d.repoName ? githubRepoUrl(d.repoName) : null,
-    costUsd: d.costUsd ?? (d.id ? demoCost(d.id) : null),
+    // While a build runs, the stored figure is the last run's; the live total comes from ai_calls.
+    costUsd: buildProgress(d.id) ? demoCost(d.id) : d.costUsd ?? (d.id ? demoCost(d.id) : null),
     buildLog: d.buildLog,
     createdAt: d.createdAt,
     builtAt: d.builtAt,
     publishedAt: d.publishedAt,
     gapItem: gap?.items.find(i => i.decision === 'demo' && i.requirement === d.gapAddressed) ?? null,
     gap,
+    progress: buildProgress(d.id),
+    stoppedFor: d.status === 'failed' ? stopKind(d.error) : null,
+    preview: previewView(d),
   }
 }

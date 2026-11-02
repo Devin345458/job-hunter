@@ -37,6 +37,7 @@ function kb(bytes: number) {
         </div>
       </div>
       <div class="demo__links">
+        <v-btn v-if="demo.status === 'built' || demo.status === 'published'" :to="`/demos/${demo.id}#preview`" variant="tonal" prepend-icon="mdi-monitor-eye" height="44">Preview</v-btn>
         <v-btn v-if="demo.repoUrl" :href="demo.repoUrl" target="_blank" rel="noopener" variant="tonal" prepend-icon="mdi-github" height="44">Repo</v-btn>
         <v-btn v-if="demo.liveUrl" :href="demo.liveUrl" target="_blank" rel="noopener" variant="tonal" prepend-icon="mdi-open-in-new" height="44">Live</v-btn>
       </div>
@@ -134,6 +135,7 @@ function kb(bytes: number) {
 
   &__links {
     display: flex;
+    flex-wrap: wrap;
     gap: 8px;
   }
 

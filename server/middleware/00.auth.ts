@@ -2,7 +2,8 @@
 // - /api/* returns 401
 // - every page redirects to /login
 // The only public surface is the login page and endpoint, the health check, static
-// build assets, and the sandbox employer form (which checks its own token).
+// build assets, the sandbox employer form (which checks its own token), and demo previews
+// (server/routes/demo-preview, which checks its own token and sandboxes the page).
 
 const PUBLIC_PREFIXES = [
   '/_nuxt/',
@@ -15,6 +16,7 @@ const PUBLIC_PREFIXES = [
   '/sandbox/apply/',
   '/sandbox/jobs/',
   '/api/sandbox/job',
+  '/demo-preview/',
 ]
 const PUBLIC_EXACT = new Set(['/login', '/favicon.ico', '/robots.txt'])
 
