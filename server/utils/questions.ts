@@ -741,8 +741,24 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number } {
   return { reworded, skipped }
 }
 
+/** Gap question context: what the answer changes, depending on whether code could show the skill. */
+export const GAP_CONTEXT_CODE = 'Your answer decides whether the resume and letter can mention it, and whether a small demo project should be built.'
+export const GAP_CONTEXT_EXPERIENCE = 'Your answer decides whether the resume and letter can mention it. A code project cannot show this, so no demo is built either way.'
+/** Every gap question carried this before the code-or-experience split, even for experience no project can show. */
+const GAP_CONTEXT_LEGACY = 'The answer decides whether a demo project should be built.'
+const GAP_CONTEXT_NEUTRAL = 'Your answer decides whether the resume and letter can mention it, and, for a skill a code project can show, whether a demo is built.'
+
+/** Rewords the old gap-question sentence on pending questions. Idempotent. */
+export function rewordLegacyGapContexts(): number {
+  return useDb().update(questions)
+    .set({ context: sql`replace(${questions.context}, ${GAP_CONTEXT_LEGACY}, ${GAP_CONTEXT_NEUTRAL})` })
+    .where(and(eq(questions.status, 'pending'), sql`${questions.context} like ${'%' + GAP_CONTEXT_LEGACY + '%'}`))
+    .run().changes
+}
+
 export function askDailyQuestions(): QuestionRow[] {
   const db = useDb()
+  rewordLegacyGapContexts()
   tidyKnowsQuestions()
   const before = new Set(db.select({ id: questions.id }).from(questions).all().map(r => r.id))
   const created: QuestionRow[] = []

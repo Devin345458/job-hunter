@@ -28,6 +28,7 @@ const CandidateSchema = z.object({
     evidence: z.string().nullable().describe('Knowledge base entry behind a partial or lack status, quoted briefly. Null for unknown.'),
     askKind: z.enum(['has_done', 'knows']).describe('has_done for experience or practice, knows for a language or tool'),
     question: z.string().describe('Yes or no question for Devin, e.g. "Have you used Go in a real project?"'),
+    codeShowable: z.boolean().describe('True only when a small code project could show this: a language, framework, tool, platform, or technical technique. False for experience a project cannot show: presenting or giving live demos, customer or stakeholder work, leading people, running something in production at scale, on-call, industry or domain experience.'),
   })),
 })
 
@@ -139,6 +140,10 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
         continue
       }
       const status = NO.test(answered.answer) ? 'lack' : 'partial'
+      if (!c.codeShowable) {
+        items.push({ ...base, decision: 'skip', rationale: `You answered "${answered.answer}" about ${subject}. A code project cannot show this kind of experience, so no demo is planned.` })
+        continue
+      }
       confirmed.push({ item: base, subject, status, evidence: `Devin answered "${answered.answer}" when asked about ${subject}.` })
       continue
     }
@@ -149,7 +154,7 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
       }
       const q = askQuestion({
         question: c.question,
-        context: `${job.title} at ${job.company} asks for: ${c.requirement}. The knowledge base does not say whether you have this. The answer decides whether a demo project should be built.`,
+        context: `${job.title} at ${job.company} asks for: ${c.requirement}. The knowledge base does not say whether you have this. ${c.codeShowable ? GAP_CONTEXT_CODE : GAP_CONTEXT_EXPERIENCE}`,
         kind: c.askKind,
         subject,
         answerType: 'yes_no',
@@ -164,12 +169,19 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
         if (!status) {
           items.push({ ...base, questionId: q.id, decision: 'reframe', rationale: `You answered "${q.answer}" about ${subject}. No demo needed.` })
         }
+        else if (!c.codeShowable) {
+          items.push({ ...base, questionId: q.id, decision: 'skip', rationale: `You answered "${q.answer}" about ${subject}. A code project cannot show this kind of experience, so no demo is planned.` })
+        }
         else {
           confirmed.push({ item: { ...base, questionId: q.id }, subject, status, evidence: `Devin answered "${q.answer}" about ${subject}.` })
         }
         continue
       }
       items.push({ ...base, decision: 'ask', questionId: q.id, rationale: `The knowledge base does not say whether you have ${subject}. Asked: "${q.question}"` })
+      continue
+    }
+    if (!c.codeShowable) {
+      items.push({ ...base, decision: 'skip', rationale: `${subject} is experience a code project cannot show, so no demo is planned.` })
       continue
     }
     confirmed.push({ item: base, subject, status: c.status, evidence: c.evidence })
