@@ -1,4 +1,5 @@
-import type { ApplicationStatus } from '#shared/types/pipeline'
+import type { AnswerSource, ApplicationStatus, FormAnswer, PipelineRunView, ReviewItem } from '#shared/types/pipeline'
+import { capitalize } from '#shared/utils/plain-text'
 
 // Status vocabulary and formatting shared by every review component. Lives in a nested folder
 // so Nuxt does not auto-import these generic names app-wide; import them explicitly.
@@ -24,10 +25,37 @@ export const REVIEW_STATUS: Partial<Record<ApplicationStatus, StatusMeta>> = {
   submit_failed: { label: 'Submit failed', color: 'error', icon: 'mdi-alert-octagon-outline', group: 'attention' },
   needs_manual: { label: 'Submit by hand', color: 'warning', icon: 'mdi-hand-pointing-right', group: 'attention' },
   declined: { label: 'Rejected', color: 'secondary', icon: 'mdi-close', group: 'closed' },
+  // Not in the review queue; shown on a card whose preparation was started again from it.
+  preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock', group: 'closed' },
+}
+
+/** Group names, the same on the review queue and the Applications page. */
+export const GROUP_LABEL: Record<ReviewGroup, string> = {
+  decide: 'To decide',
+  attention: 'Needs you',
+  sending: 'Sending',
+  sent: 'Submitted',
+  closed: 'Closed',
+}
+
+/** Every status in one review group, so other views count exactly what the review queue counts. */
+export function statusesIn(group: ReviewGroup): ApplicationStatus[] {
+  return (Object.entries(REVIEW_STATUS) as Array<[ApplicationStatus, StatusMeta]>).filter(([, m]) => m.group === group).map(([s]) => s)
 }
 
 export function statusMeta(status: ApplicationStatus): StatusMeta {
   return REVIEW_STATUS[status] ?? { label: status.replace(/_/g, ' '), color: 'secondary', icon: 'mdi-circle-small', group: 'closed' }
+}
+
+/** Preparation threw before anything was written (form_error starts with prepare_failed). */
+export function prepareFailed(item: Pick<ReviewItem, 'status' | 'form'>): boolean {
+  return item.status === 'needs_manual' && /^prepare_failed/.test(item.form.error ?? '')
+}
+
+/** The status a card shows: a needs_manual card whose preparation failed says so, not "Submit by hand". */
+export function itemStatusMeta(item: Pick<ReviewItem, 'status' | 'form'>): StatusMeta {
+  if (prepareFailed(item)) return { label: 'Preparation failed', color: 'error', icon: 'mdi-alert-octagon-outline', group: 'attention' }
+  return statusMeta(item.status)
 }
 
 /** States the server is still working through after approve. The dashboard polls these. */
@@ -94,4 +122,155 @@ export function answerText(value: string | string[] | boolean | null): string {
   if (Array.isArray(value)) return value.join(', ')
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   return value
+}
+
+// ── Plain names for internal keys ────────────────────────────
+
+/** "skill/Vue.js" or "profile:Full Name" (a knowledge base key) becomes "Vue.js" or "Full Name". */
+export function knowledgeRef(ref: string | null | undefined): string {
+  if (!ref) return ''
+  return ref.replace(/^(?:profile|skill|skills|experience|preference|preferences|fact|facts|education|project|projects|certification|other)\s*[/:]\s*/i, '').trim()
+}
+
+const SOURCE_LABEL: Record<AnswerSource, string> = {
+  knowledge: 'Knowledge base',
+  resume: 'Resume',
+  cover_letter: 'Cover letter',
+  generated: 'Written by the pipeline',
+  question: 'Your answer',
+  eeo_decline: 'Self-identification',
+  skipped: 'Left blank',
+}
+
+/** Where a form answer came from, in words: "Knowledge base: Full Name", "Your answer", "Left blank: Optional". */
+export function answerSourceText(a: Pick<FormAnswer, 'source' | 'sourceDetail' | 'needsQuestionId' | 'value'>): string {
+  const label = SOURCE_LABEL[a.source] ?? a.source
+  const detail = (a.sourceDetail ?? '').trim()
+  if (a.source === 'question') return a.needsQuestionId && !answerText(a.value) ? 'Asked you' : label
+  if (a.source === 'knowledge') {
+    if (!detail) return label
+    const found = /^HOW FOUND(?: line)?:?\s*(.*)$/i.exec(detail)
+    if (found) return `${label}: how you found the job${found[1] ? ` (${found[1]})` : ''}`
+    return `${label}: ${knowledgeRef(detail)}`
+  }
+  if (a.source === 'skipped' || a.source === 'eeo_decline') return detail || label
+  return detail ? `${label}: ${detail}` : label
+}
+
+/** A form blocker without its internal key: "captcha: Google reCAPTCHA is..." becomes "Google reCAPTCHA is...". */
+export function blockerText(b: string): string {
+  return capitalize(b.replace(/^[a-z_]+:\s*/, '').trim())
+}
+
+/** "1 question", "4 questions". */
+export function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n} ${n === 1 ? word : many}`
+}
+
+const PROPER: Record<string, string> = {
+  ashby: 'Ashby',
+  greenhouse: 'Greenhouse',
+  lever: 'Lever',
+  workable: 'Workable',
+  smartrecruiters: 'SmartRecruiters',
+  recruitee: 'Recruitee',
+  bamboohr: 'BambooHR',
+  jobvite: 'Jobvite',
+  workday: 'Workday',
+  icims: 'iCIMS',
+  taleo: 'Taleo',
+  successfactors: 'SuccessFactors',
+  sandbox: 'Sandbox',
+  adzuna: 'Adzuna',
+  remotive: 'Remotive',
+  jsearch: 'JSearch',
+  manual: 'Added by hand',
+}
+
+/** A job source or ATS id as its product name: "ashby" becomes "Ashby". */
+export function properName(id: string | null | undefined): string {
+  if (!id) return ''
+  return PROPER[id.toLowerCase()] ?? id.charAt(0).toUpperCase() + id.slice(1)
+}
+
+// ── Pipeline runs ────────────────────────────────────────────
+
+export type RunOutcome = NonNullable<PipelineRunView['outcome']>
+
+export const OUTCOME: Record<RunOutcome, { label: string; color: string }> = {
+  succeeded: { label: 'succeeded', color: 'success' },
+  partial: { label: 'partly failed', color: 'warning' },
+  failed: { label: 'failed', color: 'error' },
+  running: { label: 'running', color: 'info' },
+  skipped: { label: 'skipped', color: 'secondary' },
+}
+
+/** The outcome the server derived, or the raw status for a response without one. */
+export function outcomeOf(r: PipelineRunView): RunOutcome {
+  return r.outcome ?? (r.status as RunOutcome)
+}
+
+/** One line for a run's outcome: "succeeded", "38 failed, Claude is out of credit", "3 problems". */
+export function outcomeText(r: PipelineRunView): string {
+  const o = outcomeOf(r)
+  if (o !== 'partial') return OUTCOME[o].label
+  const p = r.problems ?? []
+  return p.length === 1 ? p[0]! : `${p.length} problems`
+}
+
+const STAT_LABEL: Record<string, string> = {
+  pending: 'waiting',
+  scored: 'scored',
+  reusedSkills: 'skill scores reused',
+  noText: 'without posting text',
+  failed: 'failed',
+  rescored: 'rescored',
+  costUsd: 'AI cost',
+  enriched: 'read',
+  selected: 'picked',
+  closed: 'closed',
+  noPostingText: 'without posting text',
+  applyUrlFound: 'apply links found',
+  compStated: 'with pay stated',
+  configs: 'searches',
+  found: 'found',
+  new: 'new',
+  decisionsUsed: 'decisions used',
+  decisionsSkipped: 'decisions skipped',
+  rules: 'rules',
+  activeRules: 'active rules',
+  ruleChanges: 'rule changes',
+  notesMapped: 'notes read',
+  noteErrors: 'notes not read',
+  questionsAsked: 'questions asked',
+  threshold: 'match threshold',
+  retried: 'retried',
+  picked: 'picked',
+  proposed: 'ready to decide',
+  needsInput: 'waiting on you',
+  needsManual: 'submit by hand',
+  refreshed: 'refreshed',
+  unblocked: 'unblocked',
+  candidates: 'candidates',
+  analyzed: 'analyzed',
+  recommended: 'recommended',
+  built: 'built',
+  skipped: 'skipped',
+  interrupted: 'interrupted',
+  pruned: 'old rows removed',
+}
+
+const STAT_HIDDEN = new Set(['tz', 'local', 'outcome', 'stopReason'])
+
+/** A run's numbers as "38 failed, 22 without posting text, AI cost $0.00". Booleans, lists, and nested detail are left out. */
+export function statsText(stats: Record<string, unknown> | null): string {
+  if (!stats) return ''
+  return Object.entries(stats)
+    .filter(([k, v]) => !STAT_HIDDEN.has(k) && (typeof v === 'number' || (Array.isArray(v) && v.every(x => typeof x === 'number'))))
+    .map(([k, v]) => {
+      const n = Array.isArray(v) ? v.length : (v as number)
+      const label = STAT_LABEL[k] ?? k.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ').toLowerCase()
+      return k === 'costUsd' ? `${label} $${n.toFixed(2)}` : `${n} ${label}`
+    })
+    .join(', ')
 }

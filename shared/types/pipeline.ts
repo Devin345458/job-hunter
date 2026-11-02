@@ -392,4 +392,8 @@ export interface PipelineRunView {
   stats: Record<string, unknown> | null
   error: string | null
   host: string | null
+  /** Derived from status and stats: a finished run with failed items or a budget or credit stop is partial. */
+  outcome?: 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
+  /** What went wrong, a few plain words each ("38 failed", "stopped: out of credit"). Empty when clean. */
+  problems?: string[]
 }

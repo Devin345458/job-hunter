@@ -1,0 +1,138 @@
+// Turns stored error and status text into plain sentences for the dashboard. Errors arrive from
+// the Anthropic SDK, the job boards, and the pipeline as raw JSON, stack traces, and internal
+// prefixes; none of that should reach the screen. Used by the server where status details are
+// written and by every component that shows a stored error, so both sides read the same way.
+// Text that has none of those shapes passes through unchanged.
+
+export const CREDIT_SENTENCE = 'Claude is out of credit (add credit in the Anthropic Console)'
+
+const CREDIT = /credit balance is too low|\bis out of credit\b|\bout of credit:/i
+
+/** True when the text is, or contains, Anthropic's out-of-credit error. */
+export function isCreditError(raw: string | null | undefined): boolean {
+  return !!raw && CREDIT.test(raw)
+}
+
+/** Index just past the JSON object that opens at `start`, or -1 when it never closes. */
+function jsonEnd(s: string, start: number): number {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < s.length; i++) {
+    const c = s[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return i + 1
+  }
+  return -1
+}
+
+/** The human message inside an API error body: Anthropic's error.message, or a plain message. */
+function innerMessage(json: string): string | null {
+  try {
+    const o = JSON.parse(json)
+    const m = o?.error?.message ?? o?.message ?? (typeof o?.error === 'string' ? o.error : null)
+    return typeof m === 'string' ? m : null
+  }
+  catch {
+    // Truncated bodies (stats keep the first few hundred characters) do not parse.
+    const m = /"message"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(json)
+    return m ? m[1]!.replace(/\\"/g, '"') : null
+  }
+}
+
+/** Replaces every JSON error body in one line with its message, and drops HTML error pages. */
+function replaceBodies(line: string): string {
+  let out = line
+  for (let guard = 0; guard < 5; guard++) {
+    const m = /(?:\b\d{3}\s+)?\{\s*"/.exec(out)
+    if (!m) break
+    const open = m.index + m[0].indexOf('{')
+    const end = jsonEnd(out, open)
+    const body = out.slice(open, end === -1 ? out.length : end)
+    const msg = innerMessage(body)
+    const plain = msg == null ? '' : CREDIT.test(msg) ? CREDIT_SENTENCE : msg.trim().replace(/\.$/, '')
+    out = `${out.slice(0, m.index)}${plain}${end === -1 ? '' : out.slice(end)}`
+  }
+  // An HTML error page pasted into a message ("HTTP 503 from host: <!DOCTYPE html> ...").
+  return out.replace(/:?\s*<(!doctype|html|head|body)\b[\s\S]*$/i, '')
+}
+
+const CREDIT_PHRASES: RegExp[] = [
+  // AiCreditExhausted, which also names the environment variable.
+  /The Anthropic account behind \w+ is out of credit\.\s*Add credit in the Anthropic Console under Plans & Billing\.?/gi,
+  // ai_calls.error for a refused call.
+  /out of credit:\s*Your credit balance is too low to access the Anthropic API\.?/gi,
+  // The bare sentence from Anthropic, outside any JSON.
+  /Your credit balance is too low to access the Anthropic API\.?(\s*Please go to Plans & Billing to upgrade or purchase credits\.?)?/gi,
+]
+
+/** Upper-cases the first letter when the first word is all lowercase; "hCaptcha" and "iCIMS" stay as written. */
+export function capitalize(text: string): string {
+  const first = /^\S*/.exec(text)![0]
+  return first === first.toLowerCase() ? text.charAt(0).toUpperCase() + text.slice(1) : text
+}
+
+/** "9 gap(s)" becomes "9 gaps", "1 question(s)" becomes "1 question", "field(s)" becomes "fields". */
+export function fixPlurals(text: string): string {
+  return text
+    .replace(/\b(\d+)(\s+(?:[a-z]+\s+)?)([a-z]+)\(s\)/gi, (_, n: string, mid: string, word: string) => `${n}${mid}${Number(n) === 1 ? word : `${word}s`}`)
+    .replace(/\b([a-z]+)\(s\)/gi, '$1s')
+}
+
+/**
+ * One stored error or status detail as plain text: the first line only (never a stack trace),
+ * without internal prefixes, with API error JSON replaced by its message, and with Anthropic's
+ * credit error said as one sentence. Plain text comes back unchanged.
+ */
+export function plainError(raw: string | null | undefined): string {
+  if (!raw) return ''
+  let line = raw.split('\n').map(s => s.trim()).find(Boolean) ?? ''
+  line = line
+    .replace(/^prepare_failed attempt=\d+:\s*/i, '')
+    .replace(/^(?:Error|TypeError|APIError|BadRequestError):\s*/, '')
+    .replace(/^#(\d+):\s*/, 'Job $1: ')
+  line = replaceBodies(line)
+  for (const re of CREDIT_PHRASES) line = line.replace(re, `${CREDIT_SENTENCE}.`)
+  // A credit error says everything the turn number would.
+  if (line.includes(CREDIT_SENTENCE)) line = line.replace(/Claude call failed on turn \d+:\s*/i, '')
+  line = line
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([.,;:)])/g, '$1')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\.{2}(?!\.)/g, '.')
+    .trim()
+  return fixPlurals(capitalize(line))
+}
+
+const WIDGET_TEXT: RegExp[] = [
+  /couldn['’]?t auto-?read (?:your )?resume\.?/gi,
+  /could not auto-?read (?:your )?resume\.?/gi,
+  /analy[sz]ing (?:your )?resume(?:\.{1,3}|…)?/gi,
+  /\bsuccess!/gi,
+  /\bno locations? found\.?/gi,
+  /try entering a different location\.?/gi,
+  /\bno (?:results|options|matches) found\.?/gi,
+]
+
+/**
+ * A form field's label without the status and helper text some employer forms keep inside the
+ * label element ("Resume/CV Couldn't auto-read resume.Analyzing resume...Success!",
+ * "Current location No location found. Try entering a different locationLoading").
+ * Ordinary labels come back unchanged.
+ */
+export function cleanFieldLabel(label: string | null | undefined): string {
+  if (!label) return ''
+  let out = label
+  for (const re of WIDGET_TEXT) out = out.replace(re, ' ')
+  // Trailing spinner captions, which some widgets glue straight onto the previous word.
+  for (let i = 0; i < 3; i++) out = out.replace(/\s*(?:Loading|Uploading|Searching)(?:\.{3}|…)?\s*$/, '')
+  out = out.replace(/\s+/g, ' ').trim()
+  return out || label.trim()
+}
