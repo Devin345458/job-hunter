@@ -130,7 +130,10 @@ export function answerText(value: string | string[] | boolean | null): string {
 /** "skill/Vue.js" or "profile:Full Name" (a knowledge base key) becomes "Vue.js" or "Full Name". */
 export function knowledgeRef(ref: string | null | undefined): string {
   if (!ref) return ''
-  return ref.replace(/^(?:profile|skill|skills|experience|preference|preferences|fact|facts|education|project|projects|certification|other)\s*[/:]\s*/i, '').trim()
+  return ref.replace(/^(?:profile|skill|skills|experience|preference|preferences|fact|facts|education|project|projects|certification|other)\s*[/:]\s*/i, '')
+    // An answered experience question's key: "experience/Has done: Failure handling" is Failure handling.
+    .replace(/^has done:\s*/i, '')
+    .trim()
 }
 
 /**

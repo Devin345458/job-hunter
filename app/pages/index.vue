@@ -285,6 +285,7 @@ const leftLabel = computed(() => {
           @answer="(id, a) => answer(id, a)"
           @skip="id => answer(id, null, true)"
           @prepare="prepareAgain"
+          @refresh="selected && queue.fetchOne(selected.applicationId)"
         />
         <div v-else class="rv__state rv__state--pane">
           <v-icon icon="mdi-check-all" size="28" color="success" />
@@ -323,6 +324,7 @@ const leftLabel = computed(() => {
         @answer="(id, a) => answer(id, a)"
         @skip="id => answer(id, null, true)"
         @prepare="prepareAgain"
+        @refresh="selected && queue.fetchOne(selected.applicationId)"
       />
       <div v-else class="rv__state rv__state--pane">
         <v-icon icon="mdi-check-all" size="28" color="success" />

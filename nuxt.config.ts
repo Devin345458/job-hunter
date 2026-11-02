@@ -181,7 +181,9 @@ export default defineNuxtConfig({
     demoModel: '',
     // Hard limits per demos:build run and per demo build
     demoMaxPerRun: '1',
-    demoMaxTurns: '45',
+    // Haiku 4.5 (the only model the production token reaches) needs more turns than Opus; the cost
+    // and time caps still bound a build.
+    demoMaxTurns: '80',
     demoMaxMinutes: '25',
     demoMaxCostUsd: '3',
     // Extra PATH entries for demo build commands, colon separated (e.g. a local Go toolchain)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
-import type { QuestionView, ScoreBreakdown } from '#shared/types/pipeline'
+import type { QuestionView, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
 
 interface HistoryRow {
@@ -18,6 +18,16 @@ const props = defineProps<{
   history?: HistoryRow[]
   questions?: QuestionView[]
 }>()
+
+// A Missing chip is a button: tapping it opens the skill panel the page hosts.
+const emit = defineEmits<{
+  claim: [text: string, source: SkillClaimSource]
+}>()
+
+/** The chip's name without its closing reason, for screen readers. */
+function chipName(s: string) {
+  return s.replace(/\s*\([^()]*\)\s*$/, '').trim() || s
+}
 
 const PART_LABELS = [
   { key: 'mustHaves', label: 'Must-have requirements', max: 45 },
@@ -99,10 +109,25 @@ function signed(n: number) {
         </div>
         <div v-if="score.skills.missing.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing</span>
-          <v-chip v-for="m in score.skills.missing" :key="m" size="x-small" variant="tonal" color="error">
+          <v-chip
+            v-for="m in score.skills.missing"
+            :key="m"
+            tag="button"
+            type="button"
+            size="x-small"
+            variant="tonal"
+            color="error"
+            append-icon="mdi-chevron-right"
+            class="score-breakdown__claim-chip"
+            :aria-label="`${chipName(m)}: say whether you have it`"
+            @click="emit('claim', m, 'missing')"
+          >
             {{ m }}
           </v-chip>
         </div>
+        <p v-if="score.skills.missing.length" class="text-caption text-medium-emphasis score-breakdown__hint">
+          Tap a missing one you have to say so.
+        </p>
       </section>
 
       <!-- Compensation -->
@@ -245,6 +270,22 @@ function signed(n: number) {
     padding-top: 2px;
     padding-bottom: 2px;
     white-space: normal;
+  }
+
+  &__claim-chip {
+    cursor: pointer;
+    text-align: left;
+  }
+
+  // The chip rule above (min-height 20px) outranks the global 44px phone target, so it is restated here.
+  @media (max-width: 959.98px) {
+    &__chips &__claim-chip {
+      min-height: 44px;
+    }
+  }
+
+  &__hint {
+    margin: 6px 0 0;
   }
 
   &__facts {

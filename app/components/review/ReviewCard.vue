@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ReviewItem } from '#shared/types/pipeline'
+import type { ReviewItem, SkillClaimSource } from '#shared/types/pipeline'
 import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
 import { demoStopKind, fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
 
@@ -23,7 +23,17 @@ const emit = defineEmits<{
   answer: [questionId: number, answer: string]
   skip: [questionId: number]
   prepare: []
+  /** The skill panel saved an answer or the score changed: re-read this application. */
+  refresh: []
 }>()
+
+// ── The skill panel: a Missing chip or a requirement that is not Have, tapped in Skills fit ──
+const claimOpen = ref(false)
+const claimTarget = ref<{ text: string; source: SkillClaimSource } | null>(null)
+function openClaim(text: string, source: SkillClaimSource) {
+  claimTarget.value = { text, source }
+  claimOpen.value = true
+}
 
 const meta = computed(() => itemStatusMeta(props.item))
 const company = computed(() => props.item.job.company || hostOf(props.item.job.applyUrl))
@@ -226,7 +236,7 @@ const letterPreview = computed(() => {
 
       <div class="rc__sections">
         <ReviewSection title="Skills fit" icon="mdi-puzzle-outline" :summary="skillsSummary" default-open>
-          <ReviewSkills :score="item.score" :requirements="item.requirements" />
+          <ReviewSkills :score="item.score" :requirements="item.requirements" @claim="openClaim" />
         </ReviewSection>
 
         <ReviewSection title="Pay and benefits" icon="mdi-cash-multiple" :summary="paySummary">
@@ -295,6 +305,17 @@ const letterPreview = computed(() => {
         </ReviewSection>
       </div>
     </div>
+
+    <SkillsClaimDialog
+      v-model="claimOpen"
+      :job-id="item.job.id"
+      :application-id="item.applicationId"
+      :target="claimTarget"
+      :job="{ title: item.job.title, company: item.job.company }"
+      :preparing="preparing"
+      @changed="emit('refresh')"
+      @prepare="emit('prepare')"
+    />
 
     <ReviewDecisionBar
       class="rc__bar"

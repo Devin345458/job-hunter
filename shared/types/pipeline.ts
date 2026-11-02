@@ -378,6 +378,10 @@ export interface DemoDetail extends DemoProjectView {
   progress: DemoBuildProgress | null
   /** Why a failed build stopped, when the daily run retries it on its own: out of credit, key rejected, or daily budget. */
   stoppedFor: 'credit' | 'key' | 'budget' | null
+  /** Failed, and the application's current gap analysis no longer plans this demo: it will not be retried. */
+  noLongerPlanned: boolean
+  /** Why it is no longer planned, from the current gap analysis. */
+  notNeededReason: string | null
   preview: DemoPreview
 }
 
@@ -484,4 +488,90 @@ export interface PipelineRunView {
   outcome?: 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
   /** What went wrong, a few plain words each ("38 failed", "stopped: out of credit"). Empty when clean. */
   problems?: string[]
+}
+
+// ── Skill claims: tap a Missing skill to say you have it ─────
+
+/** Where the tapped text came from: a Missing chip of the skills score, or a posting requirement row. */
+export type SkillClaimSource = 'missing' | 'requirement'
+
+/** The three answers the skill panel offers. They are the yes or no answers of a knows or has_done question. */
+export const SKILL_CLAIM_ANSWERS = ['Yes', 'Some experience', 'No'] as const
+export type SkillClaimAnswer = (typeof SKILL_CLAIM_ANSWERS)[number]
+
+/** The knowledge base entry an answer replaces or adds to, as stored. */
+export interface SkillClaimKnowledge {
+  category: string
+  key: string
+  value: string
+}
+
+/** GET /api/jobs/:id/claim?text=&source=&applicationId=: what the skill panel shows before Devin answers. */
+export interface SkillClaimPreview {
+  /** The plain skill or experience name: the tapped text without its parenthetical reason. */
+  name: string
+  /** Why it shows as missing, in plain words. Null when nothing says why. */
+  why: string | null
+  /** The posting requirement this is about, when it is not the same words as the name. */
+  requirement: string | null
+  /**
+   * The question the answer goes to: an existing one on the same subject (pending, answered, or
+   * skipped), or the one a save creates (id null).
+   */
+  question: {
+    id: number | null
+    text: string
+    kind: 'knows' | 'has_done'
+    subject: string
+    status: string | null
+    answer: string | null
+    /** The example saved with an answered Yes or Some experience. */
+    example: string | null
+    /** A pending question's suggestion from Devin's own GitHub commits. Null when there is none. */
+    repoSuggestion?: RepoSuggestionView | null
+  }
+  /** The knowledge base entry on this subject today. Null when the knowledge base says nothing. */
+  knowledge: SkillClaimKnowledge | null
+  /** Sandbox jobs never write the knowledge base and never create questions. */
+  isSandbox: boolean
+  /** The application whose resume and cover letter an answer can make stale. Null without one. */
+  materials: {
+    applicationId: number
+    /** The resume or the cover letter is written. */
+    written: boolean
+    /** POST /api/applications/:id/prepare accepts this application's status. */
+    canPrepare: boolean
+  } | null
+}
+
+/** POST /api/jobs/:id/claim body. */
+export interface SkillClaimRequest {
+  text: string
+  source: SkillClaimSource
+  applicationId?: number | null
+  answer: SkillClaimAnswer
+  /** Where he did it, stored exactly as typed. Absent keeps a saved one; only Yes and Some experience take it. */
+  example?: string | null
+}
+
+/** POST /api/jobs/:id/claim result. */
+export interface SkillClaimResult {
+  /** False on a sandbox job: nothing was written and no question was created. */
+  written: boolean
+  question: QuestionView | null
+  /** The entry as it reads after the answer. */
+  knowledge: SkillClaimKnowledge | null
+  /** Posting requirements of this job whose status the answer changed. */
+  requirementsChanged: number
+}
+
+/** POST /api/jobs/:id/rescore: a fresh skills score from Claude for one job. */
+export interface JobRescoreResult {
+  ok: boolean
+  /** Why the score did not change: out of budget, a refused call, and similar. Null when ok. */
+  message: string | null
+  score: ScoreBreakdown | null
+  requirements: Requirement[]
+  matchScore: number | null
+  previousScore: number | null
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { properName } from '~/composables/review/format'
-import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
+import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import type { Job, JobApplicationRef, JobStatus } from '~/composables/useJobs'
 import { ATS_LABELS, jobStateMeta, scoreColor, uniqueTags } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
@@ -107,6 +107,49 @@ async function onGenerateResume() {
   }
   finally {
     generatingResume.value = false
+  }
+}
+
+// ── The skill panel: a Missing chip or a requirement that is not Have, tapped ──
+const claimOpen = ref(false)
+const claimTarget = ref<{ text: string; source: SkillClaimSource } | null>(null)
+const preparingAgain = ref(false)
+
+function openClaim(text: string, source: SkillClaimSource) {
+  claimTarget.value = { text, source }
+  claimOpen.value = true
+}
+
+/** The panel saved an answer or the score changed: re-read the job without reloading the page. */
+async function refreshJob() {
+  try {
+    const next = await $fetch<JobDetail>(`/api/jobs/${jobId.value}`)
+    job.value = next
+    applicationId.value = next.application?.id ?? null
+  }
+  catch {
+    // The panel already showed what it saved; the page keeps the version it has.
+  }
+}
+
+/** Prepare again from the panel: the same POST the review card uses. Nothing runs on its own. */
+async function prepareAgain(appId: number) {
+  if (preparingAgain.value) return
+  preparingAgain.value = true
+  try {
+    await $fetch(`/api/applications/${appId}/prepare`, { method: 'POST' })
+    claimOpen.value = false
+    snackbar.success('Preparing the resume, cover letter, and form again. Follow it on the application page.', {
+      text: 'View Application',
+      handler: () => router.push(`/applications/${appId}`),
+    })
+    refreshJob()
+  }
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not start preparing it again')
+  }
+  finally {
+    preparingAgain.value = false
   }
 }
 
@@ -331,11 +374,11 @@ onMounted(() => {
             @dismiss-error="resumeError = null"
           />
 
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-6 d-md-none" />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-6 d-md-none" @claim="openClaim" />
 
           <JobsCompensationBreakdown :compensation="job.compensation" :enriched-at="job.enrichedAt" class="mb-6" />
 
-          <JobsRequirementsList v-if="job.requirements.length" :requirements="job.requirements" class="mb-6" />
+          <JobsRequirementsList v-if="job.requirements.length" :requirements="job.requirements" class="mb-6" @claim="openClaim" />
 
           <!-- Job Description -->
           <v-card variant="outlined">
@@ -369,7 +412,7 @@ onMounted(() => {
         <!-- Right Column: Match Analysis + Actions -->
         <v-col cols="12" md="5" lg="4">
           <!-- Match Score -->
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4 d-none d-md-block" />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4 d-none d-md-block" @claim="openClaim" />
 
           <JobsJobActions
             class="mb-4 d-none d-md-block"
@@ -429,6 +472,17 @@ onMounted(() => {
           </v-card>
         </v-col>
       </v-row>
+
+      <SkillsClaimDialog
+        v-model="claimOpen"
+        :job-id="job.id"
+        :application-id="job.application?.id ?? null"
+        :target="claimTarget"
+        :job="{ title: job.title, company: job.company }"
+        :preparing="preparingAgain"
+        @changed="refreshJob"
+        @prepare="prepareAgain"
+      />
     </template>
   </div>
 </template>

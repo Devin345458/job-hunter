@@ -25,7 +25,7 @@ const STATUS: Record<DemoStatus, { label: string; color: string; note: string }>
 /** Stopped on the Claude account (credit, key, budget), not on the build: said in the past tense, in a neutral color. */
 const stop = computed(() => (props.demo.status === 'failed' ? demoStopKind(props.demo.error) : null))
 const meta = computed(() => {
-  if (stop.value) return { label: 'Stopped', color: 'secondary', note: `${DEMO_STOP_TEXT[stop.value].replace(/^Stopped: /, '').replace(/^\w/, c => c.toUpperCase())}. The build itself did not fail, and the next pipeline run retries it. Approve will not publish a demo that is not built.` }
+  if (stop.value) return { label: 'Stopped', color: 'secondary', note: `${DEMO_STOP_TEXT[stop.value].replace(/^Stopped: /, '').replace(/^\w/, c => c.toUpperCase())}. The build itself did not fail. Scheduled runs retry it automatically, ahead of new demos, one demo per run. Approve will not publish a demo that is not built.` }
   return STATUS[props.demo.status] ?? STATUS.proposed
 })
 /** A built demo's note says what approve does with it: blocked, publish then hand back, or publish then submit. */

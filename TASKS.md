@@ -114,6 +114,15 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [ ] 2026-11-02, Devin (reversed his earlier no): use the claude-self-reflect memory for soft-skill and behavioral questions, reached over Tailscale. Building in `memory-leads` as leads only (never evidence, never an answer); network setup needs Tailscale running on the laptop and an auth key for the Mini (Blocked on me).
+- [x] 2026-11-02: Ramp's demo rebuilt on production with the 80 turn limit: built on turn 58, 99 tests passing, $0.93. Stopped demos for 1Password and AppFolio show Not needed (their gap analyses no longer plan a demo) instead of promising a retry.
+- [x] 2026-11-02: the 3:00 PM run's one demo slot went to Ramp's new demo (score 84), so both credit-stopped demos stayed unbuilt although their pages promised a retry on that run; Ramp's build passed its tests on turn 40 and hit the 45 turn limit fixing type errors. Account-stopped demos now build first, the turn limit is 80 (Haiku), and the wording says one demo per run (see the demo-retry commit).
+
+- [x] 2026-11-02, Devin: the chat offered "Use this draft" and a separate "Answer: Yes". Use this draft now picks Yes (or the suggested Some experience) and fills the example box in one tap; checked through the real chat on a production copy at 1280 on /questions and at 390 on a review card (b1cac7d).
+- [x] 2026-11-02, Devin: tap a Missing skill chip or a Partly requirement to say you have it. `skill-claims` merged after reading its screenshots: a panel on review cards and job pages with why it shows as missing, what the knowledge base says now, Yes, Some experience, No, Ask about this, and "Where did you do it?"; it re-scores the job and moves the chip; sandbox cards write nothing. Other open jobs naming the same skill are queued for re-scoring on the next run (checked on a production copy: exactly the two predicted jobs).
+- [ ] 2026-11-02, Devin: answer skill questions from his GitHub repos. Building in `repo-evidence`: only his own commits count, the system suggests with commit links and he confirms, finding nothing is never a No, personal repos on by default and organization or client repos off until he turns them on. Needs a read-only token in Coolify (Blocked on me).
+- [x] 2026-11-02: the 3:00 PM Central run fired on schedule (pipeline_runs 171, trigger `schedule`) in container b99357b8db07, the host /api/health reports for 0b48100.
+
 - 2026-11-02, accepted: the phone toast after a decision sits under the app bar and covers Previous, Next, and Queue for about 5 seconds (close button 52px). The card advances on its own after a decision, so those buttons are not needed in that moment.
 - 2026-11-02, limit: old stored match reasoning is rewritten to "you" only where it can be done correctly; mid-sentence "he has" and "the candidate has worked in" stay as stored. New runs write "you".
 

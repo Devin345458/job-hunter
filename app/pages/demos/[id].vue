@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
 
         <v-card-text>
           <div class="demo-detail__chips mb-4">
-            <DemoStatusChip :status="shownStatus" :stopped="!!demo.stoppedFor" />
+            <DemoStatusChip :status="shownStatus" :stopped="!!demo.stoppedFor" :not-needed="demo.noLongerPlanned" />
             <v-chip v-if="demo.isSandbox" size="small" variant="outlined" prepend-icon="mdi-test-tube">
               Sandbox application
             </v-chip>
