@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray } from 'drizzle-orm'
+import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../db/schema'
 import type { GapAnalysis, Requirement } from '#shared/types/pipeline'
@@ -645,8 +645,13 @@ export function askDailyQuestions(): QuestionRow[] {
     .filter(w => w.mustHave || w.jobs.size >= 2)
     .sort((a, b) => b.jobs.size - a.jobs.size || Number(b.mustHave) - Number(a.mustHave))
   const asked = new Set(db.select({ subject: questions.subject }).from(questions).where(eq(questions.kind, 'knows')).all().map(r => r.subject).filter(Boolean).map(x => ruleTerm(x!)))
+  // The cap is per local day, not per run, so manual runs do not pile on more questions.
+  const askedToday = db.select({ id: questions.id }).from(questions)
+    .where(and(eq(questions.kind, 'knows'), isNull(questions.applicationId), sql`${questions.askedAt} >= datetime('now', 'localtime', 'start of day', 'utc')`))
+    .all().length
+  const allowance = Math.max(0, MAX_NEW_DAILY_QUESTIONS - askedToday)
   for (const c of candidates) {
-    if (created.length >= MAX_NEW_DAILY_QUESTIONS) break
+    if (created.length >= allowance) break
     if (asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))) continue
     const row = askKnows(c.subject, {
       jobId: c.firstJob,
