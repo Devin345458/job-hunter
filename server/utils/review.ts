@@ -15,6 +15,7 @@ import type {
   SubmissionResult,
   TailoredResume,
 } from '#shared/types/pipeline'
+import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
 
 type JobRow = InferSelectModel<typeof jobs>
 type AppRow = InferSelectModel<typeof applications>
@@ -92,6 +93,10 @@ export function toDemoView(d: DemoRow): DemoProjectView {
 }
 
 export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, openQuestions: QuestionRow[]): ReviewItem {
+  // Labels stored before extraction learned to drop widget status text are cleaned on the way out.
+  const snapshot = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
+  if (snapshot) snapshot.fields = snapshot.fields.map(f => ({ ...f, label: cleanFieldLabel(f.label) }))
+  const answers = parseJson<FormAnswer[]>(app.answersJson, []).map(a => ({ ...a, label: cleanFieldLabel(a.label) }))
   return {
     applicationId: app.id,
     status: app.status as ApplicationStatus,
@@ -121,8 +126,8 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
     resumePdfUrl: app.tailoredResumeJson ? `/api/resume/pdf/${app.id}` : null,
     coverLetter: app.coverLetter,
     form: {
-      snapshot: parseJson<FormSnapshot | null>(app.formSnapshotJson, null),
-      answers: parseJson<FormAnswer[]>(app.answersJson, []),
+      snapshot,
+      answers,
       screenshotUrl: app.formScreenshotPath ? `/api/files/screenshot/${app.id}` : null,
       filledAt: app.formFilledAt,
       error: app.formError,
@@ -147,7 +152,7 @@ export function referencedQuestionIds(app: AppRow): number[] {
  * answers reference. askQuestion() dedupes by subject, so one question row can serve several
  * applications while its application_id names only the first.
  */
-function openQuestionsFor(app: AppRow, pending: QuestionRow[]): QuestionRow[] {
+function openQuestionsFor(app: AppRow, job: JobRow, pending: QuestionRow[]): QuestionRow[] {
   const refs = new Set(referencedQuestionIds(app))
   // Blocking is per application: a question blocks this one only when one of its own required
   // form fields waits on it. A question this application asked that no field references keeps
@@ -162,7 +167,13 @@ function openQuestionsFor(app: AppRow, pending: QuestionRow[]): QuestionRow[] {
       const blocking = fields.length > 0
         ? fields.some(a => required.has(a.fieldId))
         : q.applicationId === app.id && q.blocking
-      return { ...q, blocking }
+      // A shared question's stored context describes the employer that asked it first. Shown on
+      // another application, it says what this employer's own form asks.
+      const own = fields.find(a => required.has(a.fieldId)) ?? fields[0]
+      const context = q.applicationId !== app.id && own
+        ? `${job.company} asks "${cleanFieldLabel(own.label)}" on its application form. The field is ${required.has(own.fieldId) ? 'required' : 'optional'}.`
+        : q.context
+      return { ...q, blocking, context }
     })
 }
 
@@ -187,7 +198,7 @@ export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
       app,
       job,
       demos.find(d => d.applicationId === app.id && d.status !== 'discarded') ?? null,
-      openQuestionsFor(app, qs),
+      openQuestionsFor(app, job, qs),
     ))
     .sort((a, b) => (b.score?.final ?? 0) - (a.score?.final ?? 0) || (a.proposedAt ?? '').localeCompare(b.proposedAt ?? ''))
 }
@@ -209,7 +220,7 @@ export function getReviewItem(applicationId: number): ReviewItem | null {
     eq(questions.status, 'pending'),
     refIds.length ? or(eq(questions.applicationId, applicationId), inArray(questions.id, refIds)) : eq(questions.applicationId, applicationId),
   )).all()
-  return toReviewItem(row.app, row.job, demo, openQuestionsFor(row.app, qs))
+  return toReviewItem(row.app, row.job, demo, openQuestionsFor(row.app, row.job, qs))
 }
 
 /** The job features a decision is stored with, so learning can find what rejections share. */
@@ -250,9 +261,14 @@ export function recordDecision(applicationId: number, decision: 'approve' | 'rej
   }).returning().get()
 }
 
+/**
+ * Status details are shown as written, so they are stored plain: no API error JSON, stack
+ * traces, or internal prefixes. form_error and submit_error keep the raw text for debugging
+ * (and prepare_failed's attempt count); the dashboard formats those when it shows them.
+ */
 export function setApplicationStatus(applicationId: number, status: ApplicationStatus, statusDetail: string | null, extra: Partial<AppRow> = {}) {
   useDb().update(applications)
-    .set({ ...extra, status, statusDetail, updatedAt: nowSql() })
+    .set({ ...extra, status, statusDetail: statusDetail ? plainError(statusDetail) : statusDetail, updatedAt: nowSql() })
     .where(eq(applications.id, applicationId))
     .run()
 }
