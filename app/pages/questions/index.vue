@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
-import { saveChatQuestionId, savedChatQuestionId } from '~/components/questions/chat-store'
+import { EXAMPLE_LEVELS, saveChatQuestionId, savedChatQuestionId } from '~/components/questions/chat-store'
 
 definePageMeta({ layout: 'default' })
 
@@ -22,6 +22,23 @@ const legacy = computed(() => pending.value.filter(q => q.legacy && !(q.waitingA
 const answered = computed(() => all.value.filter(q => q.status === 'answered').sort((a, b) => (b.answeredAt ?? '').localeCompare(a.answeredAt ?? '')))
 const skipped = computed(() => all.value.filter(q => q.status === 'skipped'))
 
+// ── Examples ("Where did you do it?") on Yes and Some experience answers ──
+const isExampleLevel = (answer: string | null) => !!answer && (EXAMPLE_LEVELS as readonly string[]).includes(answer)
+/** Answered Yes or Some experience on a skill or experience question, with no example yet. */
+const missingExample = computed(() => answered.value.filter(q => q.takesExample && !q.legacy && isExampleLevel(q.answer) && !q.example))
+/** Answered shows only the ones missing an example. */
+const onlyMissing = ref(false)
+const answeredShown = computed(() => onlyMissing.value ? missingExample.value : answered.value)
+
+function toggleOnlyMissing() {
+  onlyMissing.value = !onlyMissing.value
+  if (onlyMissing.value) showAnswered.value = true
+}
+
+watch(() => missingExample.value.length, (n) => {
+  if (n === 0) onlyMissing.value = false
+})
+
 // ── Ask Claude ──
 // 1280px and wider: the chat sits in a sticky column beside the list. Narrower: Ask about this
 // opens it in a dialog (full screen on a phone). Both show the same conversations.
@@ -33,6 +50,8 @@ const chatPanel = ref<{ focus: () => void } | null>(null)
 const prefills = ref<Record<number, { text: string; nonce: number }>>({})
 /** What each card's open answer box holds, so "Use this draft" asks before replacing typed text. */
 const boxTexts = ref<Record<number, string>>({})
+/** The chat's "Answer: Yes" on a skill or experience question, keyed by question id: the card picks it and opens the example box. */
+const picks = ref<Record<number, { level: string; nonce: number }>>({})
 const chatQuestion = computed(() => all.value.find(q => q.id === chatQuestionId.value) ?? null)
 
 function isWide() {
@@ -56,9 +75,23 @@ function askGeneral() {
   else chatOpen.value = true
 }
 
+function scrollToCard(id: number) {
+  nextTick(() => {
+    document.getElementById(`question-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
 function answerFromChat(value: string) {
   const q = chatQuestion.value
-  if (q) answer(q, value)
+  if (!q) return
+  // Yes or Some experience on a skill or experience question waits for the example box on the card.
+  if (q.takesExample && !q.legacy && isExampleLevel(value) && q.status === 'pending') {
+    picks.value = { ...picks.value, [q.id]: { level: value, nonce: Date.now() } }
+    chatOpen.value = false
+    scrollToCard(q.id)
+    return
+  }
+  answer(q, value)
 }
 
 function useDraft(text: string) {
@@ -66,11 +99,14 @@ function useDraft(text: string) {
   if (!q) return
   prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now() } }
   chatOpen.value = false
-  if (q.status === 'answered') showAnswered.value = true
-  nextTick(() => {
-    document.getElementById(`question-${q.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  })
-  snackbar.info('The draft is in the answer box. Edit it, then press Save.')
+  if (q.status === 'answered') {
+    showAnswered.value = true
+    if (onlyMissing.value && !missingExample.value.some(x => x.id === q.id)) onlyMissing.value = false
+  }
+  scrollToCard(q.id)
+  snackbar.info(q.takesExample && !q.legacy
+    ? 'The draft is in the example box. Edit it, then press Save.'
+    : 'The draft is in the answer box. Edit it, then press Save.')
 }
 
 async function load() {
@@ -98,16 +134,17 @@ function where(key: string) {
   return i > 0 ? `${key.slice(0, i)}: ${key.slice(i + 1)}` : key
 }
 
-async function answer(q: QuestionListItem, value: string) {
+/** example: text sets it, null saves without one (clearing a saved one), undefined keeps the saved one. */
+async function answer(q: QuestionListItem, value: string, example?: string | null) {
   saving.value[q.id] = value
   try {
     const out = await $fetch<AnswerOutcome>(`/api/questions/${q.id}`, {
       method: 'PATCH',
-      body: { status: 'answered', answer: value },
+      body: { status: 'answered', answer: value, ...(example !== undefined ? { example } : {}) },
     })
     replace(out.question)
     // Keys made from a form label can end in a period already ("...professionally or personally.").
-    const parts = [`Saved to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`).replace(/[.\s]+$/, '')}.`]
+    const parts = [`Saved${out.question.example ? ' with your example' : ''} to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`).replace(/[.\s]+$/, '')}.`]
     if (out.refreshedApplicationIds.length) parts.push(`${out.refreshedApplicationIds.length === 1 ? 'One application was' : `${out.refreshedApplicationIds.length} applications were`} updated.`)
     else if (out.refreshUnavailable) parts.push('Waiting applications pick it up once form answers can refresh.')
     if (out.rescored) parts.push(`${out.rescored} ${out.rescored === 1 ? 'job' : 'jobs'} rescored.`)
@@ -115,6 +152,21 @@ async function answer(q: QuestionListItem, value: string) {
   }
   catch (e: any) {
     snackbar.error(e?.data?.statusMessage || 'Could not save that answer. Try again.')
+  }
+  finally {
+    saving.value[q.id] = null
+  }
+}
+
+async function saveExample(q: QuestionListItem, text: string) {
+  saving.value[q.id] = 'example'
+  try {
+    const out = await $fetch<AnswerOutcome>(`/api/questions/${q.id}`, { method: 'PATCH', body: { example: text } })
+    replace(out.question)
+    snackbar.success(`Example saved to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`).replace(/[.\s]+$/, '')}.`)
+  }
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not save that example. Try again.')
   }
   finally {
     saving.value[q.id] = null
@@ -201,7 +253,8 @@ onMounted(async () => {
               :saving="saving[q.id]"
               :asking="chatQuestionId === q.id"
               :prefill="prefills[q.id]"
-              @answer="v => answer(q, v)"
+              :pick="picks[q.id]"
+              @answer="(v, ex) => answer(q, v, ex)"
               @skip="skip(q)"
               @ask="askAbout(q)"
               @box-text="t => (boxTexts[q.id] = t)"
@@ -225,7 +278,8 @@ onMounted(async () => {
               :saving="saving[q.id]"
               :asking="chatQuestionId === q.id"
               :prefill="prefills[q.id]"
-              @answer="v => answer(q, v)"
+              :pick="picks[q.id]"
+              @answer="(v, ex) => answer(q, v, ex)"
               @skip="skip(q)"
               @ask="askAbout(q)"
               @box-text="t => (boxTexts[q.id] = t)"
@@ -249,7 +303,8 @@ onMounted(async () => {
               :saving="saving[q.id]"
               :asking="chatQuestionId === q.id"
               :prefill="prefills[q.id]"
-              @answer="v => answer(q, v)"
+              :pick="picks[q.id]"
+              @answer="(v, ex) => answer(q, v, ex)"
               @skip="skip(q)"
               @ask="askAbout(q)"
               @box-text="t => (boxTexts[q.id] = t)"
@@ -278,12 +333,27 @@ onMounted(async () => {
           >
             Answered ({{ answered.length }})
           </v-btn>
+          <div v-if="missingExample.length" class="questions-page__missing">
+            <v-icon icon="mdi-text-box-plus-outline" size="18" class="questions-page__missing-icon" />
+            <span class="text-body-2">
+              {{ missingExample.length === 1 ? '1 yes answer has no example yet' : `${missingExample.length} yes answers have no example yet` }}
+            </span>
+            <v-btn
+              variant="text"
+              color="primary"
+              class="questions-page__missing-btn"
+              :aria-pressed="onlyMissing"
+              @click="toggleOnlyMissing"
+            >
+              {{ onlyMissing ? 'Show all answers' : 'Show only these' }}
+            </v-btn>
+          </div>
           <v-expand-transition>
             <!-- v-show sits on a plain wrapper: .d-flex is display: flex !important and would beat it. -->
             <div v-show="showAnswered" id="questions-answered">
               <div class="d-flex flex-column ga-3">
                 <KnowledgeQuestionCard
-                  v-for="q in answered"
+                  v-for="q in answeredShown"
                   :key="q.id"
                   :id="`question-${q.id}`"
                   :question="q"
@@ -291,7 +361,9 @@ onMounted(async () => {
                   :saving="saving[q.id]"
                   :asking="chatQuestionId === q.id"
                   :prefill="prefills[q.id]"
-                  @answer="v => answer(q, v)"
+                  :pick="picks[q.id]"
+                  @answer="(v, ex) => answer(q, v, ex)"
+                  @example="t => saveExample(q, t)"
                   @ask="askAbout(q)"
                   @box-text="t => (boxTexts[q.id] = t)"
                 />
@@ -430,6 +502,25 @@ onMounted(async () => {
 
   &__toggle {
     min-height: 44px;
+  }
+
+  // "N yes answers have no example yet", under the Answered toggle.
+  &__missing {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 8px;
+    margin: -4px 0 12px 4px;
+  }
+
+  &__missing-icon {
+    color: rgb(var(--v-theme-primary));
+  }
+
+  &__missing-btn {
+    min-height: 44px;
+    text-transform: none;
+    letter-spacing: normal;
   }
 }
 </style>

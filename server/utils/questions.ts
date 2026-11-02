@@ -289,22 +289,53 @@ export function negativeSkillValue(subject: string, source: string): string {
   return `Does not know ${subject}. No production experience with ${subject}. Never claim ${subject} experience. ${source}`
 }
 
-/** The sentence stored in the knowledge base for an answer. A No is stored too, so it is never asked or claimed. */
-export function knowledgeValueFor(q: QuestionRow, answer: string): { value: string; negative: boolean } {
+/** Longest example Devin can give with a Yes or Some experience answer. */
+export const EXAMPLE_MAX_CHARS = 1000
+
+/** A yes or no question about a skill or past work. A Yes or Some experience answer to it can carry an example. */
+export function takesExample(q: Pick<QuestionRow, 'answerType' | 'kind'>): boolean {
+  return q.answerType === 'yes_no' && (q.kind === 'knows' || q.kind === 'has_done')
+}
+
+/** The claim a Yes or Some experience answer writes, before any example. Null for a No and for other questions. */
+function positiveClaim(q: QuestionRow, yn: YesNo): string | null {
   const subject = q.subject?.trim() || 'this'
-  const asked = `(Answer to: ${q.question})`
+  if (q.kind === 'knows') {
+    if (yn === 'yes') return `Knows ${subject}.`
+    if (yn === 'some') return `Some experience with ${subject}, not in depth. Do not claim production or expert level ${subject}.`
+  }
+  if (q.kind === 'has_done') {
+    if (yn === 'yes') return `Has done this: ${subject}.`
+    if (yn === 'some') return `Has partly done this: ${subject}. Do not overstate it.`
+  }
+  return null
+}
+
+const EXAMPLE_MARK = ' Example: '
+
+function askedNote(q: QuestionRow) {
+  return `(Answer to: ${q.question})`
+}
+
+/**
+ * The sentence stored in the knowledge base for an answer. A No is stored too, so it is never asked or claimed.
+ * A Yes or Some experience answer to a skill or experience question can carry Devin's example, stored exactly
+ * as he typed it (trimmed) between the claim and the "(Answer to: ...)" note:
+ * "Has done this: Live event demos. Example: <his text> (Answer to: <question>)".
+ * exampleFromValue() reads it back, so the two must change together.
+ */
+export function knowledgeValueFor(q: QuestionRow, answer: string, example?: string | null): { value: string; negative: boolean } {
+  const subject = q.subject?.trim() || 'this'
+  const asked = askedNote(q)
   if (q.answerType === 'yes_no') {
     const yn = parseYesNo(answer) ?? 'no'
-    if (q.kind === 'knows') {
-      if (yn === 'yes') return { value: `Knows ${subject}. ${asked}`, negative: false }
-      if (yn === 'some') return { value: `Some experience with ${subject}, not in depth. Do not claim production or expert level ${subject}. ${asked}`, negative: false }
-      return { value: negativeSkillValue(subject, asked), negative: true }
+    const claim = positiveClaim(q, yn)
+    if (claim) {
+      const text = example?.trim()
+      return { value: `${claim}${text ? `${EXAMPLE_MARK}${text}` : ''} ${asked}`, negative: false }
     }
-    if (q.kind === 'has_done') {
-      if (yn === 'yes') return { value: `Has done this: ${subject}. ${asked}`, negative: false }
-      if (yn === 'some') return { value: `Has partly done this: ${subject}. Do not overstate it. ${asked}`, negative: false }
-      return { value: `Has not done this: ${subject}. Never claim it. ${asked}`, negative: true }
-    }
+    if (q.kind === 'knows') return { value: negativeSkillValue(subject, asked), negative: true }
+    if (q.kind === 'has_done') return { value: `Has not done this: ${subject}. Never claim it. ${asked}`, negative: true }
     return { value: `${YES_NO_LABELS[yn]}. ${asked}`, negative: false }
   }
   if (q.answerType === 'number') {
@@ -318,12 +349,52 @@ export function knowledgeValueFor(q: QuestionRow, answer: string): { value: stri
   return { value: answer.trim(), negative: false }
 }
 
-function writeKnowledge(target: { category: string; key: string }, value: string, negative: boolean): KnowledgeEntry {
+/**
+ * Devin's example inside a knowledge value that knowledgeValueFor() wrote for this question and
+ * answer, exactly as he typed it. Null when the value holds no example (or was edited by hand).
+ */
+export function exampleFromValue(q: QuestionRow, answer: string | null, value: string): string | null {
+  if (!takesExample(q)) return null
+  const yn = parseYesNo(answer ?? '')
+  const claim = yn ? positiveClaim(q, yn) : null
+  if (!claim) return null
+  const start = `${claim}${EXAMPLE_MARK}`
+  const endAt = value.lastIndexOf(` ${askedNote(q)}`)
+  if (endAt < 0) return null
+  const startAt = value.lastIndexOf(start, endAt)
+  if (startAt < 0) return null
+  return value.slice(startAt + start.length, endAt).trim() || null
+}
+
+/** The example saved with an answered Yes or Some experience question, read from its knowledge entry. */
+export function questionExample(q: QuestionRow, entries?: KnowledgeEntry[]): string | null {
+  if (q.status !== 'answered' || !q.answer || !takesExample(q)) return null
+  const target = knowledgeTargetFor(q)
+  const entry = findKnowledgeEntry(target.category, target.key, entries ?? loadKnowledge(target.category))
+  return entry ? exampleFromValue(q, q.answer, entry.value) : null
+}
+
+/** `value` without one copy of `segment`, and the line break that set it apart. */
+function withoutSegment(value: string, segment: string): string {
+  for (const s of [`\n${segment}`, `${segment}\n`, segment]) {
+    if (value.includes(s)) return value.replace(s, () => '')
+  }
+  return value
+}
+
+/**
+ * Writes an answer's value to its entry. `previous` is the value this question's earlier answer
+ * wrote, so a changed answer or an added example replaces that sentence instead of stacking a
+ * second one under resume text.
+ */
+function writeKnowledge(target: { category: string; key: string }, value: string, negative: boolean, previous?: string | null): KnowledgeEntry {
   const existing = findKnowledgeEntry(target.category, target.key)
   const key = existing?.key ?? target.key
   // A Yes on something the resume already lists keeps the resume text and adds the answer under it.
   if (existing && !negative && existing.source !== 'user_answer' && !isNegativeKnowledge(existing.value)) {
-    const merged = existing.value.includes(value) ? existing.value : `${existing.value}\n${value}`
+    const base = previous && previous !== value ? withoutSegment(existing.value, previous) : existing.value
+    if (!base.trim()) return upsertKnowledge(target.category, key, value, 'user_answer')
+    const merged = base.includes(value) ? base : `${base}\n${value}`
     return upsertKnowledge(target.category, key, merged, existing.source)
   }
   return upsertKnowledge(target.category, key, value, 'user_answer')
@@ -334,7 +405,7 @@ function writeKnowledge(target: { category: string; key: string }, value: string
  * and ZIP, each its own entry, so any part fills any address field on any form. Every other
  * answer goes to its question's knowledge key as before.
  */
-function writeAnswerKnowledge(q: QuestionRow, answer: string): KnowledgeEntry {
+function writeAnswerKnowledge(q: QuestionRow, answer: string, example: string | null = null): KnowledgeEntry {
   const def = factForQuestion(q)
   if (isAddressQuestion(q) || isAddressFact(def)) {
     const facts = resolveFacts(loadKnowledge(), { answered: answeredValue })
@@ -351,8 +422,12 @@ function writeAnswerKnowledge(q: QuestionRow, answer: string): KnowledgeEntry {
     // An older address question answered in words the parser cannot split ("Remote") is stored as written.
   }
   const target = knowledgeTargetFor(q)
-  const { value, negative } = knowledgeValueFor(q, answer)
-  return writeKnowledge(target, value, negative)
+  const { value, negative } = knowledgeValueFor(q, answer, example)
+  // Only values that end in the "(Answer to: ...)" note are unique enough to find and replace inside resume text.
+  const previous = q.status === 'answered' && q.answer && (q.answerType === 'yes_no' || q.answerType === 'number')
+    ? knowledgeValueFor(q, q.answer, questionExample(q)).value
+    : null
+  return writeKnowledge(target, value, negative, previous)
 }
 
 /** What to write when an address answer is missing a part the question asked for, with an example in that shape. */
@@ -467,6 +542,7 @@ export function toQuestionListItem(
   job: { id: number; title: string; company: string } | null,
   waitingIds: number[],
   waitingApplications?: Array<{ id: number; company: string; title: string }>,
+  example: string | null = null,
 ): QuestionListItem {
   return {
     id: q.id,
@@ -481,6 +557,8 @@ export function toQuestionListItem(
     blocking: q.blocking,
     status: q.status,
     answer: q.answer,
+    example,
+    takesExample: takesExample(q),
     askedAt: q.askedAt,
     answeredAt: q.answeredAt,
     applicationId: q.applicationId,
@@ -518,11 +596,12 @@ export function listQuestionItems(filter: { status?: string; applicationId?: num
     const job = waitingJob.get(waiting.find(a => a.id === id)!.jobId)
     return { id, company: job?.company ?? '', title: job?.title ?? '' }
   })
+  const knowledge = rows.some(q => q.status === 'answered' && takesExample(q)) ? loadKnowledge() : []
   return rows
     .map((q) => {
       const jobId = q.jobId ?? (q.applicationId ? appJob.get(q.applicationId) : undefined)
       const waitingIds = q.status === 'pending' ? waitingApplicationIds(q, waiting) : []
-      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds))
+      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds), questionExample(q, knowledge))
     })
     .sort((a, b) => Number(b.blocking || b.waitingApplicationIds.length > 0) - Number(a.blocking || a.waitingApplicationIds.length > 0)
       || Number(a.legacy) - Number(b.legacy)
@@ -543,20 +622,42 @@ function questionItem(id: number): QuestionListItem {
  * 3. refreshes every application waiting on it (refreshApplicationAnswers from the apply unit)
  * 4. rescores the jobs the answer can change
  * Answering an already answered question replaces the old answer.
+ *
+ * `example` is Devin's own description of where he did it, for a Yes or Some experience answer to a
+ * skill or experience question. A string sets it (blank clears it), null clears it, and undefined
+ * keeps the one already saved, so changing Yes to Some experience does not lose it. The review card
+ * cannot send a separate field through its parents, so for a yes or no question an answer with more
+ * than one line ("Yes\n<example>") is read as the answer on its first line and the example after it.
  */
-export async function answerQuestion(id: number, rawAnswer: string): Promise<AnswerOutcome> {
+export async function answerQuestion(id: number, rawAnswer: string, example?: string | null): Promise<AnswerOutcome> {
   const db = useDb()
   const q = db.select().from(questions).where(eq(questions.id, id)).get()
   if (!q) throw createError({ statusCode: 404, statusMessage: 'Question not found' })
-  const answer = (rawAnswer ?? '').toString().trim()
+  let answer = (rawAnswer ?? '').toString().trim()
+  if (q.answerType === 'yes_no' && example === undefined && answer.includes('\n')) {
+    const nl = answer.indexOf('\n')
+    example = answer.slice(nl + 1)
+    answer = answer.slice(0, nl).trim()
+  }
   if (!answer) throw createError({ statusCode: 400, statusMessage: 'Type an answer, or skip the question' })
   if (answer.length > 4000) throw createError({ statusCode: 400, statusMessage: 'Keep the answer under 4,000 characters' })
+  // Trimmed only: the example is stored in his own words.
+  const exampleText = typeof example === 'string' ? example.trim() : example
+  if (exampleText && !takesExample(q)) {
+    throw createError({ statusCode: 400, statusMessage: 'Only a Yes or Some experience answer about a skill or past work takes an example' })
+  }
+  if (exampleText && exampleText.length > EXAMPLE_MAX_CHARS) {
+    throw createError({ statusCode: 400, statusMessage: `Keep the example under ${EXAMPLE_MAX_CHARS.toLocaleString('en-US')} characters` })
+  }
 
   let normalized = answer
+  let savedExample: string | null = null
   if (q.answerType === 'yes_no') {
     const yn = parseYesNo(answer)
     if (!yn) throw createError({ statusCode: 400, statusMessage: 'Answer Yes, No, or Some experience' })
     normalized = YES_NO_LABELS[yn]
+    if (exampleText && yn === 'no') throw createError({ statusCode: 400, statusMessage: 'A No answer takes no example' })
+    if (takesExample(q) && yn !== 'no') savedExample = exampleText === undefined ? questionExample(q) : (exampleText || null)
   }
   else if (q.answerType === 'number') {
     const n = parseMoney(answer)
@@ -568,7 +669,19 @@ export async function answerQuestion(id: number, rawAnswer: string): Promise<Ans
     if (choices.length && !choices.includes(answer)) throw createError({ statusCode: 400, statusMessage: `Pick one of: ${choices.join(', ')}` })
   }
 
-  const entry = writeAnswerKnowledge(q, normalized)
+  const entry = writeAnswerKnowledge(q, normalized, savedExample)
+  // The same answer again (an example added or changed) changes no form answer and no score:
+  // forms read the answer itself, and scores read whether he has it. Its answered date stays too.
+  if (q.status === 'answered' && q.answer === normalized) {
+    db.update(questions).set({ knowledgeKey: `${entry.category}:${entry.key}` }).where(eq(questions.id, id)).run()
+    return {
+      question: questionItem(id),
+      knowledge: { category: entry.category, key: entry.key, value: entry.value },
+      refreshedApplicationIds: [],
+      refreshUnavailable: false,
+      rescored: 0,
+    }
+  }
   const waiting = waitingApplicationIds(q)
   // Optional fields asked without blocking ("Optional: asked you as question #N") fill in too.
   const toRefresh = [...new Set([...waiting, ...optionalAskApplicationIds(q.id)])]
@@ -592,6 +705,18 @@ export async function answerQuestion(id: number, rawAnswer: string): Promise<Ans
     refreshUnavailable: unavailable,
     rescored,
   }
+}
+
+/** Adds or changes the example on an answered Yes or Some experience question, keeping the answer. */
+export async function setQuestionExample(id: number, example: string): Promise<AnswerOutcome> {
+  const q = useDb().select().from(questions).where(eq(questions.id, id)).get()
+  if (!q) throw createError({ statusCode: 404, statusMessage: 'Question not found' })
+  const yn = q.status === 'answered' && q.answer ? parseYesNo(q.answer) : null
+  if (!takesExample(q) || !yn || yn === 'no') {
+    throw createError({ statusCode: 409, statusMessage: 'Only an answered Yes or Some experience question about a skill or past work takes an example' })
+  }
+  if (!example.trim()) throw createError({ statusCode: 400, statusMessage: 'Type the example, or cancel' })
+  return await answerQuestion(id, q.answer!, example)
 }
 
 /** Skip for now. A later pipeline run may ask again; askQuestion() only dedupes pending and answered rows. */

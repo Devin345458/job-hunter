@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { chatThreadKey, useQuestionChat, type ChatQuestion } from './chat-store'
+import { chatThreadKey, takesExample, useQuestionChat, type ChatQuestion } from './chat-store'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
 // A suggested answer is only a button: nothing is saved until Devin taps it. A draft only goes
-// into the card's answer box for him to edit and save.
+// into the card's answer box for him to edit and save. On a skill or experience question the draft
+// is an example for the "Where did you do it?" box, written only from what he types here, and a
+// suggested Yes or Some experience opens that box instead of saving.
 
 const props = defineProps<{
   /** The question the chat is about. Null for a general question. */
   question: ChatQuestion | null
   /** The answer value being saved for that question right now. */
   saving?: string | null
-  /** What is in that question's answer box now, so "Use this draft" can ask before replacing it. */
+  /** What is in that question's answer box (or example box) now, so "Use this draft" can ask before replacing it. */
   boxText?: string
   variant: 'panel' | 'dialog'
 }>()
@@ -40,11 +42,29 @@ const writesAnswer = computed(() => {
   return !(q.answerType === 'choice' && q.choices?.length)
 })
 
+/** The question takes an example ("Where did you do it?") with a Yes or Some experience answer. */
+const exampleQuestion = computed(() => takesExample(props.question))
+/** Answered No: there is no example to write. */
+const answeredNo = computed(() => props.question?.status === 'answered' && (props.question.answer ?? '').trim().toLowerCase() === 'no')
+
 const starters = computed(() => {
   if (!props.question) return []
   if (writesAnswer.value) return ['What does this mean?', 'Help me answer this']
+  if (exampleQuestion.value && !answeredNo.value && props.question.status !== 'skipped') {
+    return props.question.status === 'answered'
+      ? ['What does this mean?', 'Help me write the example']
+      : ['What does this mean?', 'What would count as a yes?', 'Help me write the example']
+  }
   return ['What does this mean?', 'What would count as a yes?']
 })
+
+/** Where a draft goes on the card. */
+const boxName = computed(() => exampleQuestion.value ? 'example box' : 'answer box')
+
+/** A suggested Yes or Some experience on a skill or experience question opens the example box rather than saving. */
+function opensExample(value: string) {
+  return exampleQuestion.value && value !== 'No'
+}
 
 const placeholder = computed(() => props.question ? 'Ask about this question' : 'Ask about any term')
 
@@ -70,7 +90,7 @@ function canSuggest(value: string) {
   return props.question?.status === 'pending' || isSaved(value)
 }
 
-const canUseDraft = computed(() => !!props.question && props.question.status !== 'skipped')
+const canUseDraft = computed(() => !!props.question && props.question.status !== 'skipped' && !(exampleQuestion.value && answeredNo.value))
 
 /** The draft message waiting on "Replace what you typed?". */
 const confirmingDraft = ref<string | null>(null)
@@ -192,10 +212,10 @@ defineExpose({ focus: () => input.value?.focus() })
           <div class="question-chat__text">{{ m.content }}</div>
 
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
-            <div class="question-chat__draft-label text-caption text-medium-emphasis">Draft answer</div>
+            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
             <div class="question-chat__draft-text">{{ m.draft }}</div>
             <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
-              <span class="text-body-2">Replace what you already typed in the answer box?</span>
+              <span class="text-body-2">Replace what you already typed in the {{ boxName }}?</span>
               <div class="question-chat__confirm-actions">
                 <v-btn color="primary" variant="flat" class="question-chat__action" @click="useDraft(m.id, m.draft!)">Replace</v-btn>
                 <v-btn variant="text" class="question-chat__action" @click="confirmingDraft = null">Keep mine</v-btn>
@@ -205,7 +225,7 @@ defineExpose({ focus: () => input.value?.focus() })
               <v-btn color="primary" variant="tonal" class="question-chat__action" prepend-icon="mdi-text-box-edit-outline" @click="useDraft(m.id, m.draft!)">
                 Use this draft
               </v-btn>
-              <span class="text-caption text-medium-emphasis">Puts it in the answer box on the card. Nothing is saved until you press Save.</span>
+              <span class="text-caption text-medium-emphasis">Puts it in the {{ boxName }} on the card. Nothing is saved until you press Save.</span>
             </div>
           </div>
 
@@ -226,7 +246,7 @@ defineExpose({ focus: () => input.value?.focus() })
               >
                 Answer: {{ m.suggestedAnswer }}
               </v-btn>
-              <span class="text-caption text-medium-emphasis">Saves this answer to your knowledge base.</span>
+              <span class="text-caption text-medium-emphasis">{{ opensExample(m.suggestedAnswer) ? 'Opens the example box on the card. Nothing is saved until you press Save.' : 'Saves this answer to your knowledge base.' }}</span>
             </template>
           </div>
         </template>

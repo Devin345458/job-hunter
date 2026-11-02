@@ -16,6 +16,8 @@ export interface ChatQuestion {
   answer: string | null
   answerType: QuestionListItem['answerType']
   choices: string[] | null
+  /** knows and has_done yes or no questions take an example with Yes or Some experience; the chat drafts that example. */
+  kind?: string | null
   /** From the original tailoring flow: no kind and no answer type, answered in the long editor. */
   legacy: boolean
   job?: { title: string; company: string } | null
@@ -117,6 +119,17 @@ export function useQuestionChat() {
 
   return { threads, sending, restore, send, clear }
 }
+
+/** A yes or no question about a skill or past work: Yes and Some experience open the example box. */
+export function takesExample(q: { answerType: string | null, kind?: string | null } | null | undefined): boolean {
+  return !!q && q.answerType === 'yes_no' && (q.kind === 'knows' || q.kind === 'has_done')
+}
+
+/** The answers that open the example box ("Where did you do it?") on a question that takes one. */
+export const EXAMPLE_LEVELS = ['Yes', 'Some experience'] as const
+
+/** Longest example the server accepts (EXAMPLE_MAX_CHARS in server/utils/questions.ts). */
+export const EXAMPLE_MAX_CHARS = 1000
 
 /** The question the chat was last about, so a reload in the same tab reopens it. */
 export function savedChatQuestionId(): number | null {
