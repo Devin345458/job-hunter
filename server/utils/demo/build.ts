@@ -375,6 +375,11 @@ const GITIGNORE: Record<string, string> = {
  * Build one demo. Returns the final row; never throws for a build failure (the row is
  * marked failed with the reason), only for programming errors before the build starts.
  */
+/** True when a demo failed only because Claude was out of credit or over the daily budget. */
+export function isBudgetFailure(error: string | null | undefined): boolean {
+  return /credit balance is too low|out of credit|Daily AI budget reached|Waiting for Claude/i.test(error ?? '')
+}
+
 export async function buildDemo(demoId: number, runLog: (msg: string) => void = () => {}): Promise<DemoRow> {
   const demo = getDemo(demoId)
   if (!demo) throw new Error(`Demo ${demoId} not found`)
@@ -440,7 +445,7 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
           messages.push({ role: 'user', content: [{ type: 'text', text: 'Your last reply was cut off because it was too long, so none of its tool calls ran. Write one or two files per reply and keep each file focused.' }] })
           continue
         }
-        if (e instanceof AiBudgetExceeded) return fail(e.message)
+        if (e instanceof AiBudgetExceeded) return fail(`Waiting for Claude: ${e.message} The next run retries this demo.`)
         return fail(`Claude call failed on turn ${turn}: ${e?.message || e}`)
       }
       log(`turn ${turn}: ${response.model}, ${response.usage.input_tokens} in + ${response.usage.cache_read_input_tokens ?? 0} cached + ${response.usage.output_tokens} out, stop ${response.stop_reason}`)
@@ -550,7 +555,7 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     .orderBy(desc(jobs.matchScore))
     .all()
 
-  const stats = { candidates: apps.length, analyzed: 0, recommended: 0, built: 0, failed: 0, skipped: 0, interrupted: stuck.length, costUsd: 0, demos: [] as Array<{ id: number; applicationId: number; slug: string; status: string; costUsd: number }> }
+  const stats = { candidates: apps.length, analyzed: 0, recommended: 0, built: 0, failed: 0, skipped: 0, interrupted: stuck.length, budgetStopped: false, costUsd: 0, demos: [] as Array<{ id: number; applicationId: number; slug: string; status: string; costUsd: number }> }
   const queue: Array<{ applicationId: number; item: GapItem }> = []
   for (const { app } of apps) {
     let gap = parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)
@@ -562,6 +567,7 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
       }
       catch (e: any) {
         log(`application ${app.id}: gap analysis failed: ${e?.message || e}`)
+        if (e instanceof AiBudgetExceeded) { stats.budgetStopped = true; break }
         continue
       }
     }
@@ -570,7 +576,9 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     stats.recommended++
     const existing = demosForApplication(app.id)
     const active = existing.find(d => ['building', 'built', 'publishing', 'published'].includes(d.status))
-    const failedBefore = existing.find(d => d.status === 'failed')
+    // A demo that failed only because Claude was out of credit or over the daily budget is
+    // retried automatically; any other failure waits for a manual retry.
+    const failedBefore = existing.find(d => d.status === 'failed' && !isBudgetFailure(d.error))
     if (active || (failedBefore && !opts.retryFailed && !opts.applicationId)) {
       stats.skipped++
       continue
@@ -585,10 +593,12 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     log(`application ${applicationId}: building demo ${demo.id} "${demo.title}"`)
     const done = await buildDemo(demo.id, log)
     if (done.status === 'built') stats.built++
+    else if (isBudgetFailure(done.error)) stats.budgetStopped = true
     else stats.failed++
     const cost = demoCost(demo.id)
     stats.costUsd += cost
     stats.demos.push({ id: demo.id, applicationId, slug: done.slug, status: done.status, costUsd: Number(cost.toFixed(4)) })
+    if (stats.budgetStopped) break
   }
   stats.skipped += Math.max(0, queue.length - max)
   stats.costUsd = Number(stats.costUsd.toFixed(4))
