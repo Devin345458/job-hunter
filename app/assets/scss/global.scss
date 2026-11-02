@@ -73,6 +73,25 @@ p {
     line-height: 1.55;
     max-width: 62ch;
   }
+
+  // Title and subtitle on the left, the page's main action on the right. The action drops
+  // under the subtitle when the row gets too narrow.
+  &--split {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px 24px;
+
+    > :first-child {
+      flex: 1 1 320px;
+      min-width: 0;
+    }
+
+    > .v-btn {
+      flex: 0 0 auto;
+    }
+  }
 }
 
 // ── Emphasis outline (was a glow; borders carry depth in this theme) ──
@@ -189,4 +208,59 @@ p {
   border-radius: 4px;
   padding: 1px 5px;
   color: rgb(var(--v-theme-on-surface));
+}
+
+// ── Dialog and sheet scrims ──
+// Vuetify's default is 32% black, which barely shows on these dark surfaces: behind a dialog the
+// page still looked live (an "Approve and submit" button looked clickable behind Reject). Overlays
+// teleport to <body>, so this sits on :root, not under .v-application. Menus and tooltips draw no scrim.
+:root .v-overlay {
+  --v-overlay-opacity: 0.66;
+}
+
+:root .v-navigation-drawer__scrim {
+  opacity: 0.55;
+}
+
+// ── Floating action button ──
+// Always labeled, and always clear of the phone's 56px bottom bar and the home indicator. On
+// desktop there is no bottom bar. Pages that use it pad their end with .has-floating-action.
+.floating-action {
+  position: fixed !important;
+  right: 16px;
+  bottom: calc(56px + 16px + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+
+  @media (min-width: 960px) {
+    right: 32px;
+    bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+.has-floating-action {
+  padding-bottom: 72px;
+}
+
+// ── Touch targets in the phone shell ──
+// Below 960px the app runs its phone layout (drawer menu and bottom bar). Every button and every
+// clickable chip gets at least a 44px target there, whatever size prop the page chose. Dialog
+// buttons teleport to <body>, hence :root rather than .v-application.
+@media (max-width: 959.98px) {
+  :root .v-btn {
+    min-height: 44px;
+  }
+
+  :root .v-btn.v-btn--icon {
+    min-width: 44px;
+  }
+
+  :root .v-chip.v-chip--link {
+    min-height: 44px;
+  }
+
+  // The slider track is the touch surface (a press anywhere moves the nearest thumb); give it
+  // 44px of height without making the thumbs bigger.
+  :root .v-slider.v-input--horizontal > .v-input__control {
+    min-height: 44px;
+  }
 }
