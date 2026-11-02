@@ -28,6 +28,7 @@ import { ruleTerm, ruleWordMatch } from './learned-score'
 import { nowSql, parseJson, referencedQuestionIds } from './review'
 import { queueSkillRescore, rescoreJobs } from './scoring'
 import { applyAnswerToOpenJobs } from './skill-claims'
+import { queueRepoSuggest, repoSuggestionsFor } from './repos/suggest-store'
 
 export type QuestionRow = InferSelectModel<typeof questions>
 
@@ -76,7 +77,7 @@ export function askQuestion(input: AskInput): QuestionRow {
     }
     return pending
   }
-  return db.insert(questions).values({
+  const row = db.insert(questions).values({
     question: input.question,
     context: input.context ?? null,
     category: input.category ?? (input.kind === 'preference' ? 'preference' : 'technical'),
@@ -91,6 +92,9 @@ export function askQuestion(input: AskInput): QuestionRow {
     dedupeKey,
     status: 'pending',
   }).returning().get()
+  // A new skill or experience question gets checked against Devin's own GitHub commits.
+  if (row.kind === 'knows' || row.kind === 'has_done') queueRepoSuggest(row.id)
+  return row
 }
 
 /** Answered value for a (kind, subject), or null if Devin has not answered it. */
@@ -544,6 +548,7 @@ export function toQuestionListItem(
   waitingIds: number[],
   waitingApplications?: Array<{ id: number; company: string; title: string }>,
   example: string | null = null,
+  repoSuggestion: QuestionListItem['repoSuggestion'] = null,
 ): QuestionListItem {
   return {
     id: q.id,
@@ -568,6 +573,7 @@ export function toQuestionListItem(
     waitingApplicationIds: waitingIds,
     ...(waitingApplications ? { waitingApplications } : {}),
     legacy: isLegacyQuestion(q),
+    repoSuggestion: q.status === 'pending' && takesExample(q) ? repoSuggestion : null,
   }
 }
 
@@ -598,11 +604,12 @@ export function listQuestionItems(filter: { status?: string; applicationId?: num
     return { id, company: job?.company ?? '', title: job?.title ?? '' }
   })
   const knowledge = rows.some(q => q.status === 'answered' && takesExample(q)) ? loadKnowledge() : []
+  const suggestions = repoSuggestionsFor(rows.filter(q => q.status === 'pending' && takesExample(q)).map(q => q.id))
   return rows
     .map((q) => {
       const jobId = q.jobId ?? (q.applicationId ? appJob.get(q.applicationId) : undefined)
       const waitingIds = q.status === 'pending' ? waitingApplicationIds(q, waiting) : []
-      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds), questionExample(q, knowledge))
+      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds), questionExample(q, knowledge), suggestions.get(q.id) ?? null)
     })
     .sort((a, b) => Number(b.blocking || b.waitingApplicationIds.length > 0) - Number(a.blocking || a.waitingApplicationIds.length > 0)
       || Number(a.legacy) - Number(b.legacy)

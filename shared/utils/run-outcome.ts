@@ -19,6 +19,8 @@ export const TASK_LABELS: Record<string, string> = {
   // Started from a demo's page, one demo at a time.
   'demos:rebuild': 'Rebuild a demo',
   'demos:preview': 'Build a demo preview',
+  'repos:index': 'Index GitHub commits',
+  'repos:suggest': 'Suggest answers from GitHub',
   'system:heartbeat': 'Scheduler heartbeat',
 }
 

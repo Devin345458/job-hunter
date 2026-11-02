@@ -251,3 +251,81 @@ export const aiCalls = sqliteTable('ai_calls', {
 }, (table) => [
   index('ai_calls_created_at_idx').on(table.createdAt),
 ])
+
+// ── Migration 0003: GitHub evidence (server/utils/repos). CREATE TABLE only. ──
+// Only Devin's own commits count as evidence. These tables hold what the indexer read from the
+// repos he switched on in Settings: commit metadata (never diffs), languages, and dependency
+// names. Tokens are never stored. token_index points at a position in the configured list.
+
+export const repoSources = sqliteTable('repo_sources', {
+  fullName: text('full_name').primaryKey(), // owner/name as GitHub returns it
+  owner: text('owner').notNull(),
+  name: text('name').notNull(),
+  ownerType: text('owner_type'), // User or Organization
+  isPrivate: integer('is_private', { mode: 'boolean' }).notNull().default(false),
+  isFork: integer('is_fork', { mode: 'boolean' }).notNull().default(false),
+  archived: integer('archived', { mode: 'boolean' }).notNull().default(false),
+  sizeKb: integer('size_kb'),
+  defaultBranch: text('default_branch'),
+  htmlUrl: text('html_url'),
+  pushedAt: text('pushed_at'),
+  tokenIndex: integer('token_index'), // which configured read token sees this repo (0-based)
+  included: integer('included', { mode: 'boolean' }), // null: never switched, the owner default applies
+  listedAt: text('listed_at'), // last time a token listed it. Older rows are repos the tokens lost.
+  headSha: text('head_sha'),
+  indexedAt: text('indexed_at'),
+  commitCount: integer('commit_count'),
+  skipReason: text('skip_reason'), // too large, empty
+  indexError: text('index_error'),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('repo_sources_owner_idx').on(table.owner),
+])
+
+export const repoCommits = sqliteTable('repo_commits', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  repo: text('repo').notNull(), // repo_sources.full_name
+  sha: text('sha').notNull(),
+  authoredAt: text('authored_at').notNull(),
+  authorName: text('author_name'),
+  authorEmail: text('author_email'),
+  message: text('message').notNull(),
+  pathsJson: text('paths_json'), // string[] of changed paths
+  url: text('url').notNull(),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('repo_commits_repo_sha_idx').on(table.repo, table.sha),
+  index('repo_commits_authored_at_idx').on(table.authoredAt),
+])
+
+export const repoFacts = sqliteTable('repo_facts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  repo: text('repo').notNull(),
+  kind: text('kind').notNull(), // language, dependency
+  name: text('name').notNull(),
+  detail: text('detail'), // manifest path for a dependency, bytes for a language
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+}, (table) => [
+  index('repo_facts_repo_idx').on(table.repo),
+  index('repo_facts_kind_name_idx').on(table.kind, table.name),
+])
+
+export const repoSuggestions = sqliteTable('repo_suggestions', {
+  questionId: integer('question_id').primaryKey().references(() => questions.id),
+  status: text('status').notNull(), // suggested, none, error
+  subject: text('subject'),
+  termsJson: text('terms_json'), // string[] the subject was expanded into
+  level: text('level'), // Yes or Some experience, never No
+  draft: text('draft'),
+  evidenceJson: text('evidence_json'), // RepoEvidence[]
+  commitShasJson: text('commit_shas_json'), // the hit set the suggestion was judged from
+  error: text('error'),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+})
+
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  valueJson: text('value_json').notNull(),
+  updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+})
