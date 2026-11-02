@@ -205,7 +205,7 @@ function blockingCount(item: ReviewItem) {
     border-radius: 4px;
     display: grid;
     place-items: center;
-    font-size: 0.625rem;
+    font-size: 0.75rem;
     font-weight: 700;
     color: rgb(var(--v-theme-info));
     border: 1px dashed rgba(var(--v-theme-info), 0.6);

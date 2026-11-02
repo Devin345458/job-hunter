@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { QuestionView } from '#shared/types/pipeline'
+import { plainKnowledgeRefs } from '#shared/utils/plain-text'
 
 // Open questions answered in place. Yes or no is one tap; text, numbers, and choices take one
 // short field and Save. Answers go through PATCH /api/questions/:id via the parent.
@@ -37,7 +38,7 @@ function inputMode(q: QuestionView) {
         <span v-else class="qs__flag qs__flag--soft">Optional</span>
       </div>
       <h4 class="qs__question">{{ q.question }}</h4>
-      <p v-if="q.context" class="qs__context">{{ q.context }}</p>
+      <p v-if="q.context" class="qs__context">{{ plainKnowledgeRefs(q.context) }}</p>
 
       <div v-if="q.answerType === 'yes_no'" class="qs__actions">
         <v-btn
@@ -134,7 +135,7 @@ function inputMode(q: QuestionView) {
   }
 
   &__flag {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;

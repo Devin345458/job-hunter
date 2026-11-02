@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
+import { properName } from '#shared/utils/names'
 definePageMeta({ layout: 'default' })
 
 const snackbar = useSnackbar()
@@ -426,7 +427,7 @@ onMounted(fetchConfigs)
                   variant="tonal"
                   color="secondary"
                 >
-                  {{ source }}
+                  {{ properName(source) }}
                 </v-chip>
               </div>
             </v-card-text>

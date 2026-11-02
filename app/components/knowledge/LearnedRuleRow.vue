@@ -89,7 +89,7 @@ const extra = computed(() => Math.max(0, props.rule.evidenceCount - MAX_DOTS))
   }
 
   &__unit {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     opacity: 0.7;

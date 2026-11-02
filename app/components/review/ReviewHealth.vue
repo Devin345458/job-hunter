@@ -253,9 +253,17 @@ const summaryTone = computed(() => (aiProblem.value ? 'error' : runTone.value))
     }
   }
 
+  // Phone shell, either variant (the empty queue shows the panel on a phone too): 44px targets.
   &--inline &__link {
     min-height: 44px;
     padding: 0 4px;
+  }
+
+  @media (max-width: 959.98px) {
+    &__link {
+      min-height: 44px;
+      padding: 0 4px;
+    }
   }
 
   &__err {

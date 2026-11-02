@@ -1,20 +1,19 @@
 <script setup lang="ts">
 import type { TailoredResume } from '#shared/types/pipeline'
 
-// The tailored resume, readable inline in the same order the PDF prints it.
-defineProps<{
+// The tailored resume, readable inline in the same order the PDF prints it. Above it, the
+// evidence check: what the tailoring emphasized and which lines were rewritten or dropped, as a
+// list. The application page shows that record in its own section, so it passes notes false.
+withDefaults(defineProps<{
   resume: TailoredResume
   pdfUrl: string | null
-}>()
+  notes?: boolean
+}>(), { notes: true })
 </script>
 
 <template>
   <div class="resume">
-    <div class="resume__bar">
-      <p v-if="resume.tailoringNotes" class="resume__notes">
-        <v-icon icon="mdi-auto-fix" size="14" />
-        {{ resume.tailoringNotes }}
-      </p>
+    <div v-if="pdfUrl" class="resume__bar">
       <v-btn
         v-if="pdfUrl"
         :href="pdfUrl"
@@ -27,6 +26,8 @@ defineProps<{
         Open PDF
       </v-btn>
     </div>
+
+    <ApplicationsEvidenceCheck v-if="notes && resume.tailoringNotes" :notes="resume.tailoringNotes" class="resume__evidence" />
 
     <div class="resume__doc">
       <p v-if="resume.summary" class="resume__summary">{{ resume.summary }}</p>
@@ -75,17 +76,14 @@ defineProps<{
   &__bar {
     display: flex;
     align-items: flex-start;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 12px;
     flex-wrap: wrap;
     margin-bottom: 12px;
   }
 
-  &__notes {
-    flex: 1 1 240px;
-    margin: 0;
-    font-size: 0.8125rem;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  &__evidence {
+    margin-bottom: 12px;
   }
 
   &__doc {

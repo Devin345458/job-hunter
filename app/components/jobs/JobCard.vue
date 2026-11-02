@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { JobListItem, JobStatus } from '~/composables/useJobs'
-import { ATS_LABELS, formatMoneyShort } from './format'
+import { ATS_LABELS, formatMoneyShort, uniqueTags } from './format'
 
 const props = defineProps<{
   job: JobListItem
@@ -14,15 +14,7 @@ const statusColors: Record<JobStatus, string> = {
   expired: 'grey',
 }
 
-const tags = computed(() => {
-  if (!props.job.tags) return []
-  try {
-    return JSON.parse(props.job.tags) as string[]
-  }
-  catch {
-    return []
-  }
-})
+const tags = computed(() => uniqueTags(props.job.tags))
 
 const salaryDisplay = computed(() => {
   const { salaryMin: min, salaryMax: max, salaryCurrency } = props.job

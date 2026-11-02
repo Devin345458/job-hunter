@@ -304,7 +304,6 @@ const submissionSummary = computed(() => {
             :screenshot-url="review.form.screenshotUrl"
             :filled-at="review.form.filledAt"
             :form-error="review.form.error"
-            :copy-mode="app.status === 'needs_manual' && !prepareFailed"
             :question-hint="questionHint"
           />
           <p v-else class="ad__empty">
@@ -313,12 +312,17 @@ const submissionSummary = computed(() => {
         </ReviewSection>
 
         <ReviewSection title="Resume" icon="mdi-file-account-outline" :summary="resumeSummary">
-          <ReviewResume v-if="review?.resume" :resume="review.resume" :pdf-url="review.resumePdfUrl" />
+          <ReviewResume v-if="review?.resume" :resume="review.resume" :pdf-url="review.resumePdfUrl" :notes="false" />
           <p v-else class="ad__empty">The tailored resume appears here once it is written and checked.</p>
         </ReviewSection>
 
         <ReviewSection title="Cover letter" icon="mdi-email-outline" :summary="letterSummary">
-          <div v-if="app.coverLetter" class="ad__doc">{{ app.coverLetter }}</div>
+          <template v-if="app.coverLetter">
+            <div class="ad__doc-tools">
+              <ReviewCopyButton :text="app.coverLetter" variant="tonal" label="Copy cover letter" />
+            </div>
+            <div class="ad__doc">{{ app.coverLetter }}</div>
+          </template>
           <p v-else class="ad__empty">The cover letter appears here once it is written and checked.</p>
         </ReviewSection>
 
@@ -449,6 +453,8 @@ const submissionSummary = computed(() => {
   }
 
   &__sections { margin-top: 12px; }
+
+  &__doc-tools { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 
   &__doc {
     white-space: pre-line;

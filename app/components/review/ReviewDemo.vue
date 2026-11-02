@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import type { DemoProjectView, DemoStatus } from '#shared/types/pipeline'
+import type { DemoProjectView, DemoStatus, ReviewItem } from '#shared/types/pipeline'
 import { plainError } from '#shared/utils/plain-text'
 
 // The demo project built for this application. Approve publishes it (repo plus resume site)
 // before the form is submitted, so its state is part of the decision.
-const props = defineProps<{ demo: DemoProjectView }>()
+const props = defineProps<{
+  demo: DemoProjectView
+  /** What approve will do (the review item's approveEffect); the built note says it. */
+  effect?: ReviewItem['approveEffect'] | null
+  /** Who a by-hand submit goes to. */
+  company?: string
+}>()
 
 const STATUS: Record<DemoStatus, { label: string; color: string; note: string }> = {
   proposed: { label: 'Proposed', color: 'secondary', note: 'Not built yet.' },
@@ -17,6 +23,14 @@ const STATUS: Record<DemoStatus, { label: string; color: string; note: string }>
 }
 
 const meta = computed(() => STATUS[props.demo.status] ?? STATUS.proposed)
+/** A built demo's note says what approve does with it: blocked, publish then hand back, or publish then submit. */
+const note = computed(() => {
+  const e = props.effect
+  if (props.demo.status !== 'built' || !e) return meta.value.note
+  if (e.demoBlocked) return `${e.demoBlocked.replace(/\.$/, '')}, so approve stays off.`
+  if (e.submit === 'manual') return `Approve publishes it to GitHub and your resume site, then marks the application for you to submit on ${props.company || 'the employer'}'s site.`
+  return meta.value.note
+})
 const totalKb = computed(() => Math.round(props.demo.files.reduce((n, f) => n + f.bytes, 0) / 1024))
 const readmeOpen = ref(false)
 const outputOpen = ref(false)
@@ -41,7 +55,7 @@ function kb(bytes: number) {
         <v-btn v-if="demo.liveUrl" :href="demo.liveUrl" target="_blank" rel="noopener" variant="tonal" prepend-icon="mdi-open-in-new" height="44">Live</v-btn>
       </div>
     </div>
-    <p class="demo__note">{{ meta.note }}</p>
+    <p class="demo__note">{{ note }}</p>
 
     <p v-if="demo.summary" class="demo__summary">{{ demo.summary }}</p>
 

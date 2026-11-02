@@ -1,5 +1,6 @@
 import type { AnswerSource, ApplicationStatus, FormAnswer, PipelineRunView, ReviewItem } from '#shared/types/pipeline'
-import { capitalize, plainQuestionRefs } from '#shared/utils/plain-text'
+import { capitalize, plainKnowledgeRefs, plainQuestionRefs } from '#shared/utils/plain-text'
+import { properName } from '#shared/utils/names'
 
 // Status vocabulary and formatting shared by every review component. Lives in a nested folder
 // so Nuxt does not auto-import these generic names app-wide; import them explicitly.
@@ -151,10 +152,13 @@ export function answerSourceText(a: Pick<FormAnswer, 'source' | 'sourceDetail' |
     if (!detail) return label
     const found = /^HOW FOUND(?: line)?:?\s*(.*)$/i.exec(detail)
     if (found) return `${label}: how you found the job${found[1] ? ` (${found[1]})` : ''}`
-    return `${label}: ${knowledgeRef(detail)}`
+    // A bare key ("profile/Full Name") reads as its name; a sentence that cites keys
+    // ("initials of profile/Full Name (...)") reads with each key in plain words.
+    const bare = knowledgeRef(detail)
+    return `${label}: ${bare !== detail && !/[/:]/.test(bare) ? bare : plainKnowledgeRefs(detail)}`
   }
-  if (a.source === 'skipped' || a.source === 'eeo_decline') return plainQuestionRefs(detail) || label
-  return detail ? `${label}: ${plainQuestionRefs(detail)}` : label
+  if (a.source === 'skipped' || a.source === 'eeo_decline') return plainKnowledgeRefs(plainQuestionRefs(detail)) || label
+  return detail ? `${label}: ${plainKnowledgeRefs(plainQuestionRefs(detail))}` : label
 }
 
 /** A form blocker without its internal key: "captcha: Google reCAPTCHA is..." becomes "Google reCAPTCHA is...". */
@@ -167,31 +171,8 @@ export function plural(n: number, word: string, many = `${word}s`): string {
   return `${n} ${n === 1 ? word : many}`
 }
 
-const PROPER: Record<string, string> = {
-  ashby: 'Ashby',
-  greenhouse: 'Greenhouse',
-  lever: 'Lever',
-  workable: 'Workable',
-  smartrecruiters: 'SmartRecruiters',
-  recruitee: 'Recruitee',
-  bamboohr: 'BambooHR',
-  jobvite: 'Jobvite',
-  workday: 'Workday',
-  icims: 'iCIMS',
-  taleo: 'Taleo',
-  successfactors: 'SuccessFactors',
-  sandbox: 'Sandbox',
-  adzuna: 'Adzuna',
-  remotive: 'Remotive',
-  jsearch: 'JSearch',
-  manual: 'Added by hand',
-}
-
-/** A job source or ATS id as its product name: "ashby" becomes "Ashby". */
-export function properName(id: string | null | undefined): string {
-  if (!id) return ''
-  return PROPER[id.toLowerCase()] ?? id.charAt(0).toUpperCase() + id.slice(1)
-}
+/** A job source or ATS id as its product name. The map lives in shared/utils/names.ts so server text uses it too. */
+export { properName }
 
 // ── Pipeline runs ────────────────────────────────────────────
 

@@ -29,16 +29,22 @@ const demoWillPublish = computed(() => props.item.demo?.status === 'built')
 
 const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item.approveEffect?.submit === 'manual' && !props.item.isSandbox ? 'Approve' : 'Approve and submit'))
 
-/** Why approve is off, said in the bar rather than a tooltip so it reads on a phone. */
-const blockedReason = computed(() => {
-  if (props.item.status === 'needs_input') {
-    if (blocking.value > 0) return `Answer ${plural(blocking.value, 'question')} above to unlock approve.`
-    if (props.refreshing) return 'Updating the form answers with what you said.'
-    return 'Answers saved. Approve unlocks when the pipeline marks this ready.'
+/**
+ * Every reason approve is off, one line each, said in the bar rather than a tooltip so it reads
+ * on a phone. Open questions and a demo that cannot publish are separate problems; showing only
+ * the first left the second hidden until the first was fixed.
+ */
+const blockedReasons = computed<string[]>(() => {
+  const status = props.item.status
+  const out: string[] = []
+  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} above to unlock approve.`)
+  else if (status === 'needs_input') {
+    out.push(props.refreshing ? 'Updating the form answers with what you said.' : 'Answers saved. Approve unlocks when the pipeline marks this ready.')
   }
-  if (blocking.value > 0) return `Answer ${plural(blocking.value, 'question')} above to unlock approve.`
-  if (demoBlocked.value && CAN_APPROVE.includes(props.item.status)) return `${demoBlocked.value}. Set it, or discard the demo, to approve.`
-  return null
+  if (demoBlocked.value && (CAN_APPROVE.includes(status) || status === 'needs_input')) {
+    out.push(`${demoBlocked.value.replace(/\.$/, '')}. Set it, or discard the demo, to approve.`)
+  }
+  return out
 })
 
 const consequence = computed(() => {
@@ -56,12 +62,14 @@ const consequence = computed(() => {
 
 <template>
   <div v-if="canApprove || canReject || isManual || item.status === 'needs_input'" class="bar">
-    <p class="bar__line" :class="{ 'bar__line--blocked': !!blockedReason }" role="status">
-      <template v-if="blockedReason">
-        <v-icon icon="mdi-lock-outline" size="15" />
-        {{ blockedReason }}
-      </template>
-      <template v-else-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
+    <div v-if="blockedReasons.length" class="bar__line bar__reasons" role="status">
+      <p v-for="r in blockedReasons" :key="r" class="bar__reason">
+        <v-icon icon="mdi-lock-outline" size="15" class="bar__reason-icon" />
+        <span>{{ r }}</span>
+      </p>
+    </div>
+    <p v-else class="bar__line" role="status">
+      <template v-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
       <template v-else-if="isManual">
         <template v-if="item.submission?.manualReason">{{ item.submission.manualReason }}. </template>Submit it on the employer's site, or reject if you changed your mind.
       </template>
@@ -125,12 +133,25 @@ const consequence = computed(() => {
     line-height: 1.45;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
-    &--blocked {
-      color: rgb(var(--v-theme-warning));
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
+  }
+
+  &__reasons {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__reason {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    color: rgb(var(--v-theme-warning));
+  }
+
+  &__reason-icon {
+    flex-shrink: 0;
+    margin-top: 1px;
   }
 
   &__buttons {

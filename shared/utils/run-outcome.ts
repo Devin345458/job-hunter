@@ -1,4 +1,5 @@
 import { isCreditError } from './plain-text'
+import { properName } from './names'
 
 // One outcome per pipeline run, derived from what the run recorded. A run that finished without
 // throwing is not automatically a success: a step that scored 0 of 38 jobs, or stopped because
@@ -82,7 +83,7 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
   const sources = stats.sources as Record<string, { status?: string }> | undefined
   if (sources && typeof sources === 'object') {
     const down = Object.entries(sources).filter(([, s]) => s?.status === 'failed').map(([name]) => name)
-    if (down.length) out.push(`${down.join(', ')} search failed`)
+    if (down.length) out.push(`${down.map(properName).join(', ')} search failed`)
   }
   return out
 }

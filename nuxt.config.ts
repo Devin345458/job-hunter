@@ -181,6 +181,9 @@ export default defineNuxtConfig({
 
   app: {
     head: {
+      htmlAttrs: { lang: 'en' },
+      // Pages set their own title; the layout falls back to the section name.
+      title: 'Job Hunter',
       link: [
         {
           rel: 'preconnect',

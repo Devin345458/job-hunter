@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
 import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
-import { fixPlurals } from '#shared/utils/plain-text'
+import { fixPlurals, plainKnowledgeRefs } from '#shared/utils/plain-text'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
@@ -26,6 +26,7 @@ const emit = defineEmits<{
 }>()
 
 const meta = computed(() => itemStatusMeta(props.item))
+const company = computed(() => props.item.job.company || hostOf(props.item.job.applyUrl))
 const isDecide = computed(() => meta.value.group === 'decide')
 const blockingQs = computed(() => props.item.openQuestions.filter(q => q.blocking))
 const optionalQs = computed(() => props.item.openQuestions.filter(q => !q.blocking))
@@ -196,8 +197,8 @@ const letterPreview = computed(() => {
         </ReviewSection>
 
         <ReviewSection v-if="item.demo" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
-          <ReviewDemo :demo="item.demo" />
-          <p v-if="item.gap?.summary" class="rc__gap">Gap analysis: {{ fixPlurals(item.gap.summary) }}</p>
+          <ReviewDemo :demo="item.demo" :effect="item.approveEffect" :company="company" />
+          <p v-if="item.gap?.summary" class="rc__gap">Gap analysis: {{ plainKnowledgeRefs(fixPlurals(item.gap.summary)) }}</p>
         </ReviewSection>
 
         <ReviewSection
@@ -214,7 +215,6 @@ const letterPreview = computed(() => {
             :screenshot-url="item.form.screenshotUrl"
             :filled-at="item.form.filledAt"
             :form-error="item.form.error"
-            :copy-mode="isManual && !prepareFailed"
             :question-hint="questionHint"
           />
         </ReviewSection>
@@ -225,7 +225,12 @@ const letterPreview = computed(() => {
         </ReviewSection>
 
         <ReviewSection title="Cover letter" icon="mdi-email-outline" :summary="letterPreview">
-          <div v-if="item.coverLetter" class="rc__letter">{{ item.coverLetter }}</div>
+          <template v-if="item.coverLetter">
+            <div class="rc__doc-tools">
+              <ReviewCopyButton :text="item.coverLetter" variant="tonal" label="Copy cover letter" />
+            </div>
+            <div class="rc__letter">{{ item.coverLetter }}</div>
+          </template>
           <p v-else class="rc__empty">No cover letter yet.</p>
         </ReviewSection>
 
@@ -388,6 +393,12 @@ const letterPreview = computed(() => {
     border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     max-height: 480px;
     overflow-y: auto;
+  }
+
+  &__doc-tools {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
   }
 
   &__letter {

@@ -22,28 +22,27 @@ const dimensions = computed(() => {
 </script>
 
 <template>
-  <v-tooltip :text="`Match Score: ${score}/100`">
-    <template #activator="{ props: tooltipProps }">
-      <div
-        v-bind="tooltipProps"
-        class="match-score-badge"
-        :style="{
-          width: `${dimensions.width}px`,
-          height: `${dimensions.width}px`,
-          fontSize: dimensions.fontSize,
-        }"
-      >
-        <v-progress-circular
-          :model-value="score"
-          :size="dimensions.width"
-          :width="3"
-          :color="color"
-        >
-          <span class="font-weight-bold">{{ score }}</span>
-        </v-progress-circular>
-      </div>
-    </template>
-  </v-tooltip>
+  <!-- The ring is named for screen readers; title gives the same words on hover. A Vuetify tooltip
+       here left an empty tooltip node on every card, which has no accessible name. -->
+  <div
+    class="match-score-badge"
+    :title="`Match score ${score} of 100`"
+    :style="{
+      width: `${dimensions.width}px`,
+      height: `${dimensions.width}px`,
+      fontSize: dimensions.fontSize,
+    }"
+  >
+    <v-progress-circular
+      :model-value="score"
+      :size="dimensions.width"
+      :width="3"
+      :color="color"
+      :aria-label="`Match score ${score} of 100`"
+    >
+      <span class="font-weight-bold" aria-hidden="true">{{ score }}</span>
+    </v-progress-circular>
+  </div>
 </template>
 
 <style scoped lang="scss">

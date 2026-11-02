@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import type { JobFilters, JobSort } from '~/composables/useJobs'
+import type { JobFilters, JobListItem, JobSort } from '~/composables/useJobs'
 import type { JobFilterValues } from '~/components/jobs/JobFilters.vue'
 import { SupersededRequest } from '~/composables/useJobs'
 
+// Coming back from a job page, the router leaves the scroll alone; the page restores it below.
 definePageMeta({
   layout: 'default',
+  scrollToTop: (_to, from) => !/^\/jobs\/\d+/.test(from.path),
 })
 
 /** Divides evenly into the two and three column grids. */
@@ -14,9 +16,35 @@ const router = useRouter()
 const { jobs, total, page, loading, error, fetchJobs, triggerSearch } = useJobs()
 const snackbar = useSnackbar()
 
-const filters = ref<JobFilters>({})
+// ── Back to Jobs keeps the list ──
+// Opening a job saves the list as it stands: sort, filters, every loaded page, and the scroll
+// position. Coming back from that job (Back to Jobs, or the browser's back button) restores it
+// instead of starting over on the first page. Any other way in starts fresh.
+interface JobsListSnapshot {
+  filters: JobFilters
+  filterValues: JobFilterValues | null
+  sort: JobSort
+  jobs: JobListItem[]
+  total: number
+  page: number
+  scrollY: number
+}
+const JOB_PAGE = /^\/jobs\/\d+/
+const snapshot = useState<JobsListSnapshot | null>('jobs-list-snapshot', () => null)
+const historyState = (import.meta.client ? router.options.history.state : {}) as Record<string, unknown>
+const backFromJob = [historyState.back, historyState.forward].some(p => typeof p === 'string' && JOB_PAGE.test(p))
+const restored = backFromJob ? snapshot.value : null
+
+const filters = ref<JobFilters>(restored?.filters ?? {})
+/** The filter controls' own values, handed back to them when the list is restored. */
+const filterValues = ref<JobFilterValues | null>(restored?.filterValues ?? null)
 /** Best match first by default, so strong matches lead instead of whatever was found last. */
-const sort = ref<JobSort>('score')
+const sort = ref<JobSort>(restored?.sort ?? 'score')
+if (restored) {
+  jobs.value = restored.jobs
+  total.value = restored.total
+  page.value = restored.page
+}
 const loadingMore = ref(false)
 const hasMore = computed(() => jobs.value.length < total.value)
 
@@ -36,6 +64,7 @@ async function load(options: { append?: boolean } = {}) {
 }
 
 function onFiltersUpdate(values: JobFilterValues) {
+  filterValues.value = values
   filters.value = {
     search: values.search || undefined,
     status: values.status.length ? values.status : undefined,
@@ -93,7 +122,26 @@ async function runSearch() {
 }
 
 onMounted(() => {
+  if (restored) {
+    nextTick(() => requestAnimationFrame(() => window.scrollTo({ top: restored.scrollY })))
+    return
+  }
+  // From a job page with nothing saved (it was opened from Learning, say), start at the top.
+  if (backFromJob) window.scrollTo({ top: 0 })
   load()
+})
+
+onBeforeRouteLeave((to) => {
+  if (!JOB_PAGE.test(to.path)) return
+  snapshot.value = {
+    filters: { ...filters.value },
+    filterValues: filterValues.value,
+    sort: sort.value,
+    jobs: jobs.value,
+    total: total.value,
+    page: page.value,
+    scrollY: window.scrollY,
+  }
 })
 </script>
 
@@ -117,7 +165,7 @@ onMounted(() => {
     </div>
 
     <div class="mb-6">
-      <JobsJobFilters @update:filters="onFiltersUpdate" />
+      <JobsJobFilters :initial="filterValues" @update:filters="onFiltersUpdate" />
     </div>
 
     <v-alert

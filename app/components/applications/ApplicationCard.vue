@@ -59,7 +59,7 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
   }
 
   &__sandbox {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     padding: 0 6px;
     border-radius: 6px;

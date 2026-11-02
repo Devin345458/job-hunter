@@ -192,7 +192,7 @@ onMounted(load)
               <div class="move pa-4">
                 <div class="move__head d-flex align-start ga-3">
                   <div class="move__job flex-grow-1">
-                    <NuxtLink :to="`/jobs/${m.jobId}`" class="move__title text-body-2 font-weight-medium">{{ m.jobTitle }}</NuxtLink>
+                    <NuxtLink :to="`/jobs/${m.jobId}`" class="move__title tap-inline text-body-2 font-weight-medium">{{ m.jobTitle }}</NuxtLink>
                     <div class="text-caption text-medium-emphasis">
                       {{ m.company }}<v-chip v-if="m.isSandbox" size="x-small" variant="tonal" label class="ml-2">Sandbox</v-chip>
                     </div>

@@ -9,6 +9,11 @@ export interface JobFilterValues {
   maxScore: number
 }
 
+const props = defineProps<{
+  /** Values to start from, when the jobs page restores a list Devin left for a job. */
+  initial?: JobFilterValues | null
+}>()
+
 const emit = defineEmits<{
   'update:filters': [filters: JobFilterValues]
 }>()
@@ -27,10 +32,10 @@ const remoteOptions: { title: string; value: RemoteType }[] = [
   { title: 'On-site', value: 'onsite' },
 ]
 
-const search = ref('')
-const status = ref<JobStatus[]>([])
-const remoteType = ref<RemoteType | null>(null)
-const scoreRange = ref<[number, number]>([0, 100])
+const search = ref(props.initial?.search ?? '')
+const status = ref<JobStatus[]>([...(props.initial?.status ?? [])])
+const remoteType = ref<RemoteType | null>(props.initial?.remoteType ?? null)
+const scoreRange = ref<[number, number]>([props.initial?.minScore ?? 0, props.initial?.maxScore ?? 100])
 
 /** Phone only: the filters below the search field fold away so the jobs start near the top. */
 const expanded = ref(false)
