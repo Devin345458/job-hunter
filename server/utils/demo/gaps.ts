@@ -127,6 +127,9 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
   const confirmed: Array<{ item: GapItem; subject: string; status: 'partial' | 'lack'; evidence: string | null }> = []
   const seen = new Set<string>()
   for (const c of candidates) {
+    // Work authorization, location, and degrees are profile facts; the prompt says to leave them
+    // out, and this holds when the model lists one anyway ("U.S. work authorization and residency").
+    if (NOT_A_GAP.test(`${c.subject} ${c.requirement}`)) continue
     const subject = c.subject.trim()
     const key = subject.toLowerCase()
     if (!subject || seen.has(key)) continue

@@ -121,7 +121,9 @@ export function groundCheck(line: ClaimLine, c: Check, g: Grounding): string | n
     if (q.length < 8 || !norm(text).includes(q)) return `The quote for "${cl.claim}" is not in ${src}`
     const claimNorm = norm(cl.claim)
     for (const emp of g.employers) {
-      if (claimNorm.includes(norm(emp.name)) && entryKey !== emp.key && !/^posting$/i.test(src)) {
+      // Allowed when the verified quote itself names the employer: Devin's own example ("At Applied
+      // Imagination I demoed ...") stored under a skill entry says where he did it.
+      if (claimNorm.includes(norm(emp.name)) && entryKey !== emp.key && !/^posting$/i.test(src) && !q.includes(norm(emp.name))) {
         return `Attributes "${cl.claim}" to ${emp.name}, but the source is ${src}, not that job's entry`
       }
     }

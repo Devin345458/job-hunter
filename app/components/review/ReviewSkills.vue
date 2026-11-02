@@ -79,6 +79,17 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+
+    // A long skill ("Identity and access management concepts (SSO, SAML, OIDC, SCIM, passkeys)")
+    // wraps inside its chip instead of pushing the card past a phone's edge.
+    :deep(.v-chip) {
+      max-width: 100%;
+      height: auto;
+      min-height: 24px;
+      padding-top: 2px;
+      padding-bottom: 2px;
+      white-space: normal;
+    }
   }
 
   &__none {

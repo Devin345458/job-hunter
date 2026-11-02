@@ -866,6 +866,26 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number } {
   return { reworded, skipped }
 }
 
+/**
+ * Requirements that are facts in the profile, never skill or experience gaps: work authorization,
+ * sponsorship, citizenship, residency, relocation, clearance, location, time zone, and degrees.
+ */
+export const NOT_A_GAP = /\b(work(ing)? authori[sz]ation|authori[sz]ed to work|right to work|work permit|visa|sponsorship|citizen(ship)?|green card|permanent(ly)? resid\w*|residency|relocat\w*|security clearance|clearance|time ?zones?|degree|bachelor'?s|master'?s)\b/i
+
+/** Closes pending gap questions about profile facts (NOT_A_GAP). Idempotent. */
+export function closeNonGapQuestions(): number {
+  const db = useDb()
+  const rows = db.select().from(questions)
+    .where(and(eq(questions.status, 'pending'), inArray(questions.kind, ['has_done', 'knows'])))
+    .all()
+    .filter(q => NOT_A_GAP.test(`${q.subject ?? ''} ${q.question}`))
+  for (const q of rows) {
+    const note = 'Closed: work authorization, location, and education come from your profile, not from a skill question.'
+    db.update(questions).set({ status: 'skipped', blocking: false, context: `${note}${q.context ? ` ${q.context}` : ''}` }).where(eq(questions.id, q.id)).run()
+  }
+  return rows.length
+}
+
 /** Gap question context: what the answer changes, depending on whether code could show the skill. */
 export const GAP_CONTEXT_CODE = 'Your answer decides whether the resume and letter can mention it, and whether a small demo project should be built.'
 export const GAP_CONTEXT_EXPERIENCE = 'Your answer decides whether the resume and letter can mention it. A code project cannot show this, so no demo is built either way.'
@@ -884,6 +904,7 @@ export function rewordLegacyGapContexts(): number {
 export function askDailyQuestions(): QuestionRow[] {
   const db = useDb()
   rewordLegacyGapContexts()
+  closeNonGapQuestions()
   tidyKnowsQuestions()
   const before = new Set(db.select({ id: questions.id }).from(questions).all().map(r => r.id))
   const created: QuestionRow[] = []
