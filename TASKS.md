@@ -92,12 +92,17 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [ ] Pass 2: same four checks.
   - [x] Scheduler: the daily chain fired on its own schedule at 06:00 Central on 2026-11-02 (pipeline_runs 95, trigger `schedule`), and the heartbeat kept firing every 15 minutes through the night.
   - [x] Login sweep: 47 routes, every protected route 401 without a session.
-  - [ ] Pipeline on today's listings: search ran (338 found, 8 new); enrich, match, and prepare failed on "Your credit balance is too low". Blocked on Anthropic credit.
-  - [ ] Sandbox submit: needs a fresh prepared sandbox application, which needs Claude. Blocked on Anthropic credit.
+  - [x] Pipeline on today's listings: Devin's manual pipeline:daily at 15:34 UTC on the new token (run 125): 40 enriched, 47 scored, 0 failed; the five credit-failed applications prepared again, and three real employer forms were filled and not submitted (Spotify and Metabase on Lever, AppFolio on Ashby), each stopped at a captcha and waiting on answers. The last step (demos:build, run 131) was cut off by my deploy at about 15:42; the two credit-failed demos retry on the next run.
+  - [ ] Sandbox submit: both sandbox applications (11, 12) found no form fields because their jobs still pointed at the sandbox posting page (enriched before the guard). Fixed in 4a0b7ad (the form filler maps the posting page to the form). Re-fill and submit pending.
   - [ ] Browser click-through at both widths.
 - [ ] Pass 3: same four checks.
 
 ## Found during the run
+
+- 2026-11-02: Devin switched NUXT_ANTHROPIC_API_KEY to a Max subscription OAuth token (sk-ant-oat01). The app's SDK accepts it and calls work on Haiku 4.5; Opus 5.5 returns 429 unless the request claims to be Claude Code. Anthropic's Claude Code legal and compliance page says subscription OAuth tokens may only be used in Claude Code and Claude.ai. Decision with Devin.
+- 2026-11-02: a 401 from Anthropic (rejected key) was not a run stop; each job and application would have been marked failed. Now it stops the run like running out of credit (bb4932a).
+- 2026-11-02: I deployed while Devin's manual pipeline run was in its demos:build step and the restart cut it off. Check /api/pipeline/runs for a running run before every push.
+- 2026-11-02: the question step asked the home address four ways (ZIP, street, city and state twice) and asked for initials although the profile has the full name. Fix in worktree `fix-questions`.
 
 - 2026-11-02 QA walk: the floating button on Jobs started a live search in one click with no label or confirmation; the walker clicked it and added one real listing (job 400, Capital One, Staff AI Engineer). That search was not recorded in pipeline_runs. Fix in `fix-shell`.
 - 2026-11-02 QA walk: raw Anthropic error JSON and a full server stack trace (with internal paths) were shown in the dashboard; the stack trace caused sideways scroll on phones. Fix in `fix-review`.
