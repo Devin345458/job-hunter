@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { plainQuestionRefs } from '#shared/utils/plain-text'
+import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, ScoreBreakdown } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
@@ -89,7 +89,7 @@ function signed(n: number) {
           <v-progress-linear :model-value="(p.value / p.max) * 100" :color="scoreColor((p.value / p.max) * 100)" height="6" rounded />
         </div>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ score.skills.reasoning }}
+          {{ secondPerson(score.skills.reasoning) }}
         </p>
         <div v-if="score.skills.matched.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Has</span>
@@ -129,7 +129,7 @@ function signed(n: number) {
           </dd>
         </dl>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ plainQuestionRefs(score.compensation.reasoning) }}
+          {{ secondPerson(plainQuestionRefs(score.compensation.reasoning)) }}
         </p>
       </section>
 
