@@ -34,6 +34,7 @@ export default defineEventHandler(() => {
     interviewing: appCount('interviewing'),
     rejected: appCount('rejected'),
     offer: appCount('offer'),
+    no_response: appCount('no_response'),
   }
 
   const recentJobs = db.select({ id: jobs.id, title: jobs.title, company: jobs.company, date: jobs.foundAt, status: jobs.status })

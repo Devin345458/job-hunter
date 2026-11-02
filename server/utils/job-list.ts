@@ -22,7 +22,7 @@ export function jobStateKey(): SQL<string> {
   const list = (values: string[]) => sql.join(values.map(v => sql`${v}`), sql`, `)
   return sql<string>`case
     when ${app} in (${list(IN_REVIEW_APP_STATUSES)}) then 'in_review'
-    when ${app} in (${list(['submitted', 'response_received', 'interviewing', 'offer'])}) then 'applied'
+    when ${app} in (${list(['submitted', 'response_received', 'interviewing', 'offer', 'rejected', 'no_response'])}) then 'applied'
     when ${app} = 'declined' then 'rejected'
     else ${jobs.status} end`
 }

@@ -43,6 +43,9 @@ export default defineEventHandler(async (event) => {
       .select({
         application: applications,
         job: jobs,
+        // The day of the newest employer outcome or "I submitted it", for the card's chip.
+        outcomeDate: sql<string | null>`(select json_extract(d.features_json, '$.outcome.date') from decisions d
+          where d.application_id = ${applications.id} and d.decision = 'outcome' order by d.id desc limit 1)`,
       })
       .from(applications)
       .leftJoin(jobs, eq(applications.jobId, jobs.id))
@@ -55,6 +58,7 @@ export default defineEventHandler(async (event) => {
       applications: results.map(r => ({
         ...r.application,
         job: r.job,
+        outcomeDate: r.outcomeDate,
       })),
       total: totalResult?.total,
       page,

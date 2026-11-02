@@ -257,14 +257,47 @@ export type ApplicationStatus =
   // states from the original app, kept for existing rows and manual tracking
   | 'draft'
   | 'ready'
+  // what the employer did after the application went out (shared/utils/outcomes.ts)
   | 'response_received'
   | 'interviewing'
   | 'rejected'
   | 'offer'
+  | 'no_response'
+
+/** What the employer did after the application went out. Only these and "I submitted it" are set through PATCH. */
+export type OutcomeStatus = 'response_received' | 'interviewing' | 'rejected' | 'offer' | 'no_response'
+
+/**
+ * One line of an application's outcome history: an employer outcome, or "I submitted it" (status
+ * submitted). Stored as a decisions row with decision 'outcome' (server/utils/outcomes.ts).
+ */
+export interface OutcomeEntry {
+  id: number
+  status: OutcomeStatus | 'submitted'
+  /** The day it happened, as Devin gave it: YYYY-MM-DD, no time and no zone. */
+  date: string
+  note: string | null
+  previousStatus: string | null
+  /** When it was recorded (SQLite UTC timestamp). */
+  recordedAt: string
+  isSandbox: boolean
+}
+
+/** PATCH /api/applications/:id body when it changes the status. */
+export interface ApplicationOutcomeRequest {
+  status: OutcomeStatus | 'submitted'
+  /** YYYY-MM-DD; today when absent. */
+  date?: string | null
+  /** Optional note kept with this line of the history. Not the application's notes. */
+  note?: string | null
+}
 
 export interface SubmissionResult {
   method: 'automated' | 'manual'
+  /** For a manual result: when it was handed back, then, once byHand is set, the day Devin gave. */
   submittedAt: string
+  /** Devin said he submitted it himself on the employer's site ("I submitted it"). */
+  byHand?: boolean
   finalUrl: string | null
   confirmationText: string | null
   /** Path under the data directory. */

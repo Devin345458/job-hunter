@@ -16,12 +16,14 @@ export const STAGES: Array<{ key: StageKey; label: string; statuses: string[] }>
   { key: 'needs_you', label: GROUP_LABEL.attention, statuses: [...WAITING_ON_YOU, ...statusesIn('attention')] },
   { key: 'working', label: 'In progress', statuses: ['preparing', ...statusesIn('sending')] },
   { key: 'sent', label: GROUP_LABEL.sent, statuses: [...statusesIn('sent'), 'response_received', 'interviewing', 'offer'] },
-  { key: 'closed', label: GROUP_LABEL.closed, statuses: ['declined', 'rejected', 'draft', 'ready'] },
+  // Employer outcomes that end it (rejected, no response) close it; the rest stay under Submitted.
+  { key: 'closed', label: GROUP_LABEL.closed, statuses: ['declined', 'rejected', 'no_response', 'draft', 'ready'] },
 ]
 </script>
 
 <script setup lang="ts">
-const props = defineProps<{ counts: Record<StageKey, number>; modelValue: StageKey }>()
+// modelValue is null while an outcome filter on the Applications page is on instead of a stage.
+const props = defineProps<{ counts: Record<StageKey, number>; modelValue: StageKey | null }>()
 const emit = defineEmits<{ 'update:modelValue': [StageKey] }>()
 </script>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { LearnedRuleView, LearningOverview, ScoreMoveView } from '#shared/types/learning'
+import type { LearnedRuleView, LearningOverview, OutcomeRateRow, ScoreMoveView } from '#shared/types/learning'
 import type { PipelineRunView } from '#shared/types/pipeline'
 
 definePageMeta({ layout: 'default' })
@@ -24,6 +24,23 @@ function when(s: string | null | undefined) {
   if (!s) return ''
   const d = new Date(s.includes('T') ? s : `${s.replace(' ', 'T')}Z`)
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+const outcomes = computed(() => overview.value?.outcomes ?? null)
+const rateTables = computed(() => outcomes.value
+  ? [
+      { key: 'source', title: 'By job source', first: 'Source', rows: outcomes.value.bySource },
+      { key: 'band', title: 'By match score', first: 'Score', rows: outcomes.value.byBand },
+    ]
+  : [])
+
+/** "2 (40%)" of a row's sent applications. */
+function rate(n: number, row: OutcomeRateRow) {
+  return row.sent ? `${n} (${Math.round((n / row.sent) * 100)}%)` : '0'
+}
+
+function pct(n: number, of: number) {
+  return of ? `${Math.round((n / of) * 100)}%` : '0%'
 }
 
 function signed(n: number) {
@@ -114,7 +131,7 @@ onMounted(load)
         <h1 class="text-h4 page-header__title">Learning</h1>
         <p class="text-body-2 page-header__subtitle">
           What your approvals and rejections taught the pipeline, and how that changes scores and search.
-          Turn off any rule that looks wrong.
+          Turn off any rule that looks wrong. Below the rules: what employers did with the applications that went out.
         </p>
       </div>
       <div class="d-flex flex-column align-end ga-1 learning-page__run">
@@ -177,6 +194,57 @@ onMounted(load)
             <KnowledgeLearnedRuleRow :rule="rule" :busy="!!toggling[rule.id]" @toggle="v => toggle(rule, v)" />
           </template>
         </v-card>
+      </section>
+
+      <!-- What employers did with the applications that went out -->
+      <section v-if="outcomes" class="mb-8">
+        <div class="section-label">What employers did</div>
+        <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
+          Rates over real applications that went out. Heard back counts any reply, rejections included.
+          Interviews count every application that reached one, so an offer counts there too.
+          These are recorded only: employer outcomes do not change scores.
+          <template v-if="outcomes.sandboxExcluded">{{ outcomes.sandboxExcluded }} sandbox {{ outcomes.sandboxExcluded === 1 ? 'application is' : 'applications are' }} left out.</template>
+        </p>
+        <v-card v-if="!outcomes.total.sent" variant="outlined" class="pa-6">
+          <p class="text-body-2 text-medium-emphasis mb-0 learning-page__note">
+            No real application has gone out yet. Once one has, record what the employer did on its page or from the Applications list, and the rates show here.
+          </p>
+        </v-card>
+        <template v-else>
+          <p class="text-body-1 mb-3 learning-page__lede">
+            <strong>{{ outcomes.total.sent }} sent.</strong>
+            {{ pct(outcomes.total.heardBack, outcomes.total.sent) }} heard back,
+            {{ pct(outcomes.total.interviews, outcomes.total.sent) }} reached an interview,
+            {{ pct(outcomes.total.offers, outcomes.total.sent) }} got an offer.
+          </p>
+          <v-card v-for="t in rateTables" :key="t.key" variant="outlined" class="mb-4">
+            <div class="text-body-2 font-weight-medium px-4 pt-3">{{ t.title }}</div>
+            <v-table density="comfortable" class="rates">
+              <thead>
+                <tr>
+                  <th scope="col">{{ t.first }}</th>
+                  <th scope="col" class="rates__num">Sent</th>
+                  <th scope="col" class="rates__num">Heard back</th>
+                  <th scope="col" class="rates__num">Interviews</th>
+                  <th scope="col" class="rates__num">Offers</th>
+                  <th scope="col" class="rates__num">Rejected</th>
+                  <th scope="col" class="rates__num">No response</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in t.rows" :key="r.key">
+                  <th scope="row" class="rates__label">{{ r.label }}</th>
+                  <td class="rates__num">{{ r.sent }}</td>
+                  <td class="rates__num">{{ rate(r.heardBack, r) }}</td>
+                  <td class="rates__num">{{ rate(r.interviews, r) }}</td>
+                  <td class="rates__num">{{ rate(r.offers, r) }}</td>
+                  <td class="rates__num">{{ r.rejected }}</td>
+                  <td class="rates__num">{{ r.noResponse }}</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </v-card>
+        </template>
       </section>
 
       <v-row class="mb-2">
@@ -280,6 +348,19 @@ onMounted(load)
 
   &__num {
     font-variant-numeric: tabular-nums;
+  }
+}
+
+.rates {
+  &__num {
+    text-align: right !important;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  &__label {
+    font-weight: 500 !important;
+    text-align: left;
   }
 }
 
