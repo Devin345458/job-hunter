@@ -73,7 +73,7 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [x] Queue shows job, match reasoning, compensation, resume, cover letter, filled answers with screenshot, and demo project (agent evidence reviewed: desktop two-pane, phone single column).
 - [x] One-tap approve and reject. Reject asks for a reason ("Other" needs a note). Only approve submits.
 - [ ] Clearable in five minutes a day on a phone.
-- [ ] None of the banned defaults: cream or off-white backgrounds, italic accent words in headings, numbered section labels, monospace labels, pill buttons.
+- [x] None of the banned defaults: cream or off-white backgrounds, italic accent words in headings, numbered section labels, monospace labels, pill buttons. Checked on every page at 1280 and 390 on production (commit 802c1b9) by computed style: buttons and chips 6 to 8px radius (up to 151 buttons on one page), body rgb(15, 19, 24), no italic in headings, no numbered labels, no monospace labels (the check flagged the demo build log, which is meant to be monospace, so it works).
 
 ## Capability D: learning
 
@@ -85,6 +85,7 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 ## Verification passes (at least three)
 
 - [ ] Pass 1: deployed dashboard, every element clicked at desktop and mobile width, console and network clean.
+  - 2026-11-02, commit 802c1b9, qa-walker: FAILED. 12 major and 22 minor defects; no 4xx or 5xx from the app; one JS error once (`Cannot read properties of null (reading 'trim')` on /applications/14). Being fixed in worktrees `fix-review` (errors shown raw, run status, review cards, questions) and `fix-shell` (jobs pages, navigation, layout). Re-walk after merge.
 - [x] Pass 1: pipeline:daily on prod, 2026-11-01 10:16: search, enrich, match, prepare. Four real forms filled and not submitted (CompanyCam and 1Password and AppFolio on Ashby, Brilliant on Lever), screenshots served; no files attached; one demo built.
 - [x] Pass 1: answered the two blocking questions and approved the sandbox card in the deployed UI; it reached `submitted` (reference 1) after two fixes (sandbox relabeled by enrichment; sandbox detection now uses the opened URL). Real submits stay off.
 - [x] Pass 1: the 15 minute heartbeat fired on schedule in every deployed container (pipeline_runs host = container id from /api/health).
@@ -97,6 +98,11 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [ ] Pass 3: same four checks.
 
 ## Found during the run
+
+- 2026-11-02 QA walk: the floating button on Jobs started a live search in one click with no label or confirmation; the walker clicked it and added one real listing (job 400, Capital One, Staff AI Engineer). That search was not recorded in pipeline_runs. Fix in `fix-shell`.
+- 2026-11-02 QA walk: raw Anthropic error JSON and a full server stack trace (with internal paths) were shown in the dashboard; the stack trace caused sideways scroll on phones. Fix in `fix-review`.
+- 2026-11-02 QA walk: Jobs listed only the first 20 of 400 jobs with no way to page. Fix in `fix-shell`.
+- 2026-11-02 QA walk: a shared blocking question showed the first employer's context on other employers' cards (CompanyCam's required LinkedIn field read "Sandbox Test Co ... optional"). Fix in `fix-review`.
 
 - 2026-11-02: the Anthropic account behind the production key is out of credit. Every Claude call from production fails with "Your credit balance is too low". Runs used to mark each job and application as failed; now a credit error stops the run like the daily budget, applications wait in `preparing` without spending a retry, and the review page shows a red "Claude is out of credit" note.
 - Local Claude calls in this repo go through the TeamClaude proxy (`ANTHROPIC_BASE_URL=http://localhost:3456`, Max subscriptions), not the API key. Local "Claude works" results say nothing about the production key; test with `env -u ANTHROPIC_BASE_URL`. The capability agents' local runs went through the proxy too.
