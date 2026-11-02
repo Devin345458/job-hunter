@@ -21,7 +21,11 @@ const emit = defineEmits<{ saved: [OutcomeEntry['status']] }>()
 const snackbar = useSnackbar()
 
 const sent = computed(() => SENT_STATUSES.includes(props.status as any))
-/** Approved, and the pipeline handed it back to submit by hand. "approved" itself is still in flight. */
+/**
+ * Yours to submit by hand: approved and handed back, or marked by hand at preparation (account
+ * required, no application link, preparation failed). "approved" itself is still in flight, so it
+ * does not get the button although PATCH accepts it.
+ */
 const handSubmit = computed(() => props.status === 'needs_manual')
 const current = computed(() => props.history.find(h => h.status === props.status) ?? null)
 
@@ -99,8 +103,8 @@ async function save() {
     <template v-else>
       <div v-if="handSubmit" class="oc__hand">
         <p class="oc__text">
-          Approved, and handed back for you to submit on the employer's site. Once you have, record it so this
-          application counts as sent and can take what the employer does next.
+          This one is yours to submit by hand on the employer's site. Once you have, record it so it counts as
+          sent and can take what the employer does next.
         </p>
         <v-btn color="primary" height="44" prepend-icon="mdi-check" @click="pick('submitted')">I submitted it</v-btn>
       </div>
