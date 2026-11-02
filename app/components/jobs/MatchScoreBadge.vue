@@ -26,7 +26,7 @@ const dimensions = computed(() => {
        here left an empty tooltip node on every card, which has no accessible name. -->
   <div
     class="match-score-badge"
-    :title="`Match score ${score} of 100`"
+    :title="`Match score ${score} out of 100`"
     :style="{
       width: `${dimensions.width}px`,
       height: `${dimensions.width}px`,
@@ -38,7 +38,7 @@ const dimensions = computed(() => {
       :size="dimensions.width"
       :width="3"
       :color="color"
-      :aria-label="`Match score ${score} of 100`"
+      :aria-label="`Match score ${score} out of 100`"
     >
       <span class="font-weight-bold" aria-hidden="true">{{ score }}</span>
     </v-progress-circular>

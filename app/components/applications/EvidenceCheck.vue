@@ -2,7 +2,7 @@
 // The evidence record stored in tailoring_notes: what the tailoring emphasized, then for the
 // resume and the cover letter how many lines were checked against the knowledge base and
 // exactly which lines were rewritten or dropped, and why.
-import { plainEvidenceLine, plainKnowledgeRefs } from '#shared/utils/plain-text'
+import { plainEvidenceLine, plainKnowledgeRefs, secondPersonDevin, secondPersonReason } from '#shared/utils/plain-text'
 
 const props = defineProps<{ notes: string | null }>()
 
@@ -22,12 +22,13 @@ const parsed = computed(() => {
         title: m[1] === 'Resume evidence check' ? 'Resume' : 'Cover letter',
         summary: m[2]!,
         // Lines stored before the producer's wording fix read "X.; the rewrite was also unsupported (...))".
-        rewritten: rest.filter(l => l.startsWith('Rewritten: ')).map(l => plainEvidenceLine(l.slice(11))),
-        dropped: rest.filter(l => l.startsWith('Dropped: ')).map(l => plainEvidenceLine(l.slice(9))),
+        // The reasons speak about "Devin"; on screen they speak to you ("You established ...").
+        rewritten: rest.filter(l => l.startsWith('Rewritten: ')).map(l => secondPersonReason(plainEvidenceLine(l.slice(11)))),
+        dropped: rest.filter(l => l.startsWith('Dropped: ')).map(l => secondPersonReason(plainEvidenceLine(l.slice(9)))),
       })
     }
     else if (/^(Skills removed|Gap analysis failed)/.test(first)) warnings.push(b)
-    else notes.push(b)
+    else notes.push(secondPersonDevin(b))
   }
   return { checks, notes, warnings }
 })

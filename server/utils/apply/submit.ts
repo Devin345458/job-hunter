@@ -28,6 +28,17 @@ function manual(reason: string, sandbox: boolean, finalUrl: string | null = null
 
 const SUCCESS_TEXT = /thank you for (applying|your application|your interest)|application (was |has been )?(received|submitted|sent)|we.?ve received your application|thanks for applying|successfully submitted|reference number/i
 
+/**
+ * Page text on one line with each block said as its own sentence. innerText puts a line break
+ * between the heading and the paragraph of a confirmation page; collapsing it to a space gave
+ * "Thank you for applying Your application was received." A block without its own closing
+ * punctuation gets a period.
+ */
+function blockText(text: string): string {
+  const blocks = text.split(/\n+/).map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  return blocks.map((s, i) => (i < blocks.length - 1 && !/[.!?:;,]$/.test(s) ? `${s}.` : s)).join(' ')
+}
+
 async function waitForConfirmation(page: Page, frame: Frame, startUrl: string): Promise<{ ok: boolean; text: string | null }> {
   const deadline = Date.now() + 30000
   while (Date.now() < deadline) {
@@ -36,8 +47,8 @@ async function waitForConfirmation(page: Page, frame: Frame, startUrl: string): 
     const text = await page.evaluate(() => document.body?.innerText?.slice(0, 5000) ?? '').catch(() => '')
     const marker = await frame.locator('[data-testid="confirmation"], #application_confirmation, .application-confirmation, [class*="success" i]:visible').first().innerText({ timeout: 300 }).catch(() => null)
     const m = text.match(SUCCESS_TEXT)
-    if (marker && SUCCESS_TEXT.test(marker)) return { ok: true, text: marker.replace(/\s+/g, ' ').trim().slice(0, 500) }
-    if (m) return { ok: true, text: text.slice(Math.max(0, m.index! - 80), m.index! + 200).replace(/\s+/g, ' ').trim() }
+    if (marker && SUCCESS_TEXT.test(marker)) return { ok: true, text: blockText(marker).slice(0, 500) }
+    if (m) return { ok: true, text: blockText(text.slice(Math.max(0, m.index! - 80), m.index! + 200)) }
     if (url !== startUrl && /thanks|confirmation|submitted|success/i.test(url)) return { ok: true, text: `Confirmation page: ${url}` }
   }
   return { ok: false, text: null }

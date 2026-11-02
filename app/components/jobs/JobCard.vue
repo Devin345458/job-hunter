@@ -103,7 +103,7 @@ const remoteIcon = computed(() =>
         variant="outlined"
         prepend-icon="mdi-currency-usd"
       >
-        {{ salaryDisplay }}
+        {{ salaryDisplay }} base
       </v-chip>
 
       <v-chip

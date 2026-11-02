@@ -42,7 +42,7 @@ function pct(w: number) {
           <span class="ledger__dot" :class="`bg-${rec.color}`" />
           {{ rec.label }}
         </div>
-        <div class="ledger__of">match score of 100</div>
+        <div class="ledger__of">match score, out of 100</div>
       </div>
     </div>
 

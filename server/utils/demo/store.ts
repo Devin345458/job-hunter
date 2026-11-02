@@ -67,6 +67,35 @@ export function storeGapAnalysis(applicationId: number, gap: GapAnalysis) {
     .run()
 }
 
+/** A requirement's lowercase words, without the "(kind: ...)" tag older analyses copied and without punctuation. */
+function requirementWords(text: string): Set<string> {
+  return new Set(text.replace(/\s*\(kind: [^)]*\)/gi, '').toLowerCase().split(/[^a-z0-9+#]+/).filter(Boolean))
+}
+
+/**
+ * True when two requirement lines are the same requirement. A gap analysis that ran again can
+ * word it a little differently from the line the demo was built for ("Familiarity with
+ * Test-Driven or Spec-Driven Development" against "Familiarity with Test-Driven Development or
+ * Spec-Driven Development"), so the words are compared, not the exact text.
+ */
+export function sameRequirement(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false
+  if (a.trim() === b.trim()) return true
+  const x = requirementWords(a)
+  const y = requirementWords(b)
+  if (!x.size || !y.size) return false
+  const shared = [...x].filter(w => y.has(w)).length
+  return shared / Math.max(x.size, y.size) >= 0.85
+}
+
+/** The index of the gap item about this requirement: an exact match first, then the same words. */
+function itemIndexFor(gap: GapAnalysis | null, requirement: string | null, decision?: GapItem['decision']): number {
+  if (!gap || !requirement) return -1
+  const ok = (i: GapItem) => !decision || i.decision === decision
+  const exact = gap.items.findIndex(i => ok(i) && i.requirement === requirement)
+  return exact >= 0 ? exact : gap.items.findIndex(i => ok(i) && sameRequirement(i.requirement, requirement))
+}
+
 /** The gap item a demo answers: the first item marked demo. */
 export function demoItem(gap: GapAnalysis | null): GapItem | null {
   return gap?.items.find(i => i.decision === 'demo' && i.demoIdea) ?? null
@@ -80,17 +109,30 @@ export function demoNoLongerPlanned(d: { status: string; gapAddressed: string | 
   if (d.status !== 'failed') return false
   const gap = parseJson<GapAnalysis | null>(gapAnalysisJson, null)
   if (!gap) return false
-  return !gap.items.some(i => i.decision === 'demo' && i.requirement === d.gapAddressed)
+  return itemIndexFor(gap, d.gapAddressed, 'demo') === -1
 }
+
+/** Statuses in which the demo's code exists, so a row that now says "no demo" can say one was built. */
+const BUILT_STATUSES = new Set(['built', 'publishing', 'published'])
 
 export function toDemoDetail(d: DemoRow): DemoDetail {
   const row = getAppWithJob(d.applicationId)
   const stored = parseJson<GapAnalysis | null>(row?.app.gapAnalysisJson, null)
+  const noLongerPlanned = demoNoLongerPlanned(d, row?.app.gapAnalysisJson)
   // Shown in plain words: real plurals, "you", and knowledge base references by name. The summary
-  // names this demo when an analysis run after it was planned says "No demo planned."
+  // says what state this demo is in ("Demo built: ..."), and never names a demo the current
+  // analysis no longer plans.
   const plain = stored ? plainGap(stored) : null
-  const gap = plain ? { ...plain, summary: gapSummaryText(plain.summary, d) } : null
-  const itemIndex = stored?.items.findIndex(i => i.decision === 'demo' && i.requirement === d.gapAddressed) ?? -1
+  const gap = plain ? { ...plain, summary: gapSummaryText(plain.summary, noLongerPlanned ? null : d), items: [...plain.items] } : null
+  const itemIndex = itemIndexFor(stored, d.gapAddressed, 'demo')
+  // The current analysis can cover the gap another way ("Use existing experience") after this
+  // demo was built; that row says the demo exists anyway.
+  const rowIndex = itemIndexFor(stored, d.gapAddressed)
+  if (gap && rowIndex >= 0 && gap.items[rowIndex]!.decision !== 'demo' && BUILT_STATUSES.has(d.status)) {
+    const item = gap.items[rowIndex]!
+    const done = d.status === 'published' ? 'built and published' : 'built'
+    gap.items[rowIndex] = { ...item, rationale: `${item.rationale.trim()} The ${d.title} demo was ${done} for this anyway.` }
+  }
   return {
     ...toDemoView(d),
     applicationId: d.applicationId,
@@ -109,11 +151,9 @@ export function toDemoDetail(d: DemoRow): DemoDetail {
     gap,
     progress: buildProgress(d.id),
     stoppedFor: d.status === 'failed' && itemIndex >= 0 ? stopKind(d.error) : null,
-    noLongerPlanned: demoNoLongerPlanned(d, row?.app.gapAnalysisJson),
+    noLongerPlanned,
     // What the current analysis decided for this gap instead (reframe or skip), in plain words.
-    notNeededReason: demoNoLongerPlanned(d, row?.app.gapAnalysisJson)
-      ? (gap?.items.find(i => i.requirement === d.gapAddressed)?.rationale ?? null)
-      : null,
+    notNeededReason: noLongerPlanned && rowIndex >= 0 ? gap!.items[rowIndex]!.rationale : null,
     preview: previewView(d),
   }
 }

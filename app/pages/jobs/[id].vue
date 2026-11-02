@@ -251,7 +251,7 @@ onMounted(() => {
                   prepend-icon="mdi-currency-usd"
                   size="small"
                 >
-                  {{ salaryDisplay }}
+                  {{ salaryDisplay }} base
                 </v-chip>
 
                 <v-chip

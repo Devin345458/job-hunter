@@ -1,4 +1,4 @@
-import { buildDemo } from '~~/server/utils/demo/build'
+import { startRebuild } from '~~/server/utils/demo/build'
 import { isDemoBuilding, isPreviewBuilding } from '~~/server/utils/demo/progress'
 import { getAppWithJob, getDemo, toDemoDetail } from '~~/server/utils/demo/store'
 
@@ -19,10 +19,9 @@ export default defineEventHandler((event) => {
   }
   if (!getAppWithJob(demo.applicationId)) throw createError({ statusCode: 409, statusMessage: 'The application for this demo no longer exists' })
 
-  // buildDemo claims the demo before its first await, so a second click now gets the 409 above.
-  buildDemo(id, msg => console.log(`[demos] ${msg}`))
-    .then(done => console.log(`[demos] demo ${id} rebuild finished: ${done.status}`))
-    .catch(e => console.error(`[demos] demo ${id} rebuild could not start:`, e))
+  // The build claims the demo before its first await, so a second click now gets the 409 above.
+  // It is recorded as a demos:rebuild run, so the run log shows it.
+  startRebuild(id)
 
   setResponseStatus(event, 202)
   return toDemoDetail(getDemo(id)!)

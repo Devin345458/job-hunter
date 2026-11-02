@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
 import { clockTime, hostOf } from '~/composables/review/format'
-import { plainError } from '#shared/utils/plain-text'
+import { plainConfirmation, plainError } from '#shared/utils/plain-text'
 
 // What happened after approve: a step track while the server works, then the outcome. A card
 // whose preparation failed never reached approve, so it says that instead and offers a retry.
@@ -113,7 +113,7 @@ const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/
         Submitted {{ clockTime(item.submission?.submittedAt) }}
         <span v-if="item.submission?.sandbox || item.isSandbox" class="prog__sandbox">sandbox</span>
       </div>
-      <p v-if="item.submission?.confirmationText" class="prog__confirm">"{{ item.submission.confirmationText }}"</p>
+      <p v-if="item.submission?.confirmationText" class="prog__confirm">"{{ plainConfirmation(item.submission.confirmationText) }}"</p>
       <div class="prog__links">
         <v-btn v-if="item.submission?.finalUrl" :href="item.submission.finalUrl" target="_blank" rel="noopener" variant="tonal" height="44" prepend-icon="mdi-open-in-new">
           Confirmation page

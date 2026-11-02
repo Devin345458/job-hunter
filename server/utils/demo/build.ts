@@ -386,6 +386,29 @@ const GITIGNORE: Record<string, string> = {
 }
 
 /**
+ * For POST /api/demos/:id/rebuild: builds one demo in the background and records the build in
+ * pipeline_runs as demos:rebuild (trigger manual), with the demo and how the build ended, so the
+ * run log explains a build started from the demo page. withRun calls buildDemo before its first
+ * await, so isDemoBuilding() is true once this returns, as the route relies on.
+ */
+export function startRebuild(demoId: number): void {
+  void withRun('demos:rebuild', 'manual', async (log) => {
+    const done = await buildDemo(demoId, log)
+    const cost = Number(demoCost(demoId).toFixed(4))
+    const built = done.status === 'built'
+    const budgetStopped = !built && isBudgetFailure(done.error)
+    return {
+      built: built ? 1 : 0,
+      failed: !built && !budgetStopped ? 1 : 0,
+      budgetStopped,
+      costUsd: cost,
+      ...(!built && done.error ? { errors: [done.error] } : {}),
+      demos: [{ id: done.id, applicationId: done.applicationId, slug: done.slug, title: done.title, status: done.status, costUsd: cost }],
+    }
+  }, { lockKey: `demos:rebuild#${demoId}` })
+}
+
+/**
  * Build one demo. Returns the final row; never throws for a build failure (the row is
  * marked failed with the reason), only for programming errors before the build starts.
  * Everything up to the first await runs synchronously, so a caller that does not await it
@@ -604,7 +627,7 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     .orderBy(desc(jobs.matchScore))
     .all()
 
-  const stats = { candidates: apps.length, analyzed: 0, recommended: 0, built: 0, failed: 0, skipped: 0, interrupted: stuck.length, budgetStopped: false, costUsd: 0, demos: [] as Array<{ id: number; applicationId: number; slug: string; status: string; costUsd: number }> }
+  const stats = { candidates: apps.length, analyzed: 0, recommended: 0, built: 0, failed: 0, skipped: 0, interrupted: stuck.length, budgetStopped: false, costUsd: 0, demos: [] as Array<{ id: number; applicationId: number; slug: string; title: string; status: string; costUsd: number }> }
   const queue: Array<{ applicationId: number; item: GapItem; retry: boolean }> = []
   for (const { app } of apps) {
     let gap = parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)
@@ -650,7 +673,7 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     else stats.failed++
     const cost = demoCost(demo.id)
     stats.costUsd += cost
-    stats.demos.push({ id: demo.id, applicationId, slug: done.slug, status: done.status, costUsd: Number(cost.toFixed(4)) })
+    stats.demos.push({ id: demo.id, applicationId, slug: done.slug, title: done.title, status: done.status, costUsd: Number(cost.toFixed(4)) })
     if (stats.budgetStopped) break
   }
   stats.skipped += Math.max(0, queue.length - max)

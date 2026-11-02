@@ -16,6 +16,9 @@ export const TASK_LABELS: Record<string, string> = {
   'jobs:match': 'Score matches',
   'applications:prepare': 'Prepare applications',
   'demos:build': 'Build demo projects',
+  // Started from a demo's page, one demo at a time.
+  'demos:rebuild': 'Rebuild a demo',
+  'demos:preview': 'Build a demo preview',
   'system:heartbeat': 'Scheduler heartbeat',
 }
 
