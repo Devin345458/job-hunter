@@ -73,7 +73,7 @@ onMounted(load)
     <div v-else-if="!loading && !error" class="al__empty">
       <v-icon icon="mdi-file-document-outline" size="28" />
       <p v-if="applications.length" class="al__empty-text">Nothing in this stage{{ search ? ' matches the search' : '' }}.</p>
-      <p v-else class="al__empty-text">No applications yet. The daily run prepares one for every strong match with an application link, or start one from a job's page.</p>
+      <p v-else class="al__empty-text">No applications yet. Each scheduled run prepares one for every strong match with an application link, or start one from a job's page.</p>
       <v-btn variant="outlined" height="44" to="/jobs" prepend-icon="mdi-briefcase-search-outline">Browse jobs</v-btn>
     </div>
   </div>

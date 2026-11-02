@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 definePageMeta({ layout: 'default' })
 
 const snackbar = useSnackbar()
@@ -218,7 +219,7 @@ onMounted(fetchConfigs)
           Pipeline
         </v-card-title>
         <v-card-subtitle>
-          Runs every day at 6:00 Central. Start the whole run or any one step here.
+          Runs {{ PIPELINE_SCHEDULE_TEXT }}. Start the whole run or any one step here.
         </v-card-subtitle>
       </v-card-item>
       <v-card-text>

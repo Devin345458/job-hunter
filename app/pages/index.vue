@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { REJECT_REASONS, type RejectReasonCode, type ReviewItem } from '#shared/types/pipeline'
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
+import { REJECT_REASONS, type RejectReasonCode, type RejectSkillsMode, type ReviewItem } from '#shared/types/pipeline'
 import { statusMeta } from '~/composables/review/format'
 
 // The review queue. Opens on the best match, says how many are left, and moves to the next
@@ -118,7 +119,7 @@ function openReject() {
   rejectOpen.value = true
 }
 
-async function confirmReject(code: RejectReasonCode, text: string | null) {
+async function confirmReject(code: RejectReasonCode, text: string | null, skills: string[], skillsMode: RejectSkillsMode) {
   const item = selected.value
   if (!item) return
   rejecting.value = true
@@ -126,10 +127,11 @@ async function confirmReject(code: RejectReasonCode, text: string | null) {
   const snapshot = [...groups.value.decide]
   const wasDecide = statusMeta(item.status).group === 'decide'
   try {
-    await queue.reject(item.applicationId, code, text)
+    await queue.reject(item.applicationId, code, text, skills, skillsMode)
     rejectOpen.value = false
     health.refresh()
-    const label = REJECT_REASONS.find(r => r.code === code)?.label ?? code
+    const reason = REJECT_REASONS.find(r => r.code === code)?.label ?? code
+    const label = skills.length ? `${reason}: ${skills.join(', ')}` : reason
     snackbar.notify(`Rejected: ${item.job.title} (${label})`, 'info', { timeout: 5000 })
     select(wasDecide ? nextDecideAfter(item.applicationId, snapshot) ?? defaultId() : defaultId())
   }
@@ -231,7 +233,7 @@ const leftLabel = computed(() => {
       <v-icon icon="mdi-inbox-outline" size="28" />
       <h1 class="rv__state-title">Nothing to review</h1>
       <p class="rv__state-text">
-        New applications land here after the daily run prepares them. The pipeline runs at 6:00 Central, or start it from Settings.
+        New applications land here after a run prepares them. The pipeline runs {{ PIPELINE_SCHEDULE_TEXT }}, or start it from Settings.
       </p>
       <div class="rv__state-actions">
         <v-btn color="primary" height="44" to="/settings#pipeline" prepend-icon="mdi-play-outline">Pipeline settings</v-btn>
@@ -327,6 +329,8 @@ const leftLabel = computed(() => {
       v-model="rejectOpen"
       :title="selected.job.title"
       :company="selected.job.company"
+      :skill-options="selected.rejectSkillOptions"
+      :is-sandbox="selected.isSandbox"
       :busy="rejecting"
       :error="rejectError"
       @confirm="confirmReject"

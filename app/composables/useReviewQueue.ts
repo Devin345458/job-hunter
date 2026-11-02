@@ -1,4 +1,4 @@
-import type { ApplicationStatus, RejectReasonCode, ReviewItem } from '#shared/types/pipeline'
+import type { ApplicationStatus, RejectReasonCode, RejectSkillsMode, ReviewItem } from '#shared/types/pipeline'
 import { IN_FLIGHT, statusMeta } from './review/format'
 
 const QUEUE_STATUSES: ApplicationStatus[] = ['proposed', 'needs_input', 'approved', 'publishing', 'submitting', 'submit_failed', 'needs_manual', 'submitted']
@@ -152,9 +152,11 @@ export function useReviewQueue() {
     }
   }
 
-  async function reject(id: number, reasonCode: RejectReasonCode, reasonText: string | null): Promise<void> {
+  /** skills (Wrong tech stack only) names the skills at fault; skillsMode says whether Devin lacks them or avoids them. */
+  async function reject(id: number, reasonCode: RejectReasonCode, reasonText: string | null, skills: string[] = [], skillsMode: RejectSkillsMode = 'lack'): Promise<void> {
     try {
-      await $fetch(`/api/review/${id}/reject`, { method: 'POST', body: { reasonCode, reasonText } })
+      const body = skills.length ? { reasonCode, reasonText, skills, skillsMode } : { reasonCode, reasonText }
+      await $fetch(`/api/review/${id}/reject`, { method: 'POST', body })
       remove(id)
     }
     catch (e: any) {

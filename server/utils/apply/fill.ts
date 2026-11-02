@@ -173,6 +173,9 @@ async function fillOne(frame: Frame, field: FormField, answer: FormAnswer, opts:
   }
 
   let text = Array.isArray(value) ? value.join(', ') : String(value)
+  // A single-line input drops line breaks, which would run a multi-line answer together
+  // ("...on Claude.At work:- Claude Code is..."). Join the lines readably first.
+  if (info.tag === 'input' && /\r?\n/.test(text)) text = flattenForSingleLine(text)
   if (field.maxLength && text.length > field.maxLength) text = text.slice(0, field.maxLength)
   if (info.type === 'number') text = text.replace(/[^\d.]/g, '')
   await first.fill(text, { timeout: ACTION_TIMEOUT })
@@ -195,6 +198,24 @@ export async function fillAnswers(frame: Frame, fields: FormField[], answers: Fo
     catch (e: any) {
       out.push({ ...answer, filled: false, fillError: String(e?.message || e).split('\n')[0]!.slice(0, 300) })
     }
+  }
+  return out
+}
+
+/**
+ * One line from a multi-line answer, for an employer field that takes a single line. Bullet
+ * markers go; a bullet joins the line before it with "; " (a space after ending punctuation), and other
+ * lines join with a space, adding a period when the previous line had no ending punctuation.
+ */
+export function flattenForSingleLine(text: string): string {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  let out = ''
+  for (const raw of lines) {
+    const bullet = /^([-*\u2022]|\d+[.)])\s+/.test(raw)
+    const line = raw.replace(/^([-*\u2022]|\d+[.)])\s+/, '')
+    if (!out) { out = line; continue }
+    if (bullet) out += /[.!?:;]$/.test(out) ? ` ${line}` : `; ${line}`
+    else out += /[.!?:;]$/.test(out) ? ` ${line}` : `. ${line}`
   }
   return out
 }

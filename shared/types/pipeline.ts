@@ -289,6 +289,36 @@ export const REJECT_REASONS = [
 
 export type RejectReasonCode = (typeof REJECT_REASONS)[number]['code']
 
+/**
+ * A "Wrong tech stack" rejection can name the skills that are the problem.
+ * lack: Devin does not have them (written to the knowledge base as a No).
+ * avoid: he has them but does not want to work with them (learning only).
+ */
+export type RejectSkillsMode = 'lack' | 'avoid'
+
+/** One skill the reject dialog offers as a chip, taken from the job's requirements. */
+export interface RejectSkillOption {
+  /** Short skill name shown on the chip and sent back in the reject body. */
+  label: string
+  /** The requirement's status against the knowledge base: lack and unknown first, then partial, then have. */
+  status: Requirement['status']
+  /** The requirement text the skill came from. */
+  requirement: string
+}
+
+/** decisions.features_json.rejectSkills: what a wrong_stack rejection named, and what it wrote. */
+export interface RejectSkillsRecord {
+  mode: RejectSkillsMode
+  /** kept: the knowledge base lists this skill as one Devin has, so "I don't have these" leaves it there and only lowers jobs. */
+  skills: Array<{ value: string; label: string; term: string; kept?: boolean }>
+  /** Filled after the knowledge step ran (lack only). */
+  knowledge?: {
+    written: Array<{ category: string; key: string; replaced: string | null }>
+    questionsAnswered: number[]
+    errors: string[]
+  }
+}
+
 export interface QuestionView {
   id: number
   question: string
@@ -409,6 +439,8 @@ export interface ReviewItem {
   score: ScoreBreakdown | null
   compensation: CompensationBreakdown | null
   requirements: Requirement[]
+  /** Skills the reject dialog offers under "Wrong tech stack", in display order. */
+  rejectSkillOptions: RejectSkillOption[]
   resume: TailoredResume | null
   resumePdfUrl: string | null
   coverLetter: string | null

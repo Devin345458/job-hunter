@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { REJECT_REASONS, type RejectReasonCode, type ReviewItem } from '#shared/types/pipeline'
+import { REJECT_REASONS, type RejectReasonCode, type RejectSkillsMode, type ReviewItem } from '#shared/types/pipeline'
 
 // One application on its own page, for links from Questions, Learning, or anywhere else.
 // Same card, same actions as the queue; after a decision it offers the way back.
@@ -94,14 +94,15 @@ const rejecting = ref(false)
 const rejectError = ref<string | null>(null)
 const rejectedLabel = ref<string | null>(null)
 
-async function confirmReject(code: RejectReasonCode, text: string | null) {
+async function confirmReject(code: RejectReasonCode, text: string | null, skills: string[], skillsMode: RejectSkillsMode) {
   if (!item.value) return
   rejecting.value = true
   rejectError.value = null
   try {
-    await queue.reject(item.value.applicationId, code, text)
+    await queue.reject(item.value.applicationId, code, text, skills, skillsMode)
     rejectOpen.value = false
-    rejectedLabel.value = REJECT_REASONS.find(r => r.code === code)?.label ?? code
+    const reason = REJECT_REASONS.find(r => r.code === code)?.label ?? code
+    rejectedLabel.value = skills.length ? `${reason} (${skills.join(', ')})` : reason
     health.refresh()
   }
   catch (e: any) {
@@ -178,6 +179,8 @@ async function answer(questionId: number, value: string | null, skip = false) {
         v-model="rejectOpen"
         :title="item.job.title"
         :company="item.job.company"
+        :skill-options="item.rejectSkillOptions"
+        :is-sandbox="item.isSandbox"
         :busy="rejecting"
         :error="rejectError"
         @confirm="confirmReject"

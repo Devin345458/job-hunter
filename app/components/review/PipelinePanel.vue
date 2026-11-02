@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { PipelineRunView } from '#shared/types/pipeline'
 import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, statsText } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
@@ -11,7 +12,7 @@ const snackbar = useSnackbar()
 
 interface TaskDef { id: string; label: string; detail: string; usesAi: boolean }
 const TASKS: TaskDef[] = [
-  { id: 'pipeline:daily', label: 'Full daily run', detail: 'Every step below, in order. This is what runs at 6:00 Central.', usesAi: true },
+  { id: 'pipeline:daily', label: 'Full run', detail: `Every step below, in order. This is what runs ${PIPELINE_SCHEDULE_TEXT}.`, usesAi: true },
   { id: 'learn:daily', label: 'Learn from decisions', detail: 'Turns approve and reject reasons into scoring rules.', usesAi: false },
   { id: 'jobs:search', label: 'Search listings', detail: 'Pulls new postings from every active search.', usesAi: false },
   { id: 'jobs:enrich', label: 'Read postings', detail: 'Fetches full postings, apply links, pay, and benefits.', usesAi: true },
@@ -78,7 +79,7 @@ const openRun = ref<number | null>(null)
 
 const color = (r: PipelineRunView) => OUTCOME[outcomeOf(r)].color
 
-const TRIGGER: Record<string, string> = { schedule: 'the schedule', manual: 'you', chained: 'the daily run' }
+const TRIGGER: Record<string, string> = { schedule: 'the schedule', manual: 'you', chained: 'the full run' }
 
 const heartbeat = computed(() => health.runs.value?.lastHeartbeat ?? null)
 
