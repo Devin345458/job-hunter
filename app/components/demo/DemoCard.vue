@@ -55,7 +55,7 @@ const testFacts = computed(() => {
 
     <v-card-text class="pt-1">
       <div class="mb-3">
-        <DemoStatusChip :status="shownStatus" :stopped="!!demo.stoppedFor" />
+        <DemoStatusChip :status="shownStatus" :stopped="!!demo.stoppedFor" :not-needed="demo.noLongerPlanned" />
       </div>
       <p v-if="jobLabel && demo.gapAddressed" class="demo-card__gap text-body-2 mb-2">
         Shows: {{ demo.gapAddressed }}

@@ -6,7 +6,9 @@ const props = withDefaults(defineProps<{
   size?: string
   /** A failed build that stopped on the Claude account (credit, key, budget), not on the build itself. */
   stopped?: boolean
-}>(), { size: 'small', stopped: false })
+  /** A failed build the application no longer plans (Devin's answers cover the gap). */
+  notNeeded?: boolean
+}>(), { size: 'small', stopped: false, notNeeded: false })
 
 const META: Record<DemoStatus, { label: string; color: string; icon: string }> = {
   proposed: { label: 'Planned', color: 'grey', icon: 'mdi-lightbulb-outline' },
@@ -18,8 +20,9 @@ const META: Record<DemoStatus, { label: string; color: string; icon: string }> =
   discarded: { label: 'Discarded', color: 'grey', icon: 'mdi-delete-outline' },
 }
 const STOPPED = { label: 'Stopped', color: 'grey', icon: 'mdi-pause-circle-outline' }
+const NOT_NEEDED = { label: 'Not needed', color: 'grey', icon: 'mdi-check-circle-outline' }
 
-const meta = computed(() => (props.status === 'failed' && props.stopped ? STOPPED : META[props.status] ?? { label: props.status, color: 'grey', icon: 'mdi-help-circle-outline' }))
+const meta = computed(() => (props.status === 'failed' && props.notNeeded ? NOT_NEEDED : props.status === 'failed' && props.stopped ? STOPPED : META[props.status] ?? { label: props.status, color: 'grey', icon: 'mdi-help-circle-outline' }))
 </script>
 
 <template>
