@@ -3,7 +3,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import { z } from 'zod'
 import { decisions, jobs, learnedRules, pipelineRuns, scoreHistory } from '../db/schema'
 import { REJECT_REASONS } from '#shared/types/pipeline'
-import type { PipelineRunView, ScoreBreakdown } from '#shared/types/pipeline'
+import type { PipelineRunView, RejectSkillsMode, RejectSkillsRecord, ScoreBreakdown } from '#shared/types/pipeline'
 import type { DecisionCounts, LearnedRuleView, LearningOverview, RuleEffect, RuleKind, ScoreMoveView, SearchAdjustments } from '#shared/types/learning'
 import { aiStructured } from './ai'
 import { loadKnowledge } from './knowledge'
@@ -53,8 +53,11 @@ interface NoteMapping {
   error: string | null
 }
 
-/** decisions.features_json: the job snapshot from recordDecision(), plus the note mapping once it ran. */
-type StoredFeatures = LearnedFeatureSnapshot & { learning?: NoteMapping }
+/**
+ * decisions.features_json: the job snapshot from recordDecision(), the skills a wrong_stack
+ * rejection named, and the note mapping once it ran.
+ */
+type StoredFeatures = LearnedFeatureSnapshot & { learning?: NoteMapping; rejectSkills?: RejectSkillsRecord }
 
 const NOTE_KINDS = ['industry', 'keyword', 'company', 'title', 'tech', 'location', 'remote_type', 'comp_floor'] as const
 
@@ -214,6 +217,8 @@ interface Evidence {
   /** reason code (or "approve") to the decision ids that support the rule */
   reasons: Map<string, Set<number>>
   fromNote: Set<number>
+  /** wrong_stack decisions that named this skill in the reject dialog, with what Devin said about it. */
+  fromPick: Map<number, RejectSkillsMode>
   searchRequest: 'none' | 'exclude' | 'boost'
   notes: string[]
 }
@@ -244,8 +249,8 @@ function weightOf(p: Policy, n: number) {
   return p.base != null ? Math.min(p.cap, p.base + p.step * (n - 1)) : Math.min(p.cap, p.step * n)
 }
 
-/** Tags and skill names too generic to say anything about a stack. */
-const GENERIC_TERMS = new Set([
+/** Tags and skill names too generic to say anything about a stack. The reject dialog skips them too. */
+export const GENERIC_TERMS = new Set([
   'fullstack', 'full stack', 'full-stack', 'backend', 'back-end', 'back end', 'frontend', 'front-end', 'front end',
   'api', 'apis', 'rest', 'saas', 'remote', 'startup', 'cloud', 'software', 'engineering', 'engineer', 'developer',
   'development', 'web', 'mobile', 'security', 'documentation', 'project management', 'technical support', 'onboarding',
@@ -345,12 +350,20 @@ function quoteNote(note: string): string {
   return t.length > 80 ? `${t.slice(0, 77).trimEnd()}...` : t
 }
 
+/** "You rejected 2 jobs for Ruby on Rails, which you do not have", when every decision named the skill. */
+function pickedPhrase(ev: Evidence): string | null {
+  if (ev.fromPick.size === 0 || ev.fromPick.size !== evidenceCount(ev)) return null
+  const modes = new Set(ev.fromPick.values())
+  const why = modes.size > 1 ? '' : modes.has('lack') ? ', which you do not have' : ', which you do not want to work with'
+  return `You rejected ${plural(ev.fromPick.size, 'job')} for ${ev.display}${why}`
+}
+
 function explain(ev: Evidence, counter: number, effect: RuleEffect, weight: number): string {
   // When every piece of evidence is a note, the note says what the jobs had in common.
   const onlyNotes = ev.notes.length > 0 && ev.fromNote.size === evidenceCount(ev)
   const did = ev.kind === 'company'
     ? (evidenceCount(ev) === 1 ? `You rejected ${ev.display} as ${reasonLabel(mainReason(ev))}` : `You rejected ${plural(evidenceCount(ev), `${ev.display} job`)} as ${reasonLabel(mainReason(ev))}`)
-    : `${whatDevinDid(ev)}${onlyNotes ? '' : featurePhrase(ev)}`
+    : pickedPhrase(ev) ?? `${whatDevinDid(ev)}${onlyNotes ? '' : featurePhrase(ev)}`
   const note = ev.notes.length ? `, noting "${quoteNote(ev.notes[0]!)}"` : ''
   const counterText = counter > 0 ? ` You also approved ${plural(counter, 'job')} like this.` : ''
   let effectText: string
@@ -382,16 +395,17 @@ export function deriveRules(scoped: ScopedDecision[], knownSkills: Set<string>):
   const compEvidence = new Map<boolean, Array<{ id: number; figure: number | null; note: string | null }>>()
   const approvals = scoped.filter(s => s.d.decision === 'approve')
 
-  const add = (s: ScopedDecision, code: string, kind: RuleKind, pattern: string, display: string, direction: 'avoid' | 'prefer' = 'avoid', fromNote?: NoteRule) => {
+  const add = (s: ScopedDecision, code: string, kind: RuleKind, pattern: string, display: string, direction: 'avoid' | 'prefer' = 'avoid', fromNote?: NoteRule, pick?: RejectSkillsMode) => {
     if (!pattern) return
     const key = `${s.isSandbox ? 1 : 0}|${direction}|${kind}|${pattern}`
     let ev = evidence.get(key)
     if (!ev) {
-      ev = { kind, pattern, display, direction, isSandbox: s.isSandbox, reasons: new Map(), fromNote: new Set(), searchRequest: 'none', notes: [] }
+      ev = { kind, pattern, display, direction, isSandbox: s.isSandbox, reasons: new Map(), fromNote: new Set(), fromPick: new Map(), searchRequest: 'none', notes: [] }
       evidence.set(key, ev)
     }
     if (!ev.reasons.has(code)) ev.reasons.set(code, new Set())
     ev.reasons.get(code)!.add(s.d.id)
+    if (pick) ev.fromPick.set(s.d.id, pick)
     if (fromNote) {
       ev.fromNote.add(s.d.id)
       if (fromNote.search !== 'none') ev.searchRequest = fromNote.search
@@ -429,6 +443,16 @@ export function deriveRules(scoped: ScopedDecision[], knownSkills: Set<string>):
       }
       case 'wrong_stack': {
         const seen = new Set<string>()
+        // Skills Devin named in the reject dialog are the only evidence. Knowing a skill does not
+        // filter it out here: "I have them but don't want to work with them" names known skills.
+        const picks = f.rejectSkills?.skills ?? []
+        if (picks.length > 0) {
+          for (const p of picks) {
+            const t = p.term || ruleTerm(p.label)
+            if (t && !seen.has(t)) { seen.add(t); add(s, code, 'tech', t, p.label, 'avoid', undefined, f.rejectSkills!.mode === 'avoid' ? 'avoid' : 'lack') }
+          }
+          break
+        }
         for (const raw of f.skillsMissing ?? []) {
           const t = ruleTerm(raw)
           if (t && !GENERIC_TERMS.has(t) && !seen.has(t)) { seen.add(t); add(s, code, 'tech', t, raw) }
@@ -479,7 +503,8 @@ export function deriveRules(scoped: ScopedDecision[], knownSkills: Set<string>):
       ? approvals.filter(a => a.isSandbox === ev.isSandbox && ruleMatchesContext(ev.kind, ev.pattern, a.ctx)).length
       : 0
     const net = n - counter
-    const min = ev.fromNote.size > 0 ? 1 : policy.min
+    // A note or a named skill is a direct statement, so one is enough.
+    const min = ev.fromNote.size > 0 || ev.fromPick.size > 0 ? 1 : policy.min
     if (net < min) continue
     const sign = ev.direction === 'prefer' ? 1 : -1
     const weight = sign * weightOf(policy, net)

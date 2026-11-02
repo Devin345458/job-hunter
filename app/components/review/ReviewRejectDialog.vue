@@ -1,37 +1,77 @@
 <script setup lang="ts">
-import { REJECT_REASONS, type RejectReasonCode } from '#shared/types/pipeline'
+import { REJECT_REASONS, type RejectReasonCode, type RejectSkillOption, type RejectSkillsMode } from '#shared/types/pipeline'
 
 // Quick reason picker for reject. One tap picks the reason, one tap confirms. "Other" needs
 // a note; every other reason takes an optional one. The reason trains the learning rules.
-const props = defineProps<{
+// "Wrong tech stack" can also name the skills at fault: then only those skills are learned
+// from, and "I don't have these" saves each one to the knowledge base as a No.
+const props = withDefaults(defineProps<{
   modelValue: boolean
   title: string
   company: string
   busy: boolean
   error: string | null
-}>()
+  skillOptions?: RejectSkillOption[]
+}>(), { skillOptions: () => [] })
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  'confirm': [reasonCode: RejectReasonCode, reasonText: string | null]
+  'confirm': [reasonCode: RejectReasonCode, reasonText: string | null, skills: string[], skillsMode: RejectSkillsMode]
 }>()
 
 const reason = ref<RejectReasonCode | null>(null)
 const note = ref('')
+const skills = ref<string[]>([])
+const skillsMode = ref<RejectSkillsMode>('lack')
 
 watch(() => props.modelValue, (open) => {
   if (open) {
     reason.value = null
     note.value = ''
+    skills.value = []
+    skillsMode.value = 'lack'
   }
 })
+
+const SKILL_GROUPS = [
+  { key: 'missing', label: 'Not in your knowledge base', statuses: ['lack', 'unknown'] },
+  { key: 'partial', label: 'Partly in your knowledge base', statuses: ['partial'] },
+  { key: 'have', label: 'In your knowledge base', statuses: ['have'] },
+] as const
+
+const skillGroups = computed(() => SKILL_GROUPS
+  .map(g => ({ ...g, options: props.skillOptions.filter(o => (g.statuses as readonly string[]).includes(o.status)) }))
+  .filter(g => g.options.length > 0))
+
+const MODES: Array<{ value: RejectSkillsMode; label: string }> = [
+  { value: 'lack', label: 'I don\'t have these' },
+  { value: 'avoid', label: 'I have them but don\'t want to work with them' },
+]
+
+const showSkills = computed(() => reason.value === 'wrong_stack' && props.skillOptions.length > 0)
+const pickedSkills = computed(() => showSkills.value ? skills.value : [])
+
+/** Picked skills the knowledge base says Devin has: a No for them changes what gets claimed. */
+const pickedHave = computed(() => skillsMode.value === 'lack'
+  ? props.skillOptions.filter(o => o.status === 'have' && pickedSkills.value.includes(o.label)).map(o => o.label)
+  : [])
+
+function listText(xs: string[]) {
+  if (xs.length <= 1) return xs.join('')
+  if (xs.length === 2) return `${xs[0]} and ${xs[1]}`
+  return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`
+}
+
+function toggleSkill(label: string) {
+  skills.value = skills.value.includes(label) ? skills.value.filter(s => s !== label) : [...skills.value, label]
+}
 
 const noteRequired = computed(() => reason.value === 'other')
 const canConfirm = computed(() => !!reason.value && (!noteRequired.value || note.value.trim().length > 0) && !props.busy)
 
 function confirm() {
   if (!canConfirm.value || !reason.value) return
-  emit('confirm', reason.value, note.value.trim() || null)
+  emit('confirm', reason.value, note.value.trim() || null, [...pickedSkills.value], skillsMode.value)
 }
 </script>
 
@@ -67,6 +107,62 @@ function confirm() {
             <span>{{ r.label }}</span>
           </button>
         </div>
+
+        <section v-if="showSkills" class="rj__skills" aria-labelledby="rj-skills-title">
+          <h3 id="rj-skills-title" class="rj__skills-title">Which skills are the problem?</h3>
+          <p class="rj__hint">
+            Optional. With none picked, the rejection counts a little against every skill this job asks for that you lack.
+          </p>
+
+          <div v-for="g in skillGroups" :key="g.key" class="rj__group">
+            <p :id="`rj-group-${g.key}`" class="rj__group-label">{{ g.label }}</p>
+            <div class="rj__chips" role="group" :aria-labelledby="`rj-group-${g.key}`">
+              <button
+                v-for="o in g.options"
+                :key="o.label"
+                type="button"
+                class="rj__chip"
+                :class="{ 'rj__chip--on': skills.includes(o.label) }"
+                :aria-pressed="skills.includes(o.label)"
+                :title="o.requirement"
+                @click="toggleSkill(o.label)"
+              >
+                <v-icon :icon="skills.includes(o.label) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="18" />
+                <span>{{ o.label }}</span>
+              </button>
+            </div>
+          </div>
+
+          <template v-if="skills.length > 0">
+            <div class="rj__modes" role="radiogroup" aria-label="About these skills">
+              <button
+                v-for="m in MODES"
+                :key="m.value"
+                type="button"
+                role="radio"
+                class="rj__reason"
+                :class="{ 'rj__reason--on': skillsMode === m.value }"
+                :aria-checked="skillsMode === m.value"
+                @click="skillsMode = m.value"
+              >
+                <v-icon :icon="skillsMode === m.value ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'" size="18" />
+                <span>{{ m.label }}</span>
+              </button>
+            </div>
+            <p class="rj__hint">
+              <template v-if="skillsMode === 'lack'">
+                Each one is saved to your knowledge base as a No, so no resume, letter, or form claims it. Jobs that ask for them score lower.
+              </template>
+              <template v-else>
+                Your knowledge base stays as it is. Jobs that ask for them score lower.
+              </template>
+            </p>
+            <p v-if="pickedHave.length" class="rj__warn" role="status">
+              <v-icon icon="mdi-alert-outline" size="16" />
+              <span>Your knowledge base lists {{ listText(pickedHave) }} as {{ pickedHave.length === 1 ? 'a skill' : 'skills' }} you have. Saving a No means {{ pickedHave.length === 1 ? 'it is' : 'they are' }} never claimed again.</span>
+            </p>
+          </template>
+        </section>
 
         <v-textarea
           v-model="note"
@@ -157,6 +253,99 @@ function confirm() {
     }
   }
 
+  &__skills {
+    margin: -2px 0 16px;
+    padding: 14px 14px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    background: rgb(var(--v-theme-background));
+  }
+
+  &__skills-title {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+
+  &__hint {
+    margin: 4px 0 0;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__group {
+    margin-top: 12px;
+  }
+
+  &__group-label {
+    margin: 0 0 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    min-height: 44px;
+    padding: 6px 12px 6px 10px;
+    border-radius: 6px;
+    text-align: left;
+    font-size: 0.875rem;
+    line-height: 1.3;
+    color: inherit;
+    overflow-wrap: anywhere;
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    transition: background-color 0.12s cubic-bezier(0.23, 1, 0.32, 1), border-color 0.12s cubic-bezier(0.23, 1, 0.32, 1);
+
+    .v-icon {
+      flex-shrink: 0;
+      color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    }
+
+    &:hover {
+      background: rgba(var(--v-theme-on-surface), 0.04);
+    }
+
+    &--on {
+      border-color: rgba(var(--v-theme-error), 0.6);
+      background: rgba(var(--v-theme-error), 0.08);
+
+      .v-icon { color: rgb(var(--v-theme-error)); }
+    }
+  }
+
+  &__modes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 14px;
+  }
+
+  &__warn {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 8px 0 0;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    color: rgb(var(--v-theme-warning));
+
+    .v-icon {
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+  }
+
   &__error {
     margin: 8px 0 0;
     font-size: 0.8125rem;
@@ -179,6 +368,14 @@ function confirm() {
   .rj__reason {
     font-size: 0.8125rem;
     padding: 8px;
+  }
+
+  .rj__skills {
+    padding: 12px 10px 10px;
+  }
+
+  .rj__modes {
+    grid-template-columns: 1fr;
   }
 }
 </style>

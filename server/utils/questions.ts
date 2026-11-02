@@ -271,6 +271,11 @@ export function knowledgeTargetFor(q: QuestionRow): { category: string; key: str
   return { category: 'experience', key: truncateWords(q.question) }
 }
 
+/** The knowledge value for a skill Devin does not have. A No to "Have you used X?" and a "Wrong tech stack: I don't have these" rejection both write it. */
+export function negativeSkillValue(subject: string, source: string): string {
+  return `Does not know ${subject}. No production experience with ${subject}. Never claim ${subject} experience. ${source}`
+}
+
 /** The sentence stored in the knowledge base for an answer. A No is stored too, so it is never asked or claimed. */
 export function knowledgeValueFor(q: QuestionRow, answer: string): { value: string; negative: boolean } {
   const subject = q.subject?.trim() || 'this'
@@ -280,7 +285,7 @@ export function knowledgeValueFor(q: QuestionRow, answer: string): { value: stri
     if (q.kind === 'knows') {
       if (yn === 'yes') return { value: `Knows ${subject}. ${asked}`, negative: false }
       if (yn === 'some') return { value: `Some experience with ${subject}, not in depth. Do not claim production or expert level ${subject}. ${asked}`, negative: false }
-      return { value: `Does not know ${subject}. No production experience with ${subject}. Never claim ${subject} experience. ${asked}`, negative: true }
+      return { value: negativeSkillValue(subject, asked), negative: true }
     }
     if (q.kind === 'has_done') {
       if (yn === 'yes') return { value: `Has done this: ${subject}. ${asked}`, negative: false }

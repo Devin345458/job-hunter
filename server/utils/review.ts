@@ -9,6 +9,7 @@ import type {
   FormSnapshot,
   GapAnalysis,
   QuestionView,
+  RejectSkillsRecord,
   Requirement,
   ReviewItem,
   ScoreBreakdown,
@@ -17,6 +18,7 @@ import type {
 } from '#shared/types/pipeline'
 import { approveEffect } from './apply/approve-effect'
 import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
+import { negativeSkillTerms, rejectSkillOptions } from './reject-skills'
 
 type JobRow = InferSelectModel<typeof jobs>
 type AppRow = InferSelectModel<typeof applications>
@@ -93,11 +95,12 @@ export function toDemoView(d: DemoRow): DemoProjectView {
   }
 }
 
-export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, openQuestions: QuestionRow[]): ReviewItem {
+export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, openQuestions: QuestionRow[], negativeSkills: Set<string> = negativeSkillTerms()): ReviewItem {
   // Labels stored before extraction learned to drop widget status text are cleaned on the way out.
   const snapshot = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
   if (snapshot) snapshot.fields = snapshot.fields.map(f => ({ ...f, label: cleanFieldLabel(f.label) }))
   const answers = parseJson<FormAnswer[]>(app.answersJson, []).map(a => ({ ...a, label: cleanFieldLabel(a.label) }))
+  const requirements = parseJson<Requirement[]>(job.requirementsJson, [])
   return {
     applicationId: app.id,
     status: app.status as ApplicationStatus,
@@ -122,7 +125,8 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
     },
     score: parseJson<ScoreBreakdown | null>(job.scoreBreakdown, null),
     compensation: parseJson<CompensationBreakdown | null>(job.compJson, null),
-    requirements: parseJson<Requirement[]>(job.requirementsJson, []),
+    requirements,
+    rejectSkillOptions: rejectSkillOptions(requirements, negativeSkills),
     resume: parseJson<TailoredResume | null>(app.tailoredResumeJson, null),
     resumePdfUrl: app.tailoredResumeJson ? `/api/resume/pdf/${app.id}` : null,
     coverLetter: app.coverLetter,
@@ -195,12 +199,14 @@ export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
     eq(questions.status, 'pending'),
     refIds.length ? or(inArray(questions.applicationId, appIds), inArray(questions.id, refIds)) : inArray(questions.applicationId, appIds),
   )).all()
+  const negativeSkills = negativeSkillTerms()
   return rows
     .map(({ app, job }) => toReviewItem(
       app,
       job,
       demos.find(d => d.applicationId === app.id && d.status !== 'discarded') ?? null,
       openQuestionsFor(app, job, qs),
+      negativeSkills,
     ))
     .sort((a, b) => (b.score?.final ?? 0) - (a.score?.final ?? 0) || (a.proposedAt ?? '').localeCompare(b.proposedAt ?? ''))
 }
@@ -247,7 +253,14 @@ export function jobFeatures(job: JobRow) {
   }
 }
 
-export function recordDecision(applicationId: number, decision: 'approve' | 'reject', reasonCode: string | null, reasonText: string | null) {
+/** extra is merged into features_json: a wrong_stack rejection stores the skills it named as rejectSkills. */
+export function recordDecision(
+  applicationId: number,
+  decision: 'approve' | 'reject',
+  reasonCode: string | null,
+  reasonText: string | null,
+  extra: { rejectSkills?: RejectSkillsRecord } = {},
+) {
   const db = useDb()
   const app = db.select().from(applications).where(eq(applications.id, applicationId)).get()
   if (!app) throw createError({ statusCode: 404, statusMessage: 'Application not found' })
@@ -258,7 +271,7 @@ export function recordDecision(applicationId: number, decision: 'approve' | 'rej
     decision,
     reasonCode,
     reasonText,
-    featuresJson: JSON.stringify(jobFeatures(job)),
+    featuresJson: JSON.stringify({ ...jobFeatures(job), ...extra }),
     isSandbox: app.isSandbox,
   }).returning().get()
 }
