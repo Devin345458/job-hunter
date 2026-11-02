@@ -115,6 +115,9 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [x] 2026-11-02: `walk4-fixes` merged and live (eed5fde): gap wording matches each demo's real state and override rows are one plain sentence; the resume row and confirmation quote read right after submit; evidence reasons in second person; base and total pay labeled; "out of 100"; chip names (TypeScript); manual demo rebuilds and previews write run rows.
+- [ ] 2026-11-02, Devin chose a classic GitHub token (repo scope) to read every organization he has worked in; fine-grained tokens are one owner each and dev-applied's needs owner approval. `repo-bulk` adds "Find repos with my commits", bulk switches per owner, a 30 repo per run indexing cap, and SAML single sign-on messages.
+
 - 2026-11-02 16:05, decided by Devin ("we're getting heavily tied down in QAing every step... QA every 5 items"): each unit now ships on a build plus one quick desktop check of its own flow; a production QA walk runs after about every 5 merged features, and its findings go out as one batch. The personal-data scan of every diff and the check before each deploy that no pipeline run is in progress stay.
 - [x] 2026-11-02 production recheck of the third walk (7a95adb): 24 of 25 fixed, R10 partly (old stored reasoning keeps some "his" and "their"; jobs re-scored now write "you"). New findings fixed and live in 29ebefe: answers never reached other jobs' requirement statuses (73 open jobs updated on production, CompanyCam's Terraform and GraphQL and 1Password's React now Have); demo test previews for Jest never got their report because npm took --json as its own option (demo 3 preview now 21 of 21 passed on production). The rest of its findings went to `walk4-fixes`.
 
