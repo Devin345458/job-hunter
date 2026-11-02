@@ -193,6 +193,7 @@ const chatBoxText = computed(() => {
       </div>
       <h4 class="qs__question">{{ q.question }}</h4>
       <p v-if="q.context" class="qs__context">{{ plainKnowledgeRefs(plainQuestionContext(q.context)) }}</p>
+      <QuestionsMemoryLeads :question-id="q.id" :takes-example="takesExample(q)" @ask="askAbout(q)" />
 
       <template v-if="q.answerType === 'yes_no'">
         <div class="qs__actions">

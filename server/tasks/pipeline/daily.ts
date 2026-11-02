@@ -4,6 +4,8 @@ import { runOutcome, runProblems } from '#shared/utils/run-outcome'
 // never races the match step the way two fixed cron times would.
 export const DAILY_STEPS = [
   'learn:daily',
+  // Best effort: off or unreachable memory records a plain note and the chain carries on.
+  'memory:leads',
   'jobs:search',
   'jobs:enrich',
   'jobs:match',

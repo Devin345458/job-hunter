@@ -266,6 +266,8 @@ watch(() => props.pick?.nonce, () => {
         </NuxtLink>
       </div>
 
+      <QuestionsMemoryLeads v-if="mode === 'pending'" :question-id="question.id" :takes-example="takesExample" @ask="emit('ask')" />
+
       <!-- Answered: what was saved and where -->
       <div v-if="mode === 'answered' && !editing" class="question-card__answer mt-3">
         <div class="text-body-2 question-card__answer-text">

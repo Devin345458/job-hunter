@@ -238,6 +238,26 @@ onMounted(fetchConfigs)
       </v-card-text>
     </v-card>
 
+    <!-- Memory: Devin's past Claude sessions as leads for questions -->
+    <v-card id="memory" variant="outlined" class="mb-6">
+      <v-card-item>
+        <template #prepend>
+          <v-avatar color="secondary" variant="tonal" size="36" rounded="lg">
+            <v-icon icon="mdi-history" size="20" />
+          </v-avatar>
+        </template>
+        <v-card-title class="text-subtitle-1 font-weight-medium">
+          Memory
+        </v-card-title>
+        <v-card-subtitle>
+          Your past Claude sessions on your laptop, searched for leads on open questions.
+        </v-card-subtitle>
+      </v-card-item>
+      <v-card-text>
+        <SettingsMemoryStatus />
+      </v-card-text>
+    </v-card>
+
     <!-- Search Configurations -->
     <v-card variant="outlined" class="mb-6">
       <v-card-item class="settings__configs-head">
