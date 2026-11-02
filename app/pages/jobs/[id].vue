@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { properName } from '~/composables/review/format'
 import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
-import type { Job, JobStatus } from '~/composables/useJobs'
-import { ATS_LABELS, uniqueTags } from '~/components/jobs/format'
+import type { Job, JobApplicationRef, JobStatus } from '~/composables/useJobs'
+import { ATS_LABELS, jobStateMeta, scoreColor, uniqueTags } from '~/components/jobs/format'
+import { plainError } from '#shared/utils/plain-text'
 
 /** GET /api/jobs/:id adds the parsed pipeline fields to the row. */
 type JobDetail = Job & {
@@ -13,6 +14,9 @@ type JobDetail = Job & {
   enrichNotes: string[]
   scoreHistory: Array<{ score: number; skillsScore: number | null; compScore: number | null; learnedAdjustment: number | null; reason: string; computedAt: string }>
   openQuestions: QuestionView[]
+  application: JobApplicationRef | null
+  /** Other postings of the same role at the same company; the jobs list shows them as one card. */
+  otherPostings: Array<{ id: number; location: string | null; status: string; matchScore: number | null; foundAt: string; application: JobApplicationRef | null }>
 }
 
 definePageMeta({
@@ -34,6 +38,8 @@ const jobId = computed(() => Number(route.params.id))
 useHead(() => ({ title: job.value ? `${job.value.title} at ${job.value.company} · Jobs · Job Hunter` : 'Job · Jobs · Job Hunter' }))
 
 const tags = computed(() => uniqueTags(job.value?.tags))
+/** The application's state when there is one ("In review"), else the job's own status. */
+const state = computed(() => jobStateMeta(job.value?.status, job.value?.application))
 
 const salaryDisplay = computed(() => {
   if (!job.value) return ''
@@ -58,15 +64,8 @@ const hasHtmlDescription = computed(() => !!job.value?.description)
 async function loadJob() {
   try {
     job.value = await getJob(jobId.value) as JobDetail
-
-    if (job.value?.status === 'applied') {
-      const apps = await $fetch<{ applications: { id: number }[] }>('/api/applications', {
-        params: { jobId: jobId.value },
-      })
-      if (apps.applications?.length) {
-        applicationId.value = apps.applications[0].id
-      }
-    }
+    // Any application, not only a submitted one: a job in review already has its resume.
+    applicationId.value = job.value?.application?.id ?? null
   }
   catch {
     // Error handled by composable
@@ -177,11 +176,13 @@ onMounted(() => {
 
               <template #append>
                 <v-chip
-                  :color="job.status === 'new' ? 'info' : job.status === 'applied' ? 'success' : 'primary'"
+                  :color="state.color"
                   variant="tonal"
                   size="small"
+                  :to="job.application ? `/applications/${job.application.id}` : undefined"
+                  :aria-label="job.application ? `Application: ${state.label}. Open the application` : `Status: ${state.label}`"
                 >
-                  {{ job.status }}
+                  {{ state.label }}
                 </v-chip>
               </template>
             </v-card-item>
@@ -294,9 +295,27 @@ onMounted(() => {
                 class="mt-3"
               >
                 <div class="text-caption">
-                  {{ job.enrichError }}
+                  {{ plainError(job.enrichError) }}
                 </div>
               </v-alert>
+
+              <!-- The same role posted more than once by the same company; the jobs list shows them as one card. -->
+              <div v-if="job.otherPostings?.length" class="job-detail__postings">
+                <div class="text-body-2 font-weight-medium">
+                  Also posted {{ job.otherPostings.length === 1 ? 'once more' : `${job.otherPostings.length} more times` }}
+                </div>
+                <ul class="job-detail__postings-list">
+                  <li v-for="p in job.otherPostings" :key="p.id">
+                    <NuxtLink :to="`/jobs/${p.id}`" class="job-detail__posting">
+                      <span class="job-detail__posting-where">{{ p.location || 'No location given' }}</span>
+                      <span class="job-detail__posting-meta">
+                        <span v-if="p.matchScore != null" :class="`text-${scoreColor(p.matchScore)}`">Match {{ p.matchScore }}</span>
+                        <span>{{ jobStateMeta(p.status, p.application).label }}</span>
+                      </span>
+                    </NuxtLink>
+                  </li>
+                </ul>
+              </div>
             </v-card-text>
           </v-card>
 
@@ -415,6 +434,55 @@ onMounted(() => {
 </template>
 
 <style scoped lang="scss">
+.job-detail__postings {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+
+.job-detail__postings-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+// Each posting is a 44px row link: location on the left, its score and state on the right.
+.job-detail__posting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px 12px;
+  min-height: 44px;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.875rem;
+
+  &:hover {
+    background: rgba(var(--v-theme-on-surface), 0.05);
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: -2px;
+  }
+}
+
+.job-detail__posting-where {
+  color: rgb(var(--v-theme-primary));
+  overflow-wrap: anywhere;
+}
+
+.job-detail__posting-meta {
+  display: inline-flex;
+  gap: 12px;
+  font-size: 0.8125rem;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+}
+
 .job-detail__title {
   letter-spacing: -0.02em;
   white-space: normal;
