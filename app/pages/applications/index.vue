@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ApplicationWithJob } from '~/composables/useApplications'
 import { STAGES, type StageKey } from '~/components/applications/StatusPipeline.vue'
+import { HEARD_BACK_STATUSES, SENT_STATUSES } from '#shared/utils/outcomes'
 
 // Every application the pipeline prepared or Devin tracked, newest first, filtered by stage.
 // Deciding happens on the review queue; this list is the record.
@@ -10,7 +11,13 @@ useHead({ title: 'Applications · Job Hunter' })
 const { applications, loading, error, fetchApplications } = useApplications()
 // Vuetify's clear button sets a clearable field's model to null, not ''.
 const search = ref<string | null>('')
-const stage = ref<StageKey>('all')
+// One filter at a time: a stage chip, or an outcome chip under "After sending".
+const filter = ref<StageKey | OutcomeFilterKey>('all')
+const isStage = (key: string): key is StageKey => STAGES.some(s => s.key === key)
+const stage = computed<StageKey | null>({
+  get: () => (isStage(filter.value) ? filter.value : null),
+  set: (v) => { if (v) filter.value = v },
+})
 
 const stageOf = (status: string): StageKey => STAGES.find(s => s.key !== 'all' && s.statuses.includes(status))?.key ?? 'closed'
 
@@ -23,10 +30,42 @@ const counts = computed(() => {
   return c
 })
 
+// ── After sending: what employers did ──
+type OutcomeFilterKey = 'waiting' | 'response_received' | 'interviewing' | 'offer' | 'rejected' | 'no_response'
+const OUTCOME_FILTERS: Array<{ key: OutcomeFilterKey; label: string; status: string }> = [
+  { key: 'waiting', label: 'Waiting to hear back', status: 'submitted' },
+  { key: 'response_received', label: 'Heard back', status: 'response_received' },
+  { key: 'interviewing', label: 'Interviewing', status: 'interviewing' },
+  { key: 'offer', label: 'Offers', status: 'offer' },
+  { key: 'rejected', label: 'Rejected by employer', status: 'rejected' },
+  { key: 'no_response', label: 'No response', status: 'no_response' },
+]
+// The outcome chips count and filter real applications only, so they agree with the line above them.
+// Sandbox tests that took an outcome stay under the Submitted and Closed stages, tagged Sandbox.
+const outcomeCounts = computed(() => Object.fromEntries(OUTCOME_FILTERS.map(f => [f.key, applications.value.filter(a => !a.isSandbox && a.status === f.status).length])) as Record<OutcomeFilterKey, number>)
+
+/** "12 sent, 3 heard back, 1 interviewing": real applications only, sandbox tests named apart. */
+const sentLine = computed(() => {
+  const real = applications.value.filter(a => !a.isSandbox)
+  const n = (statuses: readonly string[]) => real.filter(a => statuses.includes(a.status)).length
+  const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+  return [
+    `${n(SENT_STATUSES)} sent`,
+    `${n(HEARD_BACK_STATUSES)} heard back`,
+    `${n(['interviewing'])} interviewing`,
+    plural(n(['offer']), 'offer', 'offers'),
+    `${n(['rejected'])} rejected`,
+    `${n(['submitted'])} waiting to hear back`,
+  ].join(', ')
+})
+const sandboxSent = computed(() => applications.value.filter(a => a.isSandbox && SENT_STATUSES.includes(a.status as any)).length)
+
 const shown = computed(() => {
   const q = (search.value ?? '').trim().toLowerCase()
+  const f = filter.value
+  const outcome = OUTCOME_FILTERS.find(o => o.key === f)
   return applications.value.filter((a: ApplicationWithJob) =>
-    (stage.value === 'all' || stageOf(a.status) === stage.value)
+    (outcome ? !a.isSandbox && a.status === outcome.status : f === 'all' || stageOf(a.status) === f)
     && (!q || `${a.job?.company ?? ''} ${a.job?.title ?? ''}`.toLowerCase().includes(q)))
 })
 
@@ -59,6 +98,28 @@ onMounted(load)
 
     <ApplicationsStatusPipeline v-model="stage" :counts="counts" class="al__stages" />
 
+    <section class="al__after" aria-labelledby="al-after-title">
+      <p class="al__after-line">
+        <span id="al-after-title" class="al__after-title">After sending:</span> {{ sentLine }}.
+        <span v-if="sandboxSent" class="al__after-muted">{{ sandboxSent }} sandbox {{ sandboxSent === 1 ? 'test is' : 'tests are' }} left out of these counts and filters.</span>
+      </p>
+      <div class="al__after-chips" role="tablist" aria-label="Filter sent applications by what the employer did">
+        <button
+          v-for="o in OUTCOME_FILTERS"
+          :key="o.key"
+          type="button"
+          role="tab"
+          class="al__chip"
+          :class="{ 'al__chip--on': filter === o.key }"
+          :aria-selected="filter === o.key"
+          @click="filter = filter === o.key ? 'all' : o.key"
+        >
+          {{ o.label }}
+          <span class="al__chip-count tabular">{{ outcomeCounts[o.key] }}</span>
+        </button>
+      </div>
+    </section>
+
     <v-text-field
       v-model="search"
       label="Search by company or role"
@@ -76,12 +137,12 @@ onMounted(load)
     <v-skeleton-loader v-if="loading && !applications.length" type="list-item-three-line@4" class="al__skel" />
 
     <div v-else-if="shown.length" class="al__list">
-      <ApplicationsApplicationCard v-for="a in shown" :key="a.id" :application="a" />
+      <ApplicationsApplicationCard v-for="a in shown" :key="a.id" :application="a" @changed="load" />
     </div>
 
     <div v-else-if="!loading && !error" class="al__empty">
       <v-icon icon="mdi-file-document-outline" size="28" />
-      <p v-if="applications.length" class="al__empty-text">Nothing in this stage{{ search ? ' matches the search' : '' }}.</p>
+      <p v-if="applications.length" class="al__empty-text">Nothing {{ isStage(filter) ? 'in this stage' : 'with this outcome' }}{{ search ? ' matches the search' : '' }}.</p>
       <p v-else class="al__empty-text">No applications yet. Each scheduled run prepares one for every strong match with an application link, or start one from a job's page.</p>
       <v-btn variant="outlined" height="44" to="/jobs" prepend-icon="mdi-briefcase-search-outline">Browse jobs</v-btn>
     </div>
@@ -98,6 +159,51 @@ onMounted(load)
   &__title { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
   &__sub { margin: 0; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); max-width: 640px; }
   &__stages { margin-bottom: 12px; }
+
+  &__after {
+    margin-bottom: 12px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgb(var(--v-theme-surface));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__after-line { margin: 0 0 10px; font-size: 0.875rem; }
+  &__after-title { font-weight: 600; }
+  &__after-muted { color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
+  &__after-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+  &__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    background: rgb(var(--v-theme-background));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    transition: border-color 150ms cubic-bezier(0.23, 1, 0.32, 1), color 150ms cubic-bezier(0.23, 1, 0.32, 1);
+
+    &:hover { color: rgb(var(--v-theme-on-surface)); }
+    &:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+
+    &--on {
+      color: rgb(var(--v-theme-on-surface));
+      border-color: rgba(var(--v-theme-primary), 0.6);
+    }
+  }
+
+  &__chip-count {
+    font-size: 0.75rem;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    text-align: center;
+    background: rgb(var(--v-theme-surface));
+  }
   &__search { margin-bottom: 12px; }
 
   &__error {

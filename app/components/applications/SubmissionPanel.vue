@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ReviewItem, SubmissionResult } from '#shared/types/pipeline'
-import { clockTime } from '~/composables/review/format'
+import { clockTime, parseTime } from '~/composables/review/format'
 import { plainConfirmation, plainError } from '#shared/utils/plain-text'
 import { approveSentence } from './approve-text'
 
@@ -24,6 +24,19 @@ const emptyText = computed(() => {
   return `Nothing has been submitted. ${approveSentence(props.approveEffect, props.company)}`
 })
 
+const howText = computed(() => {
+  const s = props.submission
+  if (!s) return ''
+  if (s.method === 'automated') return s.sandbox ? 'Submitted automatically to the sandbox form' : 'Submitted automatically'
+  return s.byHand ? 'You submitted it by hand on the employer\'s site' : 'Handed back to you to submit by hand'
+})
+
+/** A by-hand submit is stored as a day, so it shows without a clock time. */
+function dayOf(value: string) {
+  const d = parseTime(value)
+  return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
+}
+
 const shotOpen = ref(false)
 const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kind=submission`)
 </script>
@@ -38,9 +51,9 @@ const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kin
     <template v-if="submission">
       <dl class="sp__facts">
         <dt>How</dt>
-        <dd>{{ submission.method === 'automated' ? (submission.sandbox ? 'Submitted automatically to the sandbox form' : 'Submitted automatically') : 'Handed back to you to submit by hand' }}</dd>
+        <dd>{{ howText }}</dd>
         <dt>When</dt>
-        <dd>{{ clockTime(submission.submittedAt) }}</dd>
+        <dd>{{ submission.byHand ? dayOf(submission.submittedAt) : clockTime(submission.submittedAt) }}</dd>
         <template v-if="submission.manualReason">
           <dt>Why by hand</dt>
           <dd>{{ submission.manualReason }}</dd>

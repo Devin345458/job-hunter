@@ -14,10 +14,11 @@ const EXTRA: Record<string, Omit<StatusMeta, 'group'>> = {
   preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock' },
   draft: { label: 'Draft', color: 'secondary', icon: 'mdi-file-outline' },
   ready: { label: 'Ready', color: 'secondary', icon: 'mdi-file-check-outline' },
-  response_received: { label: 'Employer replied', color: 'success', icon: 'mdi-email-open-outline' },
+  response_received: { label: 'Heard back', color: 'success', icon: 'mdi-email-open-outline' },
   interviewing: { label: 'Interviewing', color: 'success', icon: 'mdi-account-voice' },
-  rejected: { label: 'Employer said no', color: 'error', icon: 'mdi-close-circle-outline' },
+  rejected: { label: 'Rejected by employer', color: 'error', icon: 'mdi-close-circle-outline' },
   offer: { label: 'Offer', color: 'success', icon: 'mdi-trophy-outline' },
+  no_response: { label: 'No response', color: 'secondary', icon: 'mdi-email-off-outline' },
 }
 
 const meta = computed(() => {

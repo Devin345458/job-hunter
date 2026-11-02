@@ -2,10 +2,17 @@
 import type { ApplicationWithJob } from '~/composables/useApplications'
 import { timeAgo } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
+import { formatDay, isOutcome } from '#shared/utils/outcomes'
 
 // One application as a list row: company and role, the status tag with the one-line detail of
-// what is happening, the match score, and when it last moved. The whole row is the link.
-const props = defineProps<{ application: ApplicationWithJob }>()
+// what is happening, the match score, and when it last moved. The text block is the link; beside
+// it, a submitted application takes an employer outcome and one waiting for a submit by hand takes
+// "I submitted it" (OutcomeControl, compact), outside the link so a click there never navigates.
+const props = defineProps<{ application: ApplicationWithJob & { outcomeDate?: string | null } }>()
+const emit = defineEmits<{ changed: [] }>()
+
+/** The day of the current employer outcome, beside its tag. */
+const outcomeDay = computed(() => (isOutcome(props.application.status) ? formatDay(props.application.outcomeDate) : ''))
 
 const when = computed(() => timeAgo(props.application.submittedAt || props.application.updatedAt || props.application.createdAt))
 // The tag already says "Preparation failed", so the detail starts with the reason.
@@ -13,39 +20,67 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
 </script>
 
 <template>
-  <NuxtLink :to="`/applications/${application.id}`" class="arow">
-    <div class="arow__main">
-      <div class="arow__company">
-        {{ application.job?.company || 'Unknown company' }}
-        <span v-if="application.isSandbox" class="arow__sandbox">Sandbox</span>
+  <div class="arow">
+    <NuxtLink :to="`/applications/${application.id}`" class="arow__link">
+      <div class="arow__main">
+        <div class="arow__company">
+          {{ application.job?.company || 'Unknown company' }}
+          <span v-if="application.isSandbox" class="arow__sandbox">Sandbox</span>
+        </div>
+        <div class="arow__title">{{ application.job?.title || 'Unknown role' }}</div>
+        <div class="arow__status">
+          <ApplicationsStatusTag :status="application.status" :form-error="application.formError" />
+          <span v-if="outcomeDay" class="arow__day">{{ outcomeDay }}</span>
+          <span v-if="detail" class="arow__detail">{{ detail }}</span>
+        </div>
       </div>
-      <div class="arow__title">{{ application.job?.title || 'Unknown role' }}</div>
-      <div class="arow__status">
-        <ApplicationsStatusTag :status="application.status" :form-error="application.formError" />
-        <span v-if="detail" class="arow__detail">{{ detail }}</span>
+      <div class="arow__side">
+        <span v-if="application.job?.matchScore != null" class="arow__score tabular" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
+        <span class="arow__when">{{ when }}</span>
       </div>
-    </div>
-    <div class="arow__side">
-      <span v-if="application.job?.matchScore != null" class="arow__score tabular" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
-      <span class="arow__when">{{ when }}</span>
-    </div>
-  </NuxtLink>
+    </NuxtLink>
+    <ApplicationsOutcomeControl
+      compact
+      class="arow__outcome"
+      :application-id="application.id"
+      :status="application.status"
+      :is-sandbox="application.isSandbox"
+      :title="`${application.job?.company || 'Unknown company'}, ${application.job?.title || 'Unknown role'}`"
+      @saved="emit('changed')"
+    />
+  </div>
 </template>
 
 <style scoped lang="scss">
 .arow {
   display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  min-height: 56px;
-  padding: 14px 16px;
-  color: inherit;
-  text-decoration: none;
+  align-items: center;
   border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   transition: background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
 
   &:hover { background: rgb(var(--v-theme-surface-bright)); }
-  &:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+
+  &__link {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    flex: 1;
+    min-width: 0;
+    min-height: 56px;
+    padding: 14px 16px;
+    color: inherit;
+    text-decoration: none;
+
+    &:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+  }
+
+  &__outcome { flex-shrink: 0; padding-right: 16px; }
+
+  &__day {
+    font-size: 0.8125rem;
+    white-space: nowrap;
+    color: rgba(var(--v-theme-on-surface), 0.86);
+  }
 
   &__main { flex: 1; min-width: 0; }
 

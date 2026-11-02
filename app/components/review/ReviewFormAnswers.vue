@@ -3,6 +3,7 @@ import { useDisplay } from 'vuetify'
 import type { FormAnswer, FormSnapshot } from '#shared/types/pipeline'
 import { answerSourceText, answerText, blockerText, clockTime, hostOf } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
+import { SENT_STATUSES } from '#shared/utils/outcomes'
 
 // The employer form as the pipeline filled it: every field's value, where the value came
 // from, and how sure the pipeline is, beside a screenshot of the filled page. Every filled value
@@ -24,11 +25,12 @@ const props = defineProps<{
   submitMethod?: 'automated' | 'manual' | null
 }>()
 
-const SENT = ['submitted', 'response_received', 'interviewing', 'offer', 'rejected']
+const SENT: readonly string[] = SENT_STATUSES
 /** The screenshot caption's last sentence, following the application's status. */
 const submitState = computed(() => {
   const s = props.status
   if (!s) return 'Not submitted.'
+  if (SENT.includes(s) && props.submitMethod === 'manual') return 'You submitted it by hand.'
   if (SENT.includes(s)) return props.submittedAt ? `Submitted ${clockTime(props.submittedAt)}.` : 'Submitted.'
   if (['approved', 'publishing', 'submitting'].includes(s)) return 'Approved and being submitted now.'
   if (s === 'submit_failed') return 'The submit failed.'

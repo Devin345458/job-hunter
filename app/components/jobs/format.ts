@@ -104,10 +104,11 @@ const APP_STATUS: Record<string, JobStateMeta> = {
   submit_failed: { label: 'Submit failed', color: 'error' },
   needs_manual: { label: 'Submit by hand', color: 'warning' },
   declined: { label: 'Rejected', color: 'secondary' },
-  response_received: { label: 'Employer replied', color: 'success' },
+  response_received: { label: 'Heard back', color: 'success' },
   interviewing: { label: 'Interviewing', color: 'success' },
   offer: { label: 'Offer', color: 'success' },
-  rejected: { label: 'Employer said no', color: 'error' },
+  rejected: { label: 'Rejected by employer', color: 'error' },
+  no_response: { label: 'No response', color: 'secondary' },
   draft: { label: 'Draft', color: 'secondary' },
   ready: { label: 'Ready', color: 'secondary' },
 }

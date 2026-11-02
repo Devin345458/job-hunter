@@ -21,5 +21,7 @@ export default defineEventHandler((event) => {
     job: row.job,
     questions: relatedQuestions,
     review: getReviewItem(id),
+    /** Employer outcomes and "I submitted it", newest first. */
+    outcomes: outcomeHistory(id),
   }
 })

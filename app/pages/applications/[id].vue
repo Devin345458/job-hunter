@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import type { InferSelectModel } from 'drizzle-orm'
 import type { applications, jobs } from '~~/server/db/schema'
-import type { ReviewItem } from '#shared/types/pipeline'
+import type { OutcomeEntry, ReviewItem } from '#shared/types/pipeline'
 import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, properName, timeAgo } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { approveSentence } from '~/components/applications/approve-text'
+import { SENT_STATUSES, formatDay, outcomeLabel } from '#shared/utils/outcomes'
 
 // One application's full record: where it stands, what the pipeline prepared (resume, cover
 // letter, the filled employer form with its screenshot), the evidence check behind every line,
 // and what happened on submit. Approve and reject live on the review card; this page links there.
 definePageMeta({ layout: 'default' })
 
-type Detail = InferSelectModel<typeof applications> & { job: InferSelectModel<typeof jobs> | null; review: ReviewItem | null }
+type Detail = InferSelectModel<typeof applications> & { job: InferSelectModel<typeof jobs> | null; review: ReviewItem | null; outcomes: OutcomeEntry[] }
 
 const route = useRoute()
 const snackbar = useSnackbar()
@@ -179,11 +180,23 @@ const evidenceSummary = computed(() => {
   return parts.join('. ') || 'No check recorded'
 })
 const evidenceTone = computed(() => (/\b[1-9]\d* dropped/.test(evidenceSummary.value) ? 'warning' : 'default'))
+/** The outcome section: on once it went out, or once it waits for Devin's own submit. */
+const showOutcome = computed(() => SENT_STATUSES.includes(status.value as any) || status.value === 'needs_manual' || !!app.value?.outcomes?.length)
+const outcomeSummary = computed(() => {
+  const s = status.value
+  if (s === 'needs_manual') return 'Waiting for your submit by hand'
+  if (s === 'submitted') return 'Submitted, waiting to hear back'
+  const latest = app.value?.outcomes?.find(o => o.status === s)
+  return `${outcomeLabel(s)}${latest ? `, ${formatDay(latest.date)}` : ''}`
+})
+const outcomeTone = computed(() => (status.value === 'rejected' ? 'error' : ['response_received', 'interviewing', 'offer'].includes(status.value) ? 'success' : 'default'))
+
 const submissionSummary = computed(() => {
   const s = review.value?.submission
   if (review.value?.submitError) return 'Submit failed'
   if (!s) return 'Not submitted'
-  return s.method === 'automated' ? `Submitted ${clockTime(s.submittedAt)}` : 'Handed back to submit by hand'
+  if (s.method === 'automated') return `Submitted ${clockTime(s.submittedAt)}`
+  return s.byHand ? 'Submitted by hand' : 'Handed back to submit by hand'
 })
 </script>
 
@@ -334,6 +347,17 @@ const submissionSummary = computed(() => {
 
         <ReviewSection title="Evidence check" icon="mdi-shield-check-outline" :summary="evidenceSummary" :tone="evidenceTone">
           <ApplicationsEvidenceCheck :notes="app.tailoringNotes" />
+        </ReviewSection>
+
+        <ReviewSection v-if="showOutcome" title="Outcome" icon="mdi-flag-checkered" :summary="outcomeSummary" :tone="outcomeTone" default-open>
+          <ApplicationsOutcomeControl
+            :application-id="app.id"
+            :status="app.status"
+            :is-sandbox="app.isSandbox"
+            :title="`${app.job?.company ?? 'Unknown company'}, ${app.job?.title ?? 'Unknown role'}`"
+            :history="app.outcomes ?? []"
+            @saved="load(true)"
+          />
         </ReviewSection>
 
         <ReviewSection title="Submission" icon="mdi-send-outline" :summary="submissionSummary" :tone="review?.submitError ? 'error' : review?.submission?.method === 'automated' ? 'success' : 'default'">
