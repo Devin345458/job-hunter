@@ -377,7 +377,7 @@ const GITIGNORE: Record<string, string> = {
  */
 /** True when a demo failed only because Claude was out of credit or over the daily budget. */
 export function isBudgetFailure(error: string | null | undefined): boolean {
-  return /credit balance is too low|out of credit|Daily AI budget reached|Waiting for Claude/i.test(error ?? '')
+  return /credit balance is too low|out of credit|rejected the key|Daily AI budget reached|Waiting for Claude/i.test(error ?? '')
 }
 
 export async function buildDemo(demoId: number, runLog: (msg: string) => void = () => {}): Promise<DemoRow> {

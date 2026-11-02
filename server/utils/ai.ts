@@ -32,28 +32,50 @@ export class AiCreditExhausted extends AiBudgetExceeded {
   }
 }
 
+/**
+ * Anthropic refused the key in NUXT_ANTHROPIC_API_KEY (401), for example a revoked key or a
+ * Claude subscription token, which the API does not accept as an API key. Stops runs the same
+ * way as running out of credit.
+ */
+export class AiKeyRejected extends AiBudgetExceeded {
+  constructor() {
+    super(0, 0, 'Anthropic rejected the key in NUXT_ANTHROPIC_API_KEY (401). Set a Console API key (it starts with sk-ant-api) in Coolify.')
+  }
+}
+
 /** True for the 400 Anthropic returns when the account balance is too low. There is no typed error for it. */
 function isCreditError(e: any) {
   return e instanceof Anthropic.BadRequestError && /credit balance is too low/i.test(String(e?.error?.error?.message ?? e?.message ?? ''))
 }
 
-let creditExhaustedUntil = 0
+function isKeyRejected(e: any) {
+  return e instanceof Anthropic.AuthenticationError || e?.status === 401
+}
+
+/** After an account-level refusal, calls fail fast for ten minutes instead of being sent. */
+let accountStop: { until: number; kind: 'credit' | 'key' } = { until: 0, kind: 'credit' }
+
+const ACCOUNT_MESSAGES = {
+  credit: 'Claude is out of credit, so nothing can be scored, prepared, or built until credit is added to the Anthropic account (Console, Plans & Billing).',
+  key: 'Anthropic rejected the API key, so nothing can be scored, prepared, or built until a valid Console API key (starting sk-ant-api) is set as NUXT_ANTHROPIC_API_KEY in Coolify.',
+} as const
 
 /**
  * The account-level problem the dashboard should show, read from ai_calls so it survives
- * restarts: the most recent credit error, unless a call succeeded after it.
+ * restarts: the most recent credit or key refusal, unless a call succeeded after it.
  */
-export function aiAccountProblem(): { kind: 'credit'; message: string; since: string } | null {
+export function aiAccountProblem(): { kind: 'credit' | 'key'; message: string; since: string } | null {
   const db = useDb()
-  const lastCredit = db.select({ createdAt: aiCalls.createdAt }).from(aiCalls)
-    .where(sql`${aiCalls.error} like '%credit balance%' or ${aiCalls.error} like '%out of credit%'`)
+  const last = db.select({ createdAt: aiCalls.createdAt, error: aiCalls.error }).from(aiCalls)
+    .where(sql`${aiCalls.error} like '%credit balance%' or ${aiCalls.error} like '%out of credit%' or ${aiCalls.error} like 'key rejected%'`)
     .orderBy(sql`${aiCalls.id} desc`).limit(1).get()
-  if (!lastCredit) return null
+  if (!last) return null
   const okAfter = db.select({ id: aiCalls.id }).from(aiCalls)
-    .where(sql`${aiCalls.error} is null and ${aiCalls.createdAt} > ${lastCredit.createdAt}`)
+    .where(sql`${aiCalls.error} is null and ${aiCalls.createdAt} > ${last.createdAt}`)
     .limit(1).get()
   if (okAfter) return null
-  return { kind: 'credit', since: lastCredit.createdAt, message: 'Claude is out of credit, so nothing can be scored, prepared, or built until credit is added to the Anthropic account (Console, Plans & Billing).' }
+  const kind = last.error?.startsWith('key rejected') ? 'key' : 'credit'
+  return { kind, since: last.createdAt, message: ACCOUNT_MESSAGES[kind] }
 }
 
 export class AiRefusal extends Error {}
@@ -169,8 +191,8 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
   preferredModel?: string,
 ): Promise<T> {
   assertAiBudget()
-  // After a credit error, fail fast for ten minutes instead of sending requests that will be refused.
-  if (Date.now() < creditExhaustedUntil) throw new AiCreditExhausted()
+  // After a credit or key refusal, fail fast for ten minutes instead of sending requests that will be refused.
+  if (Date.now() < accountStop.until) throw accountStop.kind === 'key' ? new AiKeyRejected() : new AiCreditExhausted()
   const first = preferredModel && !(preferredModel === primaryModel() && Date.now() < primaryUnavailableUntil) ? preferredModel : activeModel()
   const models = [...new Set([first, fallbackModel()])]
   let lastError: any
@@ -193,9 +215,14 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
       lastError = e
       if (e instanceof AiRefusal || e instanceof AiOutputTruncated) throw e // already logged with usage
       if (isCreditError(e)) {
-        creditExhaustedUntil = Date.now() + 10 * 60 * 1000
+        accountStop = { until: Date.now() + 10 * 60 * 1000, kind: 'credit' }
         logCall(opts.purpose, model, null, opts.ref, 'out of credit: Your credit balance is too low to access the Anthropic API')
         throw new AiCreditExhausted()
+      }
+      if (isKeyRejected(e)) {
+        accountStop = { until: Date.now() + 10 * 60 * 1000, kind: 'key' }
+        logCall(opts.purpose, model, null, opts.ref, `key rejected: ${e?.status} ${e?.error?.error?.message ?? e?.message ?? ''}`.slice(0, 500))
+        throw new AiKeyRejected()
       }
       if (!isAccessError(e) || model === fallbackModel()) {
         logCall(opts.purpose, model, null, opts.ref, e?.message || String(e))

@@ -30,8 +30,10 @@ export default defineTask({
           results.push({ jobId: app.jobId, applicationId: r.applicationId, status: r.status, retry: true, ...(r.error ? { error: r.error } : {}) })
         }
         catch (e: any) {
-          results.push({ jobId: app.jobId, applicationId: app.id, status: 'error', retry: true, error: e?.statusMessage || e?.message || String(e) })
-          if (e instanceof AiBudgetExceeded) { budgetStop = true; break }
+          // A budget, credit, or key stop is not a failure of this application; it waits in preparing.
+          const stopped = e instanceof AiBudgetExceeded
+          results.push({ jobId: app.jobId, applicationId: app.id, status: stopped ? 'stopped' : 'error', retry: true, error: e?.statusMessage || e?.message || String(e) })
+          if (stopped) { budgetStop = true; break }
         }
       }
 
@@ -49,8 +51,9 @@ export default defineTask({
           results.push({ jobId: job.id, applicationId: r.applicationId, status: r.status, ...(r.error ? { error: r.error } : {}) })
         }
         catch (e: any) {
-          results.push({ jobId: job.id, applicationId: null, status: 'error', error: e?.statusMessage || e?.message || String(e) })
-          if (e instanceof AiBudgetExceeded) { budgetStop = true; break }
+          const stopped = e instanceof AiBudgetExceeded
+          results.push({ jobId: job.id, applicationId: null, status: stopped ? 'stopped' : 'error', error: e?.statusMessage || e?.message || String(e) })
+          if (stopped) { budgetStop = true; break }
         }
       }
       const count = (s: string) => results.filter(r => r.status === s).length
@@ -61,7 +64,7 @@ export default defineTask({
         proposed: count('proposed'),
         needsInput: count('needs_input'),
         needsManual: count('needs_manual'),
-        failed: results.filter(r => r.error).length,
+        failed: results.filter(r => r.error && r.status !== 'stopped').length,
         refreshed: refresh.refreshed,
         unblocked: refresh.flipped,
         budgetStop,

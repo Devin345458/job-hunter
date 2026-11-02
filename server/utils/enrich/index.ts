@@ -124,7 +124,7 @@ export async function enrichJobs(opts: { limit?: number; jobIds?: number[]; log?
     ? db.select().from(jobs).where(inArray(jobs.id, opts.jobIds)).all()
     // Jobs whose enrichment was refused for lack of Anthropic credit (before credit errors became
     // budget stops) count as pending again.
-    : db.select().from(jobs).where(or(isNull(jobs.enrichedAt), like(jobs.enrichError, '%credit balance is too low%'))).all()
+    : db.select().from(jobs).where(or(isNull(jobs.enrichedAt), like(jobs.enrichError, '%credit balance is too low%'), like(jobs.enrichError, '%invalid x-api-key%'))).all()
   stats.pending = rows.length
 
   const ranked: Array<{ job: JobRow; score: number }> = []
