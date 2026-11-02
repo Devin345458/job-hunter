@@ -7,7 +7,7 @@ import { refreshStoredAnswers } from './answers'
 // The rest of the engine is imported from its own module:
 //   prepare.ts  prepareApplication, refillApplicationForm, pickJobsToPrepare, refreshAllNeedsInput
 //   submit.ts   submitApplication (only runApproval calls it)
-//   answers.ts  deriveAnswers, CANONICAL_FACTS
+//   answers.ts  deriveAnswers (personal facts come from server/utils/facts.ts)
 //   ats.ts      atsFromUrl, requiresAccount, ATS_LABELS
 export function refreshApplicationAnswers(applicationId: number) {
   return refreshStoredAnswers(applicationId)

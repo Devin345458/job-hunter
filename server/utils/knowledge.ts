@@ -45,7 +45,8 @@ export function candidateContact(entries = loadKnowledge()) {
     contact: {
       email: profileValue(entries, 'Email'),
       phone: profileValue(entries, 'Phone'),
-      location: profileValue(entries, 'Location', 'City'),
+      // Location ("Columbus, OH") before City, whichever row is older.
+      location: profileValue(entries, 'Location') ?? profileValue(entries, 'City'),
       linkedin: profileValue(entries, 'LinkedIn'),
       github: profileValue(entries, 'GitHub'),
     },
@@ -65,4 +66,17 @@ export function upsertKnowledge(category: string, key: string, value: string, so
     return { ...existing[existing.length - 1]!, value, source, updatedAt: now }
   }
   return db.insert(knowledgeEntries).values({ category, key, value, source }).returning().get()
+}
+
+/**
+ * Writes an entry only when its value would change, so a task that runs every day leaves the
+ * knowledge base (and every updated_at) alone when it has nothing new to say. With
+ * `onlyIfMissing`, an existing entry is never touched, whatever it holds.
+ * Returns the entry and whether anything was written.
+ */
+export function setKnowledgeIfChanged(category: string, key: string, value: string, source = 'user_answer', opts: { onlyIfMissing?: boolean } = {}): { entry: KnowledgeEntry; written: boolean } {
+  const existing = loadKnowledge(category).find(e => e.key.trim().toLowerCase() === key.trim().toLowerCase())
+  // The same value from a different source is still written: Devin restating an inferred city makes it his answer.
+  if (existing && (opts.onlyIfMissing || (existing.value === value && existing.source === source))) return { entry: existing, written: false }
+  return { entry: upsertKnowledge(category, key, value, source), written: true }
 }

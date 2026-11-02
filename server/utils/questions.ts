@@ -1,9 +1,29 @@
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { z } from 'zod'
 import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../db/schema'
-import type { GapAnalysis, Requirement } from '#shared/types/pipeline'
+import type { FormAnswer, GapAnalysis, Requirement } from '#shared/types/pipeline'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
-import { loadKnowledge, upsertKnowledge, type KnowledgeEntry } from './knowledge'
+import { aiStructured, fallbackModel } from './ai'
+import {
+  ADDRESS_KNOWLEDGE_KEYS,
+  addressAnswerParts,
+  factForQuestion,
+  isAddressFact,
+  isAddressQuestion,
+  labelText,
+  missingAddressParts,
+  questionFor,
+  resolveFacts,
+  storeKeyOf,
+  type AddressPart,
+  type AddressParts,
+  type FactDef,
+  type FactValues,
+} from './facts'
+import { loadKnowledge, setKnowledgeIfChanged, upsertKnowledge, type KnowledgeEntry } from './knowledge'
+import { dataPath } from './paths'
 import { ruleTerm, ruleWordMatch } from './learned-score'
 import { nowSql, parseJson, referencedQuestionIds } from './review'
 import { rescoreJobs } from './scoring'
@@ -291,6 +311,67 @@ function writeKnowledge(target: { category: string; key: string }, value: string
   return upsertKnowledge(target.category, key, value, 'user_answer')
 }
 
+/**
+ * Writes an answer to the knowledge base. The home address is split into street, city, state,
+ * and ZIP, each its own entry, so any part fills any address field on any form. Every other
+ * answer goes to its question's knowledge key as before.
+ */
+function writeAnswerKnowledge(q: QuestionRow, answer: string): KnowledgeEntry {
+  const def = factForQuestion(q)
+  if (isAddressQuestion(q) || isAddressFact(def)) {
+    const facts = resolveFacts(loadKnowledge(), { answered: answeredValue })
+    // The single address question asks for whatever is missing. An older question about one
+    // part ("What city and state do you live in now?") asks for the parts its fact needs.
+    const asked: AddressPart[] = isAddressQuestion(q)
+      ? (missingAddressParts(facts).length ? missingAddressParts(facts) : ['street', 'city', 'state', 'zip'])
+      : (def?.needs?.length ? def.needs : [])
+    const { parts, missingAfter } = addressAnswerParts(answer, asked)
+    if (missingAfter.length === 0 && Object.keys(parts).some(k => k !== 'country')) return writeAddressParts(parts, 'user_answer').main
+    if (isAddressQuestion(q)) {
+      throw createError({ statusCode: 400, statusMessage: addressAnswerHint(asked) })
+    }
+    // An older address question answered in words the parser cannot split ("Remote") is stored as written.
+  }
+  const target = knowledgeTargetFor(q)
+  const { value, negative } = knowledgeValueFor(q, answer)
+  return writeKnowledge(target, value, negative)
+}
+
+/** What to write when an address answer is missing a part the question asked for, with an example in that shape. */
+function addressAnswerHint(asked: AddressPart[]): string {
+  const has = (p: AddressPart) => asked.includes(p)
+  const words = { street: 'street', city: 'city', state: 'state', zip: 'ZIP code' } as const
+  const list = asked.map(p => words[p])
+  const named = list.length <= 1 ? list.join('') : list.length === 2 ? `${list[0]} and ${list[1]}` : `${list.slice(0, -1).join(', ')}, and ${list[list.length - 1]}`
+  const example = [has('street') ? '123 Main St' : '', has('city') || has('state') ? [has('city') ? 'Columbus' : '', has('state') ? 'OH' : ''].filter(Boolean).join(', ') : ''].filter(Boolean).join(', ') + (has('zip') ? ' 43215' : '')
+  return `Write the ${named}${list.length > 1 ? ', separated by commas' : ''}, for example: ${example.trim()}`
+}
+
+/**
+ * Stores the parts of a home address as separate profile entries. Location ("Columbus, OH")
+ * is written first: the resume header reads it. Returns the most complete entry written.
+ */
+function writeAddressParts(parts: AddressParts, source: string, opts: { onlyIfMissing?: boolean } = {}): { main: KnowledgeEntry; written: number } {
+  const writes: Array<[string, string | undefined]> = [
+    [ADDRESS_KNOWLEDGE_KEYS.location, parts.city && parts.state ? `${parts.city}, ${parts.state}` : undefined],
+    [ADDRESS_KNOWLEDGE_KEYS.street, parts.street ? (parts.line2 ? `${parts.street}, ${parts.line2}` : parts.street) : undefined],
+    [ADDRESS_KNOWLEDGE_KEYS.city, parts.city],
+    [ADDRESS_KNOWLEDGE_KEYS.state, parts.state],
+    [ADDRESS_KNOWLEDGE_KEYS.zip, parts.zip],
+  ]
+  let main: KnowledgeEntry | null = null
+  let written = 0
+  for (const [target, value] of writes) {
+    if (!value) continue
+    const i = target.indexOf(':')
+    const res = setKnowledgeIfChanged(target.slice(0, i), target.slice(i + 1), value, source, opts)
+    if (res.written) written++
+    if (!main || target === ADDRESS_KNOWLEDGE_KEYS.street) main = res.entry
+  }
+  if (!main) throw createError({ statusCode: 400, statusMessage: 'No address parts found in the answer' })
+  return { main, written }
+}
+
 function gapQuestionIds(app: InferSelectModel<typeof applications>): number[] {
   return (parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)?.items ?? [])
     .map(i => i.questionId)
@@ -305,6 +386,14 @@ function gapQuestionIds(app: InferSelectModel<typeof applications>): number[] {
 export function waitingApplicationIds(q: QuestionRow, waiting = useDb().select().from(applications).where(inArray(applications.status, WAITING_STATUSES)).all()): number[] {
   return waiting
     .filter(a => a.id === q.applicationId || referencedQuestionIds(a).includes(q.id) || gapQuestionIds(a).includes(q.id))
+    .map(a => a.id)
+}
+
+/** needs_input and proposed applications with an optional field that was asked as this question without blocking. */
+function optionalAskApplicationIds(questionId: number): number[] {
+  const marker = `Optional: asked you as question #${questionId}`
+  return useDb().select().from(applications).where(inArray(applications.status, WAITING_STATUSES)).all()
+    .filter(a => parseJson<FormAnswer[]>(a.answersJson, []).some(x => x.sourceDetail === marker))
     .map(a => a.id)
 }
 
@@ -359,6 +448,7 @@ export function toQuestionListItem(
   q: QuestionRow,
   job: { id: number; title: string; company: string } | null,
   waitingIds: number[],
+  waitingApplications?: Array<{ id: number; company: string; title: string }>,
 ): QuestionListItem {
   return {
     id: q.id,
@@ -379,6 +469,7 @@ export function toQuestionListItem(
     jobId: q.jobId,
     job,
     waitingApplicationIds: waitingIds,
+    ...(waitingApplications ? { waitingApplications } : {}),
     legacy: isLegacyQuestion(q),
   }
 }
@@ -402,10 +493,18 @@ export function listQuestionItems(filter: { status?: string; applicationId?: num
   const jobById = new Map(jobIds.length
     ? db.select({ id: jobs.id, title: jobs.title, company: jobs.company }).from(jobs).where(inArray(jobs.id, jobIds)).all().map(j => [j.id, j] as const)
     : [])
+  const waitingJob = new Map(waiting.length
+    ? db.select({ id: jobs.id, title: jobs.title, company: jobs.company }).from(jobs).where(inArray(jobs.id, [...new Set(waiting.map(a => a.jobId))])).all().map(j => [j.id, j] as const)
+    : [])
+  const named = (ids: number[]) => ids.map((id) => {
+    const job = waitingJob.get(waiting.find(a => a.id === id)!.jobId)
+    return { id, company: job?.company ?? '', title: job?.title ?? '' }
+  })
   return rows
     .map((q) => {
       const jobId = q.jobId ?? (q.applicationId ? appJob.get(q.applicationId) : undefined)
-      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, q.status === 'pending' ? waitingApplicationIds(q, waiting) : [])
+      const waitingIds = q.status === 'pending' ? waitingApplicationIds(q, waiting) : []
+      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds))
     })
     .sort((a, b) => Number(b.blocking || b.waitingApplicationIds.length > 0) - Number(a.blocking || a.waitingApplicationIds.length > 0)
       || Number(a.legacy) - Number(b.legacy)
@@ -451,10 +550,10 @@ export async function answerQuestion(id: number, rawAnswer: string): Promise<Ans
     if (choices.length && !choices.includes(answer)) throw createError({ statusCode: 400, statusMessage: `Pick one of: ${choices.join(', ')}` })
   }
 
-  const target = knowledgeTargetFor(q)
-  const { value, negative } = knowledgeValueFor(q, normalized)
-  const entry = writeKnowledge(target, value, negative)
+  const entry = writeAnswerKnowledge(q, normalized)
   const waiting = waitingApplicationIds(q)
+  // Optional fields asked without blocking ("Optional: asked you as question #N") fill in too.
+  const toRefresh = [...new Set([...waiting, ...optionalAskApplicationIds(q.id)])]
   db.update(questions).set({
     status: 'answered',
     answer: normalized,
@@ -462,7 +561,7 @@ export async function answerQuestion(id: number, rawAnswer: string): Promise<Ans
     knowledgeKey: `${entry.category}:${entry.key}`,
   }).where(eq(questions.id, id)).run()
 
-  const { refreshed, unavailable } = await refreshWaitingApplications(waiting)
+  const { refreshed, unavailable } = await refreshWaitingApplications(toRefresh)
   const affected = affectedJobIds(q, waiting)
   const rescored = affected === 'open' || affected.length
     ? (await rescoreJobs(affected, 'rescore')).rescored
@@ -660,4 +759,542 @@ export function askDailyQuestions(): QuestionRow[] {
     if (row && !before.has(row.id)) created.push(row)
   }
   return created
+}
+
+// ── One question per fact: reuse before asking, and merge what was asked twice ──
+
+/** Note the tidy puts at the start of a merged duplicate's context. */
+const MERGED_NOTE = /^Merged into question #(\d+)/
+
+export function mergedIntoId(q: Pick<QuestionRow, 'status' | 'context'>): number | null {
+  if (q.status !== 'skipped') return null
+  const m = (q.context ?? '').match(MERGED_NOTE)
+  return m ? Number(m[1]) : null
+}
+
+/** The question a merged duplicate now points to, following the merge notes. Null when the chain ends on a skipped question. */
+export function canonicalQuestion(id: number): QuestionRow | null {
+  const db = useDb()
+  let q = db.select().from(questions).where(eq(questions.id, id)).get() ?? null
+  for (let hops = 0; q && hops < 10; hops++) {
+    if (q.status === 'pending' || q.status === 'answered') return q
+    const next = mergedIntoId(q)
+    if (!next) return null
+    q = db.select().from(questions).where(eq(questions.id, next)).get() ?? null
+  }
+  return null
+}
+
+const SHARED_FACT_CONTEXT = 'Application forms ask for this.'
+export const ADDRESS_CONTEXT = 'Asked once for every form that wants any part of your home address. The answer is saved to your knowledge base as separate street, city, state, and ZIP entries and fills every address field.'
+
+function sharedContext(def: FactDef | null): string {
+  return isAddressFact(def)
+    ? ADDRESS_CONTEXT
+    : `${SHARED_FACT_CONTEXT} Your answer is saved to the knowledge base and fills every form that asks.`
+}
+
+// Decisions of the semantic check, one per normalized label, so a label never costs a second call.
+// A JSON file next to the database: there is no table for it and the schema is not changed for it.
+
+interface LabelDecision {
+  /** "none", "Q<id>" (an existing question), or "K:<category>/<key>" (a profile knowledge entry). */
+  match: string
+  at: string
+}
+
+let labelCache: Record<string, LabelDecision> | null = null
+
+function labelCachePath() {
+  return dataPath('question-label-matches.json')
+}
+
+function loadLabelCache(): Record<string, LabelDecision> {
+  if (labelCache) return labelCache
+  const path = labelCachePath()
+  labelCache = {}
+  if (existsSync(path)) {
+    try {
+      labelCache = JSON.parse(readFileSync(path, 'utf8')) as Record<string, LabelDecision>
+    }
+    catch (e) {
+      console.error(`[questions] ${path} is not valid JSON; starting a new label cache`, e)
+    }
+  }
+  return labelCache
+}
+
+function saveLabelCache() {
+  const path = labelCachePath()
+  writeFileSync(`${path}.tmp`, JSON.stringify(labelCache ?? {}, null, 2))
+  renameSync(`${path}.tmp`, path)
+}
+
+export type LabelMatch =
+  | { type: 'question'; question: QuestionRow }
+  | { type: 'knowledge'; entry: KnowledgeEntry }
+  | { type: 'none' }
+
+const MatchSchema = z.object({
+  matches: z.array(z.object({
+    item: z.string().describe('The item id, e.g. "L1"'),
+    match: z.string().describe('"Q<id>" of the existing question that asks for the same information, "K<n>" of the profile entry that answers it as written, or "none"'),
+  })),
+})
+
+const MATCH_SYSTEM = `You keep a job applicant from being asked the same thing twice. Each ITEM is a label from an application form. Decide whether an EXISTING QUESTION already asks for the same information, or a PROFILE ENTRY already holds it.
+Match only when one answer would answer both as written: same fact, same scope, same person.
+- "What city and state do you live in now?" and "Where are you currently based?" match.
+- "Street address" and "City" do not match (different parts).
+- "Tell us about your AI experience" and "Have you used OpenAI?" do not match (one is broader).
+- A question about a reference, a referrer, or an emergency contact never matches the applicant's own details.
+When unsure, answer "none".`
+
+function resolveDecision(match: string, selfId?: number): LabelMatch {
+  const q = match.match(/^Q(\d+)$/)
+  if (q) {
+    const row = canonicalQuestion(Number(q[1]))
+    return row && row.id !== selfId ? { type: 'question', question: row } : { type: 'none' }
+  }
+  const k = match.match(/^K:([^/]+)\/(.+)$/)
+  if (k) {
+    const entry = findKnowledgeEntry(k[1]!, k[2]!)
+    return entry ? { type: 'knowledge', entry } : { type: 'none' }
+  }
+  return { type: 'none' }
+}
+
+/**
+ * The semantic duplicate check: for each label, an existing pending or answered fact or
+ * form_field question that asks the same thing, or a profile entry that already answers it.
+ * One call to the fallback (cheap) model for every label not already decided; decisions are
+ * cached per normalized label. `selfId` excludes a question from matching itself, and only an
+ * older question can absorb a newer one. Any failure (no credit, budget, a bad reply) means
+ * "none": the caller asks as before, and the error is returned so the run log shows it.
+ */
+export async function matchLabelsToExisting(
+  checks: Array<{ label: string; question?: string; selfId?: number }>,
+  ref?: { type: string; id: number },
+): Promise<{ results: LabelMatch[]; called: boolean; error: string | null }> {
+  const cache = loadLabelCache()
+  const results: LabelMatch[] = checks.map(() => ({ type: 'none' }))
+  const open: number[] = []
+  checks.forEach((c, i) => {
+    const hit = cache[labelText(c.label)]
+    if (hit) results[i] = resolveDecision(hit.match, c.selfId)
+    else open.push(i)
+  })
+  if (open.length === 0) return { results, called: false, error: null }
+
+  const db = useDb()
+  const candidates = db.select().from(questions)
+    .where(and(inArray(questions.kind, ['fact', 'form_field']), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+  const profile = loadKnowledge('profile')
+  const now = nowSql()
+  const decide = (i: number, match: string) => {
+    cache[labelText(checks[i]!.label)] = { match, at: now }
+    results[i] = resolveDecision(match, checks[i]!.selfId)
+  }
+  const usable = (i: number) => candidates.filter(q => checks[i]!.selfId === undefined || q.id < checks[i]!.selfId!)
+  if (open.every(i => usable(i).length === 0) && profile.length === 0) {
+    for (const i of open) decide(i, 'none')
+    saveLabelCache()
+    return { results, called: false, error: null }
+  }
+
+  let reply: z.infer<typeof MatchSchema>
+  try {
+    reply = await aiStructured(MatchSchema, {
+      purpose: 'question_match',
+      model: fallbackModel(),
+      effort: 'low',
+      maxTokens: 1500,
+      ref,
+      system: MATCH_SYSTEM,
+      prompt: `ITEMS
+${open.map((i, n) => `L${n + 1}: ${checks[i]!.label}${checks[i]!.question && checks[i]!.question !== checks[i]!.label ? ` (asked as: ${checks[i]!.question})` : ''}${checks[i]!.selfId ? ` [this is question Q${checks[i]!.selfId}; only match an older question]` : ''}`).join('\n')}
+
+EXISTING QUESTIONS
+${candidates.map(q => `Q${q.id}: ${q.question}${q.subject && q.subject !== q.question ? ` (form label: ${q.subject})` : ''}${q.status === 'answered' ? ' [answered]' : ''}`).join('\n') || '(none)'}
+
+PROFILE ENTRIES
+${profile.map((e, n) => `K${n + 1}: ${e.key}`).join('\n') || '(none)'}`,
+    })
+  }
+  catch (e: any) {
+    const error = `${e?.constructor?.name ?? 'Error'}: ${e?.message ?? e}`
+    console.warn(`[questions] semantic duplicate check failed, so these labels are asked as new questions: ${open.map(i => checks[i]!.label).join(' | ')}. ${error}`)
+    return { results, called: true, error }
+  }
+  open.forEach((i, n) => {
+    const raw = (reply.matches.find(m => m.item.trim().toUpperCase() === `L${n + 1}`)?.match ?? 'none').trim().toUpperCase()
+    const q = raw.match(/^Q(\d+)$/)
+    const k = raw.match(/^K(\d+)$/)
+    if (q && usable(i).some(c => c.id === Number(q[1]))) decide(i, `Q${q[1]}`)
+    else if (k && profile[Number(k[1]) - 1]) decide(i, `K:profile/${profile[Number(k[1]) - 1]!.key}`)
+    else decide(i, 'none')
+  })
+  saveLabelCache()
+  return { results, called: true, error: null }
+}
+
+export interface AskRequest {
+  /** The form label that needs the answer. */
+  label: string
+  input: AskInput
+  /** True when the registry in facts.ts chose this question (fixed subject, so no semantic check). */
+  registry: boolean
+  /** The registry fact the field asks for, e.g. "address.city". */
+  factKey?: string
+}
+
+export type AskOutcome = { question: QuestionRow } | { knowledge: KnowledgeEntry }
+
+function markBlocking(q: QuestionRow, blocking: boolean | undefined): QuestionRow {
+  if (!blocking || q.blocking || q.status !== 'pending') return q
+  useDb().update(questions).set({ blocking: true }).where(eq(questions.id, q.id)).run()
+  return { ...q, blocking: true }
+}
+
+/**
+ * Older questions about the same fact that the registry's own question would duplicate: pending
+ * ones that share its question (every address part shares the address question), and answered
+ * ones about exactly this fact. An answered street question never stands in for the city.
+ */
+function questionsForAsk(subject: string, kind: string, factKey?: string): QuestionRow[] {
+  return useDb().select().from(questions)
+    .where(and(inArray(questions.kind, ['fact', 'form_field', 'preference']), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+    .filter((q) => {
+      const def = factForQuestion(q)
+      if (!def?.ask || def.ask.subject !== subject || def.ask.kind !== kind) return false
+      return q.status === 'pending' || def.key === factKey
+    })
+    .sort((a, b) => Number(b.status === 'answered') - Number(a.status === 'answered') || a.id - b.id)
+}
+
+/**
+ * askQuestion() for many fields at once, with the checks that stop a second question about the
+ * same thing. In order: the registry's fixed question (or any older question about the same fact);
+ * an existing question with the same wording; a merged duplicate's canonical question; the
+ * per-label decision cache; one semantic check with the fallback model. Only then is a question
+ * created. An outcome is either a question to wait on or use, or a profile entry that answers it.
+ */
+export async function askOrReuse(requests: AskRequest[], ref?: { type: string; id: number }): Promise<{ outcomes: AskOutcome[]; semanticError: string | null }> {
+  const db = useDb()
+  const outcomes: Array<AskOutcome | null> = requests.map(() => null)
+  const semantic: number[] = []
+  requests.forEach((r, i) => {
+    const dedupeKey = dedupeKeyOf(r.input.kind, r.input.subject)
+    const exact = db.select().from(questions).where(and(eq(questions.dedupeKey, dedupeKey), inArray(questions.status, ['pending', 'answered']))).all()
+    if (r.registry) {
+      const same = exact.length ? [] : questionsForAsk(r.input.subject, r.input.kind, r.factKey)
+      if (same.length) {
+        outcomes[i] = { question: markBlocking(same[0]!, r.input.blocking) }
+        return
+      }
+      const q = askQuestion(r.input)
+      // The address question names only the parts still missing; keep the open one current.
+      if (q.status === 'pending' && isAddressQuestion(q) && q.question !== r.input.question) {
+        db.update(questions).set({ question: r.input.question }).where(eq(questions.id, q.id)).run()
+        outcomes[i] = { question: { ...q, question: r.input.question } }
+        return
+      }
+      outcomes[i] = { question: q }
+      return
+    }
+    if (exact.length) {
+      outcomes[i] = { question: askQuestion(r.input) }
+      return
+    }
+    const merged = db.select().from(questions).where(and(eq(questions.dedupeKey, dedupeKey), eq(questions.status, 'skipped'))).all()
+      .map(q => (mergedIntoId(q) ? canonicalQuestion(q.id) : null)).find(Boolean)
+    if (merged) {
+      outcomes[i] = { question: markBlocking(merged, r.input.blocking) }
+      return
+    }
+    semantic.push(i)
+  })
+
+  let semanticError: string | null = null
+  if (semantic.length) {
+    const { results, error } = await matchLabelsToExisting(semantic.map(i => ({ label: requests[i]!.label, question: requests[i]!.input.question })), ref)
+    semanticError = error
+    semantic.forEach((i, n) => {
+      const m = results[n]!
+      if (m.type === 'question') outcomes[i] = { question: markBlocking(m.question, requests[i]!.input.blocking) }
+      else if (m.type === 'knowledge') outcomes[i] = { knowledge: m.entry }
+      else outcomes[i] = { question: askQuestion(requests[i]!.input) }
+    })
+  }
+  return { outcomes: outcomes as AskOutcome[], semanticError }
+}
+
+// ── The tidy ──
+
+export interface FactTidyResult {
+  /** Duplicates skipped, with the question each was merged into. */
+  merged: Array<{ id: number; into: number }>
+  /** Questions answered from the knowledge base, with the derived answer. */
+  derived: Array<{ id: number; answer: string; from: string }>
+  /** Canonical questions reworded or given the shared context. */
+  reworded: number[]
+  /** Address parts written to the knowledge base because they were derivable but not stored. */
+  knowledgeWritten: number
+  /** Waiting applications whose form answers were pointed at a canonical question. */
+  repointed: number[]
+  refreshed: number[]
+  semanticCalled: boolean
+  semanticError: string | null
+}
+
+/**
+ * The knowledge key an auto-answered question shows ("Saved to your knowledge base as ..."): its
+ * own store key when that entry exists, else profile:Location for the location-like address facts
+ * the tidy stores as Location. Null keeps the question's key.
+ */
+function derivedKnowledgeKey(def: FactDef, store: string | null): string | null {
+  const exists = (key: string) => {
+    const i = key.indexOf(':')
+    return !!findKnowledgeEntry(key.slice(0, i), key.slice(i + 1))
+  }
+  if (store && exists(store)) return store
+  if (isAddressFact(def) && exists(ADDRESS_KNOWLEDGE_KEYS.location)) return ADDRESS_KNOWLEDGE_KEYS.location
+  return null
+}
+
+function sameFactValue(def: FactDef, facts: FactValues): { value: string; detail: string } | null {
+  const v = def.value(facts)
+  return v ? { value: v.value, detail: v.detail } : null
+}
+
+/**
+ * Keeps one question per fact. Runs in learn:daily before new questions are asked, and is safe to
+ * run any number of times (a second run changes nothing):
+ * 1. stores address parts the knowledge base implies but does not hold (Location, City, State),
+ *    insert-only, never overwriting an entry;
+ * 2. groups pending fact and form_field questions by the registry fact they ask for. A fact the
+ *    knowledge base already answers groups by that fact (city and state, initials); an unknown one
+ *    groups by the question that would be asked for it (every address part shares the one address
+ *    question). The canonical question is the answered one, else the oldest. Every other question
+ *    in the group is skipped with a note naming the canonical one;
+ * 3. answers a canonical pending question the knowledge base already answers (initials from the
+ *    full name), and words an open address question for only the parts still missing;
+ * 4. runs the semantic check on the remaining pending form_field questions and merges a question
+ *    into an older one that asks the same thing;
+ * 5. points every waiting application's form answers and gap analysis at the canonical question,
+ *    then refreshes those applications so the ones with nothing left to answer unblock.
+ * An answered question's answer is never changed and no row is deleted. A merged duplicate that
+ * is reopened by hand is merged again on the next run.
+ */
+export async function tidyFactQuestions(log: (m: string) => void = () => {}): Promise<FactTidyResult> {
+  const db = useDb()
+  const result: FactTidyResult = { merged: [], derived: [], reworded: [], knowledgeWritten: 0, repointed: [], refreshed: [], semanticCalled: false, semanticError: null }
+
+  let facts = resolveFacts(loadKnowledge(), { answered: answeredValue })
+  // 1. Address parts the stored address implies, written once so the knowledge page, the prompts,
+  //    and the resume header see them. Only parts parsed from text Devin stored, never overwriting.
+  if (facts['address.city']?.derived && facts['address.state']?.derived) {
+    const w = writeAddressParts({ city: facts['address.city'].value, state: facts['address.state'].value }, 'inferred', { onlyIfMissing: true })
+    result.knowledgeWritten = w.written
+    if (w.written) facts = resolveFacts(loadKnowledge(), { answered: answeredValue })
+  }
+
+  const rows = db.select().from(questions)
+    .where(and(inArray(questions.kind, ['fact', 'form_field', 'preference']), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+    .sort((a, b) => a.id - b.id)
+  const defs = new Map(rows.map(q => [q.id, factForQuestion(q)] as const))
+
+  // 2. Groups. Answered questions only ever serve as the canonical one.
+  const groups = new Map<string, QuestionRow[]>()
+  for (const q of rows) {
+    const def = defs.get(q.id)
+    if (!def) continue
+    const known = sameFactValue(def, facts)
+    const key = known || q.status === 'answered' ? `fact:${def.key}` : def.ask ? `ask:${def.ask.kind}:${def.ask.subject}` : null
+    if (!key) continue
+    const list = groups.get(key) ?? []
+    list.push(q)
+    groups.set(key, list)
+    // An answered question also anchors the unknown-fact group of its question, so a later pending
+    // copy about the same thing merges into it instead of standing on its own. Not for the address
+    // and the name: their shared question covers several facts, and an answered street question
+    // must not absorb a pending city question.
+    if (q.status === 'answered' && def.ask && !known && def.group !== 'address' && def.group !== 'name') {
+      const askKey = `ask:${def.ask.kind}:${def.ask.subject}`
+      groups.set(askKey, [...(groups.get(askKey) ?? []), q])
+    }
+  }
+
+  const mergeMap = new Map<number, number>()
+  const merge = (dup: QuestionRow, into: QuestionRow) => {
+    if (dup.id === into.id || dup.status !== 'pending' || mergeMap.has(dup.id)) return
+    const note = `Merged into question #${into.id} ("${into.question}"), which asks for the same thing. Answer that one.`
+    db.update(questions).set({ status: 'skipped', blocking: false, context: `${note}${dup.context ? ` ${dup.context}` : ''}` }).where(eq(questions.id, dup.id)).run()
+    mergeMap.set(dup.id, into.id)
+    result.merged.push({ id: dup.id, into: into.id })
+  }
+
+  // 3. The canonical question itself: answered when the knowledge base answers it, else made the
+  //    registry's question, worded for what is still missing. Settled before the duplicates are
+  //    merged, so their notes quote its final wording.
+  const settleCanonical = (canonical: QuestionRow) => {
+    if (canonical.status !== 'pending' || mergeMap.has(canonical.id)) return
+    const def = defs.get(canonical.id)!
+    const known = sameFactValue(def, facts)
+    if (known) {
+      const store = storeKeyOf(def)
+      // The Questions page says the answer was saved under the question's knowledge key, so it is:
+      // insert-only, marked inferred, and never ahead of a value derived from Devin's own entries.
+      if (store && !isAddressFact(def)) {
+        const i = store.indexOf(':')
+        if (setKnowledgeIfChanged(store.slice(0, i), store.slice(i + 1), known.value, 'inferred', { onlyIfMissing: true }).written) result.knowledgeWritten++
+      }
+      db.update(questions).set({
+        status: 'answered',
+        answer: known.value,
+        answeredAt: nowSql(),
+        blocking: false,
+        knowledgeKey: derivedKnowledgeKey(def, store) ?? canonical.knowledgeKey,
+        // The old context said an application waits on the answer; it no longer does.
+        context: `Answered from your knowledge base: ${known.detail}. Answer it again to change it.`,
+      }).where(eq(questions.id, canonical.id)).run()
+      result.derived.push({ id: canonical.id, answer: known.value, from: known.detail })
+      return
+    }
+    // Unknown: make it the registry's question, worded for what is still missing.
+    const ask = questionFor(def, facts)
+    if (!ask) return
+    const next = {
+      question: ask.question,
+      kind: ask.kind,
+      subject: ask.subject,
+      dedupeKey: dedupeKeyOf(ask.kind, ask.subject),
+      knowledgeKey: ask.knowledgeKey,
+      answerType: ask.answerType,
+      choicesJson: null as string | null,
+      category: ask.category,
+      context: canonical.context?.startsWith(SHARED_FACT_CONTEXT) || canonical.context === ADDRESS_CONTEXT ? canonical.context : sharedContext(def),
+    }
+    const changed = (Object.keys(next) as Array<keyof typeof next>).some(k => (canonical as any)[k] !== next[k])
+    // A form_field question whose answer must be one of the form's options keeps them; it
+    // becomes the registry question only when it is about a fact in its own words.
+    if (changed && !(canonical.kind === 'form_field' && canonical.choicesJson && !isAddressFact(def))) {
+      db.update(questions).set(next).where(eq(questions.id, canonical.id)).run()
+      result.reworded.push(canonical.id)
+    }
+  }
+
+  for (const [key, list] of groups) {
+    const unique = [...new Map(list.map(q => [q.id, q])).values()]
+    const pending = unique.filter(q => q.status === 'pending' && !mergeMap.has(q.id))
+    if (pending.length === 0) continue
+    const answered = unique.filter(q => q.status === 'answered')
+    let canonical: QuestionRow
+    if (key.startsWith('ask:')) {
+      // The registry's own question when it exists, else an answered one, else the oldest.
+      const [, kind, subject] = key.split(':') as [string, string, string]
+      const own = unique.find(q => q.dedupeKey === dedupeKeyOf(kind, subject) && (q.status === 'pending' || q.status === 'answered'))
+      canonical = own ?? answered[0] ?? pending[0]!
+    }
+    else {
+      canonical = answered[0] ?? pending[0]!
+    }
+    settleCanonical(canonical)
+    const settled = db.select().from(questions).where(eq(questions.id, canonical.id)).get() ?? canonical
+    for (const q of pending) merge(q, settled)
+  }
+
+  // 4. Semantic pass over the form_field questions the registry does not cover.
+  const loose = db.select().from(questions)
+    .where(and(eq(questions.kind, 'form_field'), eq(questions.status, 'pending')))
+    .all()
+    .filter(q => !factForQuestion(q))
+    .sort((a, b) => a.id - b.id)
+  if (loose.length) {
+    const { results, called, error } = await matchLabelsToExisting(loose.map(q => ({ label: q.subject || q.question, question: q.question, selfId: q.id })))
+    result.semanticCalled = called
+    result.semanticError = error
+    loose.forEach((q, i) => {
+      const m = results[i]!
+      if (m.type === 'question' && m.question.id < q.id) merge(q, m.question)
+    })
+  }
+
+  // 5. Point waiting applications at the canonical questions and refresh them.
+  const touched = new Set<number>([...mergeMap.keys(), ...mergeMap.values(), ...result.derived.map(d => d.id)])
+  if (touched.size === 0 && result.reworded.length === 0) {
+    log('fact questions: nothing to merge or derive')
+    return result
+  }
+  const texts = new Map<number, string | null>()
+  const questionText = (id: number) => {
+    if (!texts.has(id)) texts.set(id, db.select({ question: questions.question }).from(questions).where(eq(questions.id, id)).get()?.question ?? null)
+    return texts.get(id)!
+  }
+  const resolveId = (id: number) => {
+    let cur = id
+    for (let hops = 0; mergeMap.has(cur) && hops < 10; hops++) cur = mergeMap.get(cur)!
+    return cur
+  }
+  const waiting = db.select().from(applications).where(inArray(applications.status, WAITING_STATUSES)).all()
+  const refresh = new Set<number>()
+  for (const app of waiting) {
+    const answers = parseJson<FormAnswer[]>(app.answersJson, [])
+    let changed = false
+    for (const a of answers) {
+      // Assignments keep each answer's key order, which releaseStaleQuestions' LIKE match relies on.
+      if (typeof a.needsQuestionId === 'number') {
+        const to = resolveId(a.needsQuestionId)
+        if (to !== a.needsQuestionId) {
+          a.needsQuestionId = to
+          changed = true
+        }
+        // The field's note names the question it waits on, in that question's current wording.
+        const wording = touched.has(to) || result.reworded.includes(to) ? questionText(to) : null
+        const detail = wording ? `question #${to}: ${wording}` : null
+        if (detail && a.sourceDetail !== detail) {
+          a.sourceDetail = detail
+          changed = true
+        }
+        if (touched.has(to)) refresh.add(app.id)
+      }
+      const optional = a.sourceDetail?.match(/^Optional: asked you as question #(\d+)/)
+      if (optional) {
+        const to = resolveId(Number(optional[1]))
+        if (to !== Number(optional[1])) {
+          a.sourceDetail = a.sourceDetail!.replace(/question #\d+/, `question #${to}`)
+          changed = true
+        }
+        if (touched.has(to)) refresh.add(app.id)
+      }
+    }
+    const gap = parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)
+    let gapChanged = false
+    for (const item of gap?.items ?? []) {
+      if (typeof item.questionId === 'number' && resolveId(item.questionId) !== item.questionId) {
+        item.questionId = resolveId(item.questionId)
+        gapChanged = true
+      }
+    }
+    if (changed || gapChanged) {
+      db.update(applications).set({
+        ...(changed ? { answersJson: JSON.stringify(answers) } : {}),
+        ...(gapChanged ? { gapAnalysisJson: JSON.stringify(gap) } : {}),
+        updatedAt: nowSql(),
+      }).where(eq(applications.id, app.id)).run()
+      result.repointed.push(app.id)
+    }
+  }
+  // Applications that asked a merged or derived question themselves wait on it too.
+  for (const id of touched) {
+    const q = db.select({ applicationId: questions.applicationId }).from(questions).where(eq(questions.id, id)).get()
+    if (q?.applicationId && waiting.some(a => a.id === q.applicationId)) refresh.add(q.applicationId)
+  }
+  const { refreshed, unavailable } = await refreshWaitingApplications([...refresh].sort((a, b) => a - b))
+  result.refreshed = refreshed
+  log(`fact questions: merged ${result.merged.map(m => `#${m.id} into #${m.into}`).join(', ') || 'none'}; answered from knowledge ${result.derived.map(d => `#${d.id} "${d.answer}"`).join(', ') || 'none'}; refreshed applications ${refreshed.join(', ') || 'none'}${unavailable ? ' (refresh not on this build)' : ''}`)
+  return result
 }

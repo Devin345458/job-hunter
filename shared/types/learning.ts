@@ -98,6 +98,8 @@ export interface QuestionListItem {
   job: { id: number; title: string; company: string } | null
   /** needs_input or proposed applications whose answers wait on this question. */
   waitingApplicationIds: number[]
+  /** The same applications with their company and job title, so one shared question can name every employer waiting on it. */
+  waitingApplications?: Array<{ id: number; company: string; title: string }>
   /** True for rows from the original tailoring flow (no kind, no answer type). */
   legacy: boolean
 }

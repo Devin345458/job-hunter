@@ -141,6 +141,8 @@ export interface AiCallOptions {
   effort?: Effort
   maxTokens?: number
   ref?: { type: string; id: number }
+  /** Model to try first instead of NUXT_AI_MODEL, e.g. fallbackModel() for a cheap check. The fallback model still applies. */
+  model?: string
 }
 
 // ── Model selection with fallback ──
@@ -243,7 +245,7 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
  */
 export async function aiStructured<S extends z.ZodType>(schema: S, opts: AiCallOptions): Promise<z.infer<S>> {
   const ai = useAI()
-  const response = await withModel(opts, (model, ro) => ai.beta.messages.parse(buildParams(model, opts, betaZodOutputFormat(schema)), ro) as any)
+  const response = await withModel(opts, (model, ro) => ai.beta.messages.parse(buildParams(model, opts, betaZodOutputFormat(schema)), ro) as any, opts.model)
   const parsed = (response as any).parsed_output
   if (parsed == null) throw new Error(`Claude returned no parseable output for ${opts.purpose}`)
   return parsed as z.infer<S>

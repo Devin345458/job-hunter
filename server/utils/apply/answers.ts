@@ -4,8 +4,9 @@ import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../../db/schema'
 import type { FormAnswer, FormField, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
 import { aiStructured } from '../ai'
-import { profileValue, type KnowledgeEntry } from '../knowledge'
-import { answeredValue, askQuestion, type AskInput } from '../questions'
+import { cleanStoredAnswer, factForQuestion, factStatements, matchFact, resolveFacts, resolveField, type FactValues } from '../facts'
+import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
+import { ADDRESS_CONTEXT, answeredValue, askOrReuse, askQuestion, canonicalQuestion, type AskInput, type AskOutcome, type QuestionRow } from '../questions'
 import { nowSql, parseJson, setApplicationStatus } from '../review'
 import { ATS_LABELS } from './ats'
 import { knowledgeForPrompt, knowledgeText, verifyClaims } from './evidence'
@@ -15,14 +16,17 @@ import { normalizeLabel, scrubDashes, splitSentences, truncate, unsupportedNumbe
 type JobRow = InferSelectModel<typeof jobs>
 
 // Turns a form snapshot into answers, without a browser. Order of resolution per field:
-// 1. deterministic lookups in the knowledge base (name, email, phone, GitHub, current employer,
-//    files, EEO decline options);
-// 2. canonical facts with a fixed question vocabulary (work authorization, sponsorship,
-//    relocation, start date, salary, location, LinkedIn): knowledge base, then an answered
-//    question, then a new question for Devin;
+// 1. deterministic rules (files, EEO decline options, cover letter, current employer and title,
+//    marketing opt-outs);
+// 2. the personal-fact registry (server/utils/facts.ts): name, initials, address and every part
+//    of it, contact details, work authorization, sponsorship, relocation, start date, salary.
+//    Values come from the knowledge base or are derived from it (initials from the full name, city
+//    and state from the home address). An unknown fact asks its one fixed question: the whole
+//    address is one question, however many address fields a form has;
 // 3. one Claude call for everything else, whose free-text answers go through the evidence check.
 // A field nobody can answer becomes a question: blocking when the field is required (and always
-// for the five sensitive facts), and skipped without a question when it is optional.
+// for the five sensitive facts), and skipped without a question when it is optional. Before any
+// question is created, askOrReuse() looks for one that already asks the same thing.
 
 export interface AnswerContext {
   applicationId: number
@@ -32,156 +36,43 @@ export interface AnswerContext {
   coverLetter: string | null
 }
 
-// ── Canonical facts ──────────────────────────────────────────
+// ── Personal facts ───────────────────────────────────────────
+// The registry in server/utils/facts.ts decides which labels ask for a personal fact (name,
+// address, contact, work authorization, sponsorship, relocation, start date, salary) and derives
+// each value from what the knowledge base stores. resolveField() turns a fact into a field answer.
 
-interface CanonicalFact {
-  key: string
-  match: RegExp
-  kind: AskInput['kind']
-  /** Fixed subject so the question dedupes across every application and every ATS. */
-  subject: string
-  question: string
-  knowledgeKey: string
-  kbKeys: string[]
-  answerType: 'yes_no' | 'text'
-  /** The brief's five sensitive facts block approval even on optional fields. */
-  alwaysBlocking: boolean
-  statement: (v: string) => string
-  /** Labels the stored value answers as written. Others (a city's country, its time zone) are derived by mapToOptions. */
-  direct?: RegExp
+/** Value for a field from a resolved fact, or null when the options need mapToOptions. */
+function valueFromFact(field: FormField, res: { value: string; choices: string[] }): FormAnswer['value'] | null {
+  const options = field.options ?? []
+  switch (field.type) {
+    case 'number':
+      return res.value.replace(/,/g, '').match(/\d+(\.\d+)?/)?.[0] ?? null
+    case 'checkbox':
+      return /^yes$/i.test(res.value) ? true : null
+    case 'select':
+    case 'radio': {
+      // A select with no options is a type-ahead box: the text itself is the answer.
+      if (options.length === 0) return res.value
+      for (const c of res.choices) {
+        const pick = bestOption(c, options)
+        if (pick) return pick
+      }
+      return null
+    }
+    case 'checkbox_group': {
+      for (const c of res.choices) {
+        const pick = bestOption(c, options)
+        if (pick) return [pick]
+      }
+      return null
+    }
+    default:
+      return res.value
+  }
 }
 
-export const CANONICAL_FACTS: CanonicalFact[] = [
-  {
-    key: 'sponsorship',
-    match: /sponsor/i,
-    kind: 'fact',
-    subject: 'visa sponsorship',
-    question: 'Will you now or in the future need visa sponsorship to work in the United States?',
-    knowledgeKey: 'profile:Needs Visa Sponsorship',
-    kbKeys: ['profile/needs visa sponsorship', 'profile/visa sponsorship', 'profile/sponsorship'],
-    answerType: 'yes_no',
-    alwaysBlocking: true,
-    statement: v => `Asked whether he needs visa sponsorship now or in the future to work in the United States, Devin answered: ${v}`,
-  },
-  {
-    key: 'work_authorization',
-    // "able to work from a state where we are registered" is about location, so plain "able" is not enough.
-    match: /(authori[sz]ed|eligible|permitted|entitled) to (legally |lawfully )?work|legally (able|permitted) to work|work authori[sz]ation|right to work|employment eligibility|(legally|lawfully) work/i,
-    kind: 'fact',
-    subject: 'US work authorization',
-    question: 'Are you legally authorized to work in the United States?',
-    knowledgeKey: 'profile:Work Authorization (US)',
-    kbKeys: ['profile/work authorization us', 'profile/work authorization', 'profile/authorized to work in us'],
-    answerType: 'yes_no',
-    alwaysBlocking: true,
-    statement: v => `Asked whether he is legally authorized to work in the United States, Devin answered: ${v}`,
-  },
-  {
-    key: 'relocation',
-    match: /relocat/i,
-    kind: 'preference',
-    subject: 'relocation',
-    question: 'Are you willing to relocate for a job? If yes, where?',
-    knowledgeKey: 'preference:Willing to Relocate',
-    kbKeys: ['preference/willing to relocate', 'preference/relocation'],
-    answerType: 'text',
-    alwaysBlocking: true,
-    statement: v => `Asked whether he is willing to relocate, Devin answered: ${v}`,
-  },
-  {
-    key: 'start_date',
-    match: /start date|when (can|could|would) you (start|begin)|earliest (possible )?(date|start)|available to start|availability to start|notice period|date available/i,
-    kind: 'fact',
-    subject: 'start date',
-    question: 'When could you start a new job, or how much notice do you need to give?',
-    knowledgeKey: 'preference:Earliest Start Date',
-    kbKeys: ['preference/earliest start date', 'preference/start date', 'preference/notice period'],
-    answerType: 'text',
-    alwaysBlocking: true,
-    statement: v => `Asked when he could start, Devin answered: ${v}`,
-  },
-  {
-    key: 'salary',
-    match: /salary|compensation (expectation|requirement)|expected (pay|compensation|salary)|desired (pay|salary|compensation)|pay expectation|compensation expectation|rate expectation|expected annual/i,
-    kind: 'preference',
-    subject: 'salary expectation',
-    question: 'What salary should applications list as your expectation?',
-    knowledgeKey: 'preference:Target Salary',
-    kbKeys: ['preference/target salary', 'preference/salary expectation', 'preference/salary floor', 'preference/minimum salary'],
-    answerType: 'text',
-    alwaysBlocking: true,
-    statement: v => `Devin's salary expectation (from his knowledge base): ${v}`,
-  },
-  {
-    key: 'linkedin',
-    match: /linked\s?in/i,
-    kind: 'fact',
-    subject: 'LinkedIn URL',
-    question: 'What is your LinkedIn profile URL? Answer "none" if you do not use LinkedIn.',
-    knowledgeKey: 'profile:LinkedIn',
-    kbKeys: ['profile/linkedin', 'profile/linkedin url'],
-    answerType: 'text',
-    alwaysBlocking: false,
-    statement: v => `Devin's LinkedIn profile: ${v}`,
-  },
-  {
-    key: 'location',
-    match: /^(current )?(location|city)\b|location \(city\)|where are you (currently )?(located|based)|current (city|location|address)|country of residence|(country|city|state) (are|do) you (currently )?(based|located|live|reside)|are you (currently )?(based|located|living|residing) in|do you (currently )?(reside|live)|where do you live|city,? state|state of residence|^address$|^city$|time ?zone|state where you (will )?(reside|live|work)/i,
-    kind: 'fact',
-    subject: 'current location',
-    question: 'What city and state do you live in now?',
-    knowledgeKey: 'profile:Location',
-    kbKeys: ['profile/location', 'profile/city', 'profile/current location'],
-    answerType: 'text',
-    alwaysBlocking: false,
-    statement: v => `Devin currently lives in: ${v}`,
-    direct: /^(current )?(location|city|address)|location \(city\)|where are you (currently )?(located|based)\??$|current (city|location)|city,? state/i,
-  },
-  {
-    key: 'postal_code',
-    match: /zip|postal code|postcode/i,
-    kind: 'fact',
-    subject: 'zip code',
-    question: 'What is your home zip code?',
-    knowledgeKey: 'profile:Zip Code',
-    kbKeys: ['profile/zip code', 'profile/zip', 'profile/postal code'],
-    answerType: 'text',
-    alwaysBlocking: false,
-    statement: v => `Devin's home zip code: ${v}`,
-  },
-]
-
-export function canonicalFactFor(field: FormField): CanonicalFact | null {
-  if (field.isEeo || field.type === 'file') return null
-  return CANONICAL_FACTS.find(f => f.match.test(field.label)) ?? null
-}
-
-function kbLookup(entries: KnowledgeEntry[], keys: string[]): KnowledgeEntry | null {
-  const wanted = keys.map(k => normalizeLabel(k.replace('/', ' ')))
-  return entries.find(e => wanted.includes(normalizeLabel(`${e.category} ${e.key}`))) ?? null
-}
-
-interface ResolvedFact { value: string; source: 'knowledge' | 'question'; detail: string }
-
-/**
- * The learning unit stores a yes/no answer as "Yes. (Answer to: <question>)". Forms need the
- * answer itself, so the suffix and the lone period go.
- */
-export function cleanStoredAnswer(value: string): string {
-  return value
-    .replace(/\s*\(Answer to:[\s\S]*\)\s*$/i, '')
-    .replace(/^(yes|no|some experience)\.$/i, '$1')
-    .trim()
-}
-
-function resolveFact(fact: CanonicalFact, entries: KnowledgeEntry[]): ResolvedFact | null {
-  const kb = kbLookup(entries, fact.kbKeys)
-  const kbValue = kb ? cleanStoredAnswer(kb.value) : ''
-  if (kb && kbValue && !/^none$/i.test(kbValue)) return { value: kbValue, source: 'knowledge', detail: `${kb.category}/${kb.key}` }
-  const answered = cleanStoredAnswer(answeredValue(fact.kind, fact.subject) ?? '')
-  if (answered && !/^none$/i.test(answered)) return { value: answered, source: 'question', detail: `question: ${fact.subject}` }
-  return null
+function factSource(detail: string): 'knowledge' | 'question' {
+  return detail.startsWith('question:') ? 'question' : 'knowledge'
 }
 
 // ── Deterministic profile fields ─────────────────────────────
@@ -193,12 +84,6 @@ function currentJob(entries: KnowledgeEntry[]) {
   if (!e) return null
   const [company, ...title] = e.key.split(/\s+-\s+/)
   return { company: (company ?? '').trim(), title: title.join(' - ').trim(), key: `experience/${e.key}` }
-}
-
-function githubUrl(entries: KnowledgeEntry[]): string | null {
-  const v = profileValue(entries, 'GitHub')
-  if (!v) return null
-  return /^https?:\/\//i.test(v) ? v : `https://github.com/${v.replace(/^@/, '')}`
 }
 
 function answer(field: FormField, partial: Partial<FormAnswer>): FormAnswer {
@@ -219,8 +104,6 @@ function answer(field: FormField, partial: Partial<FormAnswer>): FormAnswer {
 function deterministic(field: FormField, ctx: AnswerContext): FormAnswer | null {
   const label = normalizeLabel(field.label)
   const entries = ctx.entries
-  const fullName = profileValue(entries, 'Full Name', 'name')
-  const [first, ...rest] = (fullName ?? '').split(/\s+/)
   const kb = (value: string | null | undefined, detail: string, confidence: FormAnswer['confidence'] = 'high') =>
     value ? answer(field, { value, source: 'knowledge', sourceDetail: detail, confidence }) : null
 
@@ -240,14 +123,7 @@ function deterministic(field: FormField, ctx: AnswerContext): FormAnswer | null 
   if (/cover letter/.test(label) && (field.type === 'textarea' || field.type === 'text') && ctx.coverLetter) {
     return answer(field, { value: ctx.coverLetter, source: 'cover_letter', sourceDetail: 'Cover letter for this application' })
   }
-  if (/^(legal )?first name$|^given name$|^first$/.test(label)) return kb(first, 'profile/Full Name')
-  if (/^(legal )?last name$|^surname$|^family name$|^last$/.test(label)) return kb(rest.join(' '), 'profile/Full Name')
-  if (/^(full |legal |your |candidate |full legal )?name$/.test(label)) return kb(fullName, 'profile/Full Name')
-  if (/preferred (first )?name|name you d prefer|prefer us to use|nickname/.test(label)) return kb(first, 'profile/Full Name', 'medium')
-  if (field.type === 'email' || /^e ?mail( address)?$|^your email/.test(label)) return kb(profileValue(entries, 'Email'), 'profile/Email')
-  if (field.type === 'tel' || /^(phone|mobile|cell)( number)?$|phone number/.test(label)) return kb(profileValue(entries, 'Phone'), 'profile/Phone')
-  if (/github/.test(label) && !/username|handle/.test(label)) return kb(githubUrl(entries), 'profile/GitHub')
-  if (/github (username|handle)/.test(label)) return kb(profileValue(entries, 'GitHub'), 'profile/GitHub')
+  // Names, email, phone, GitHub, and the address come from the fact registry (matchFact), not from here.
   // Whole-label matches only: "Are you subject to agreements with your current employer?" is not a name field.
   if (/^(current |present |most recent |current most recent )?(company|employer|organization)( name)?$/.test(label)) {
     const cj = currentJob(entries)
@@ -277,17 +153,6 @@ function checkOptions(field: FormField, a: FormAnswer | null): FormAnswer | null
   if (!a || a.value === null || !['select', 'radio'].includes(field.type) || !(field.options ?? []).length) return a
   const pick = bestOption(String(a.value), field.options!)
   return pick ? { ...a, value: pick } : null
-}
-
-function factValueFor(field: FormField, fact: ResolvedFact, canonical: CanonicalFact): string | null {
-  if (canonical.direct && !canonical.direct.test(field.label)) return null
-  if (canonical.direct && /country|time ?zone|state where|zip|postal/i.test(field.label)) return null
-  if (field.type === 'number') {
-    const n = fact.value.replace(/,/g, '').match(/\d+(\.\d+)?/)
-    return n ? n[0] : null
-  }
-  if (['text', 'textarea', 'url', 'email', 'tel', 'date'].includes(field.type)) return fact.value
-  return null // choice fields are mapped by mapToOptions
 }
 
 // ── Claude: option mapping and free answers ──────────────────
@@ -393,28 +258,74 @@ function questionContext(ctx: AnswerContext, field: FormField, ats: string) {
 
 const OPTIONAL_ASKED = /^Optional: asked you as question #(\d+)/
 
-/**
- * Asks Devin and returns the field's answer. needsQuestionId is set only when this application
- * must wait for the answer: a question row is shared across applications and can be blocking
- * because another form requires it, so an optional field here never points at it. Its
- * sourceDetail keeps the question id instead, and refresh fills the field once it is answered.
- */
-function askFor(ctx: AnswerContext, field: FormField, ats: string, input: Omit<AskInput, 'applicationId' | 'jobId' | 'context'>, opts: { optional?: boolean } = {}): FormAnswer {
+type AskShape = Omit<AskInput, 'applicationId' | 'jobId' | 'context'>
+
+/** A field that needs a question. Collected while the form is read, resolved together by askOrReuse(). */
+interface PendingAsk {
+  field: FormField
+  input: AskShape
+  optional: boolean
+  /** The registry's fixed question for a personal fact, and which fact the field wants. */
+  registry: boolean
+  factKey?: string
+}
+
+function askContext(ctx: AnswerContext, ask: PendingAsk, ats: string): string {
   // A fact question is one row shared by every application that needs it, so its context must
   // read true on all of them. A form_field question is specific to the label that asked it.
-  const context = input.kind === 'form_field'
-    ? questionContext(ctx, field, ats)
-    : `Application forms ask for this (first seen on ${ctx.job.company}'s ${ats} form). Your answer is saved to the knowledge base and fills every form that asks.`
-  const q = askQuestion({ ...input, applicationId: ctx.applicationId, jobId: ctx.job.id, context })
+  if (ask.input.kind === 'form_field') return questionContext(ctx, ask.field, ats)
+  if (ask.input.subject === 'home address') return ADDRESS_CONTEXT
+  return `Application forms ask for this (first seen on ${ctx.job.company}'s ${ats} form). Your answer is saved to the knowledge base and fills every form that asks.`
+}
+
+/**
+ * The field's answer once its question is known. needsQuestionId is set only when this
+ * application must wait for the answer: a question row is shared across applications and can be
+ * blocking because another form requires it, so an optional field here never points at it. Its
+ * sourceDetail keeps the question id instead, and refresh fills the field once it is answered.
+ */
+function answerFromQuestion(field: FormField, q: QuestionRow, ask: PendingAsk): FormAnswer {
   if (q.status === 'answered' && q.answer) {
-    const value = valueFromAnswerText(field, cleanStoredAnswer(q.answer))
+    // An answered question about another part of the address does not answer this field.
+    const sameFact = !ask.registry || !ask.factKey || factForQuestion(q)?.key === ask.factKey || factForQuestion(q)?.group !== 'address'
+    const value = sameFact ? valueFromAnswerText(field, cleanStoredAnswer(q.answer)) : null
     if (value !== null && value !== undefined) return answer(field, { value, source: 'question', sourceDetail: `question #${q.id}: ${truncate(q.answer, 80)}`, confidence: 'high' })
+    if (!sameFact) {
+      return answer(field, { value: null, source: 'skipped', sourceDetail: `question #${q.id} was answered without this part of the address; answer it again with the full address`, confidence: 'low', fillError: field.required ? 'Needs the full home address' : null })
+    }
   }
-  if (opts.optional) return answer(field, { value: null, source: 'skipped', sourceDetail: `Optional: asked you as question #${q.id}`, confidence: 'low' })
+  if (ask.optional) return answer(field, { value: null, source: 'skipped', sourceDetail: `Optional: asked you as question #${q.id}`, confidence: 'low' })
   return answer(field, { value: null, source: 'question', sourceDetail: `question #${q.id}: ${q.question}`, confidence: 'low', needsQuestionId: q.id })
 }
 
-function formFieldQuestion(field: FormField, prompt: string | null): Omit<AskInput, 'applicationId' | 'jobId' | 'context'> {
+/** Resolves every pending ask: an existing question or profile entry when one already covers it, else a new question. */
+async function resolveAsks(ctx: AnswerContext, asks: PendingAsk[], ats: string, ref: { type: string; id: number }): Promise<Map<string, FormAnswer>> {
+  const out = new Map<string, FormAnswer>()
+  if (asks.length === 0) return out
+  const { outcomes } = await askOrReuse(asks.map(a => ({
+    label: a.field.label,
+    input: { ...a.input, applicationId: ctx.applicationId, jobId: ctx.job.id, context: askContext(ctx, a, ats) },
+    registry: a.registry,
+    factKey: a.factKey,
+  })), ref)
+  asks.forEach((a, i) => {
+    const o = outcomes[i] as AskOutcome
+    if ('knowledge' in o) {
+      const value = valueFromAnswerText(a.field, cleanStoredAnswer(o.knowledge.value))
+      if (value !== null && value !== undefined && value !== '') {
+        out.set(a.field.id, answer(a.field, { value, source: 'knowledge', sourceDetail: `${o.knowledge.category}/${o.knowledge.key} (the same thing this label asks)`, confidence: 'medium' }))
+        return
+      }
+      // The entry says it but not as one of the options: ask after all.
+      out.set(a.field.id, answerFromQuestion(a.field, askQuestion({ ...a.input, applicationId: ctx.applicationId, jobId: ctx.job.id, context: askContext(ctx, a, ats) }), a))
+      return
+    }
+    out.set(a.field.id, answerFromQuestion(a.field, o.question, a))
+  })
+  return out
+}
+
+function formFieldQuestion(field: FormField, prompt: string | null): AskShape {
   const options = field.options ?? []
   const yesNo = options.length > 0 && options.every(o => /^(yes|no)$/i.test(o.trim()))
   return {
@@ -444,12 +355,21 @@ function valueFromAnswerText(field: FormField, text: string): FormAnswer['value'
   return t
 }
 
+/** Every fact the knowledge base states or implies, with answered questions as the fallback. */
+function currentFacts(entries: KnowledgeEntry[]): FactValues {
+  return resolveFacts(entries, { answered: answeredValue })
+}
+
 export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext): Promise<FormAnswer[]> {
   const ats = ATS_LABELS[snapshot.atsType] ?? 'employer'
   const ref = { type: 'application', id: ctx.applicationId }
   const results = new Map<string, FormAnswer>()
-  const factMaps: Array<{ field: FormField; fact: string; resolved: ResolvedFact }> = []
+  const factMaps: Array<{ field: FormField; fact: string; detail: string }> = []
   const free: FormField[] = []
+  const asks: PendingAsk[] = []
+  const facts = currentFacts(ctx.entries)
+  const formFieldAsk = (field: FormField, prompt: string | null, blocking = field.required) =>
+    asks.push({ field, input: { ...formFieldQuestion(field, prompt), blocking }, optional: false, registry: false })
 
   for (const field of snapshot.fields) {
     const opt = optOut(field)
@@ -459,63 +379,54 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext):
 
     if (field.isEeo) {
       // No decline option: never infer. Blank when optional, Devin's call when required.
-      results.set(field.id, field.required
-        ? askFor(ctx, field, ats, { ...formFieldQuestion(field, `${field.label} (voluntary self-identification; the form gives no decline option)`), blocking: true })
-        : answer(field, { value: null, source: 'eeo_decline', sourceDetail: 'Voluntary self-identification left blank', confidence: 'high' }))
+      if (field.required) formFieldAsk(field, `${field.label} (voluntary self-identification; the form gives no decline option)`, true)
+      else results.set(field.id, answer(field, { value: null, source: 'eeo_decline', sourceDetail: 'Voluntary self-identification left blank', confidence: 'high' }))
       continue
     }
 
-    const fact = canonicalFactFor(field)
-    if (fact) {
-      const resolved = resolveFact(fact, ctx.entries)
-      if (resolved) {
-        const direct = factValueFor(field, resolved, fact)
-        if (direct !== null) {
-          results.set(field.id, answer(field, { value: direct, source: resolved.source, sourceDetail: resolved.detail, confidence: 'high' }))
-        }
-        else {
-          // Pick the option, or derive the short answer (a city's country or time zone), from the fact.
-          factMaps.push({ field, fact: fact.statement(resolved.value), resolved })
-        }
-        continue
+    const matched = matchFact(field)
+    if (matched) {
+      const { def, res } = resolveField(matched, field, facts, snapshot.fields)
+      if (res.kind === 'value') {
+        const value = valueFromFact(field, res)
+        // "United States" picked for "What is your location?" says it is the country option.
+        const detail = typeof value === 'string' && value !== res.value ? `${res.detail}, as the option "${value}"` : res.detail
+        if (value !== null) results.set(field.id, answer(field, { value, source: factSource(res.detail), sourceDetail: detail, confidence: res.confidence }))
+        else factMaps.push({ field, fact: res.statement, detail: res.detail })
       }
-      if (field.required || fact.alwaysBlocking) {
-        results.set(field.id, askFor(ctx, field, ats, {
-          question: fact.question,
-          kind: fact.kind,
-          subject: fact.subject,
-          answerType: fact.answerType,
-          knowledgeKey: fact.knowledgeKey,
-          blocking: true,
-          category: fact.kind === 'preference' ? 'preference' : 'technical',
-        }))
+      else if (res.kind === 'map') {
+        // Pick the option, or derive the short answer (a city's time zone), from the fact.
+        factMaps.push({ field, fact: res.statement, detail: res.detail })
+      }
+      else if (res.kind === 'blank') {
+        results.set(field.id, answer(field, { value: null, source: 'skipped', sourceDetail: res.detail, confidence: 'high', fillError: field.required ? `Required, but ${res.detail.replace(/^Left blank: /, '')}` : null }))
       }
       else {
-        // Optional: ask once without blocking, so the knowledge base fills in for next time.
-        const a = askFor(ctx, field, ats, { question: fact.question, kind: fact.kind, subject: fact.subject, answerType: fact.answerType, knowledgeKey: fact.knowledgeKey, blocking: false }, { optional: true })
-        results.set(field.id, a)
+        const q = res.question
+        const input: AskShape = { question: q.question, kind: q.kind, subject: q.subject, answerType: q.answerType, knowledgeKey: q.knowledgeKey, category: q.category }
+        // Optional and not sensitive: ask once without blocking, so the knowledge base fills in for next time.
+        const blocking = field.required || def.alwaysBlocking
+        asks.push({ field, input: { ...input, blocking }, optional: !blocking, registry: true, factKey: def.key })
       }
       continue
     }
     free.push(field)
   }
 
-  // Facts that must be mapped onto a list of options.
+  // Facts that must be mapped onto a list of options, or need judgment on top of the fact.
   if (factMaps.length > 0) {
     const picks = await mapToOptions(factMaps.map(f => ({ field: f.field, fact: f.fact })), ref)
     for (const f of factMaps) {
       const pick = picks.get(f.field.id)
-      results.set(f.field.id, pick
-        ? answer(f.field, { value: pick, source: f.resolved.source, sourceDetail: f.resolved.detail, confidence: 'high' })
-        : f.field.required
-          ? askFor(ctx, f.field, ats, formFieldQuestion(f.field, null))
-          : answer(f.field, { value: null, source: 'skipped', sourceDetail: `Could not map "${f.resolved.value}" to an option`, confidence: 'low' }))
+      if (pick) results.set(f.field.id, answer(f.field, { value: pick, source: factSource(f.detail), sourceDetail: f.detail, confidence: 'high' }))
+      else if (f.field.required) formFieldAsk(f.field, null)
+      else results.set(f.field.id, answer(f.field, { value: null, source: 'skipped', sourceDetail: `Could not map "${truncate(f.fact, 80)}" to an answer`, confidence: 'low' }))
     }
   }
 
   // Everything else: one Claude call.
   if (free.length > 0) {
-    const knownFacts = CANONICAL_FACTS.map(f => ({ f, r: resolveFact(f, ctx.entries) })).filter(x => x.r).map(x => `- ${x.f.statement(x.r!.value)}`)
+    const knownFacts = factStatements(facts).map(s => `- ${s}`)
     const posting = (ctx.job.postingText || ctx.job.description || '').replace(/<[^>]+>/g, ' ').slice(0, 7000)
     const res = await aiStructured(FreeSchema, {
       purpose: 'form_answers',
@@ -550,31 +461,33 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
     for (const field of free) {
       const raw = res.answers.find(x => x.fieldId === field.id)
       const r = raw ? { ...raw, status: normStatus(raw.status), source: normSource(raw.source), confidence: normConfidence(raw.confidence) } : undefined
-      const unknown = (why: string | null) => field.required
-        ? askFor(ctx, field, ats, formFieldQuestion(field, r?.questionForDevin ?? null))
-        : answer(field, { value: null, source: 'skipped', sourceDetail: why ?? 'Optional, and the knowledge base has no answer', confidence: 'low' })
+      const unknown = (why: string | null) => {
+        if (field.required) formFieldAsk(field, r?.questionForDevin ?? null)
+        else results.set(field.id, answer(field, { value: null, source: 'skipped', sourceDetail: why ?? 'Optional, and the knowledge base has no answer', confidence: 'low' }))
+      }
 
       if (!r || r.status === 'unknown' || (r.status === 'answered' && (r.value === null || r.value.trim() === ''))) {
-        results.set(field.id, unknown(null))
+        unknown(null)
         continue
       }
       if (r.status === 'leave_blank') {
-        results.set(field.id, field.required ? unknown(null) : answer(field, { value: null, source: 'skipped', sourceDetail: 'Optional, left blank', confidence: 'medium' }))
+        if (field.required) unknown(null)
+        else results.set(field.id, answer(field, { value: null, source: 'skipped', sourceDetail: 'Optional, left blank', confidence: 'medium' }))
         continue
       }
       let value: FormAnswer['value'] = scrubDashes(r.value!.trim())
       if (['select', 'radio'].includes(field.type) && field.options?.length) {
         value = bestOption(value, field.options)
-        if (!value) { results.set(field.id, unknown(`"${r.value}" is not one of the options`)); continue }
+        if (!value) { unknown(`"${r.value}" is not one of the options`); continue }
         const yesNo = field.options.every(o => /^(yes|no)\b/i.test(o.trim()))
         if (yesNo && !['knowledge', 'resume'].includes(r.source)) {
-          results.set(field.id, unknown(`A yes/no answer about Devin needs a knowledge base source; the model gave "${r.source}"`))
+          unknown(`A yes/no answer about Devin needs a knowledge base source; the model gave "${r.source}"`)
           continue
         }
       }
       else if (field.type === 'checkbox_group') {
         const picks = String(value).split(/\s*\|\s*/).map(p => bestOption(p, field.options ?? [])).filter((p): p is string => !!p)
-        if (!picks.length) { results.set(field.id, unknown('No listed option matched')); continue }
+        if (!picks.length) { unknown('No listed option matched'); continue }
         value = picks
       }
       else if (field.type === 'checkbox') {
@@ -582,7 +495,7 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
       }
       else {
         const bad = unsupportedNumbers(String(value), sourceText)
-        if (bad.length) { results.set(field.id, unknown(`Answer had numbers found in no source: ${bad.join(', ')}`)); continue }
+        if (bad.length) { unknown(`Answer had numbers found in no source: ${bad.join(', ')}`); continue }
       }
       const a = answer(field, { value, source: r.source, sourceDetail: r.sourceDetail, confidence: r.confidence })
       if (typeof value === 'string' && (field.type === 'textarea' || value.length > 120) && ['generated', 'resume', 'cover_letter'].includes(r.source)) {
@@ -599,7 +512,9 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
         const kept = v.sentences.map((_, i) => outcomes.find(o => o.id === `${v.field.id}.S${i + 1}`)?.final).filter(Boolean)
         const dropped = v.sentences.length - kept.length
         if (kept.length === 0) {
-          results.set(v.field.id, v.field.required ? askFor(ctx, v.field, ats, formFieldQuestion(v.field, null)) : answer(v.field, { value: null, source: 'skipped', sourceDetail: 'Every sentence failed the evidence check', confidence: 'low' }))
+          results.delete(v.field.id)
+          if (v.field.required) formFieldAsk(v.field, null)
+          else results.set(v.field.id, answer(v.field, { value: null, source: 'skipped', sourceDetail: 'Every sentence failed the evidence check', confidence: 'low' }))
         }
         else {
           results.set(v.field.id, { ...v.a, value: kept.join(' '), sourceDetail: `${v.a.sourceDetail ?? ''}${dropped ? ` (evidence check removed ${dropped} sentence${dropped > 1 ? 's' : ''})` : ' (evidence check passed)'}`.trim() })
@@ -607,6 +522,10 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
       }
     }
   }
+
+  // Every question this form needs, asked once: an existing question or profile entry that
+  // already covers a field is used before anything new is created.
+  for (const [id, a] of await resolveAsks(ctx, asks, ats, ref)) results.set(id, a)
 
   return snapshot.fields.map(f => results.get(f.id) ?? answer(f, { value: null, source: 'skipped', sourceDetail: 'No answer', confidence: 'low' }))
 }
@@ -646,30 +565,59 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
   // Answers waiting on a question, and optional fields whose question was asked without blocking.
   const questionIdOf = (a: FormAnswer): number | null => a.needsQuestionId ?? (a.source === 'skipped' && a.sourceDetail ? Number(a.sourceDetail.match(OPTIONAL_ASKED)?.[1]) || null : null)
   const ids = [...new Set(answers.map(questionIdOf).filter((x): x is number => typeof x === 'number'))]
-  const qs = ids.length ? db.select().from(questions).where(inArray(questions.id, ids)).all() : []
+  const rows = ids.length ? db.select().from(questions).where(inArray(questions.id, ids)).all() : []
+  // A duplicate the tidy merged points at its canonical question from here on.
+  const qById = new Map(rows.map(r => [r.id, canonicalQuestion(r.id) ?? r] as const))
+  const facts = currentFacts(loadKnowledge())
   let updated = 0
-  const needModel: Array<{ field: FormField; fact: string; q: (typeof qs)[number]; index: number }> = []
+  const needModel: Array<{ field: FormField; fact: string; index: number; source: 'knowledge' | 'question'; detail: string; answerText: string | null }> = []
 
-  const next = answers.map((a, index) => {
-    const qid = questionIdOf(a)
-    if (!qid) return a
-    const q = qs.find(x => x.id === qid)
-    const field = snapshot.fields.find(f => f.id === a.fieldId)
-    if (!q || !field) return a
+  const next = answers.map((original, index) => {
+    const qid = questionIdOf(original)
+    if (!qid) return original
+    const field = snapshot.fields.find(f => f.id === original.fieldId)
+    const q = qById.get(qid)
+    if (!q || !field) return original
+    let a = original
+    if (q.id !== qid) {
+      // Assignments keep the answer's key order (releaseStaleQuestions matches the JSON text).
+      a = { ...original }
+      if (a.needsQuestionId) a.needsQuestionId = q.id
+      if (a.sourceDetail) a.sourceDetail = a.sourceDetail.replace(/question #\d+/, `question #${q.id}`)
+      updated++
+    }
+    // A personal fact the knowledge base now answers fills the field whatever the question's
+    // state: the address answer is split into parts, and each field takes the part it asks for.
+    const matched = matchFact(field)
+    if (matched && (q.status === 'answered' || a.needsQuestionId)) {
+      const { res } = resolveField(matched, field, facts, snapshot.fields)
+      if (res.kind === 'value') {
+        const value = valueFromFact(field, res)
+        if (value !== null) {
+          updated++
+          const detail = typeof value === 'string' && value !== res.value ? `${res.detail}, as the option "${value}"` : res.detail
+          return { ...a, value, source: factSource(res.detail), sourceDetail: detail, confidence: res.confidence, needsQuestionId: null, filled: false, fillError: null }
+        }
+        if (q.status === 'answered') {
+          needModel.push({ field, fact: res.statement, index, source: factSource(res.detail), detail: res.detail, answerText: null })
+          return a
+        }
+      }
+      else if (res.kind === 'map' && q.status === 'answered') {
+        needModel.push({ field, fact: res.statement, index, source: factSource(res.detail), detail: res.detail, answerText: null })
+        return a
+      }
+    }
     if (!a.needsQuestionId && q.status !== 'answered') return a
     if (q.status === 'skipped' && !field.required) {
       updated++
       return { ...a, needsQuestionId: null, source: 'skipped' as const, sourceDetail: `You skipped question #${q.id}` }
     }
     if (q.status !== 'answered' || !q.answer) return a
-    const fact = canonicalFactFor(field)
     const answerText = cleanStoredAnswer(q.answer)
-    let value = valueFromAnswerText(field, answerText)
-    // A fact that does not answer this field as written ("Springfield, MO" for "What country?")
-    // goes through the same strict mapping as during preparation.
-    if (fact?.direct && !(field.options ?? []).length && factValueFor(field, { value: answerText, source: 'question', detail: '' }, fact) === null) value = null
+    const value = valueFromAnswerText(field, answerText)
     if (value === null || value === undefined) {
-      needModel.push({ field, fact: fact ? fact.statement(answerText) : `Asked "${q.question}", Devin answered: ${answerText}`, q, index })
+      needModel.push({ field, fact: `Asked "${q.question}", Devin answered: ${answerText}`, index, source: 'question', detail: `question #${q.id}: ${truncate(q.answer, 80)}`, answerText })
       return a
     }
     updated++
@@ -681,18 +629,19 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     for (const n of needModel) {
       const pick = picks.get(n.field.id)
       if (!pick) {
-        next[n.index] = { ...next[n.index]!, sourceDetail: `question #${n.q.id} answered "${truncate(n.q.answer ?? '', 60)}", which matches none of the options; pick one by hand` }
+        next[n.index] = { ...next[n.index]!, sourceDetail: `${n.answerText !== null ? `${n.detail.split(':')[0]} answered "${truncate(n.answerText, 60)}"` : `"${truncate(n.detail, 60)}"`}, which matches none of the options; pick one by hand` }
         continue
       }
       updated++
-      next[n.index] = { ...next[n.index]!, value: pick, source: 'question', sourceDetail: `question #${n.q.id}: ${truncate(n.q.answer ?? '', 80)}`, confidence: 'high', needsQuestionId: null, filled: false, fillError: null }
+      next[n.index] = { ...next[n.index]!, value: pick, source: n.source, sourceDetail: n.detail, confidence: 'high', needsQuestionId: null, filled: false, fillError: null }
     }
   }
 
   const blocking = openBlockingQuestionIds(next, snapshot)
+  const statusOf = (id: number) => [...qById.values()].find(q => q.id === id)?.status
   const unresolvedRequired = next.filter((a) => {
     const f = snapshot.fields.find(x => x.id === a.fieldId)
-    return f?.required && a.needsQuestionId && !blocking.includes(a.needsQuestionId) && qs.find(q => q.id === a.needsQuestionId)?.status === 'answered'
+    return f?.required && a.needsQuestionId && !blocking.includes(a.needsQuestionId) && statusOf(a.needsQuestionId) === 'answered'
   })
   let status = app.status
   const extra: Record<string, unknown> = { answersJson: JSON.stringify(next) }
