@@ -200,19 +200,24 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
           <v-btn :color="numberValid ? 'primary' : undefined" :variant="numberValid ? 'flat' : 'tonal'" type="submit" height="48" :loading="busy" :disabled="!numberValid">Save</v-btn>
         </form>
 
-        <form v-else-if="inputType === 'text'" class="d-flex flex-wrap align-start ga-2" @submit.prevent="send(draft)">
-          <v-text-field
+        <!-- Written answers can run to several paragraphs and bullet lines, so the box grows with them.
+             Enter adds a line; only Save sends. 4,000 characters is the server's limit. -->
+        <div v-else-if="inputType === 'text'" class="d-flex flex-column ga-2">
+          <v-textarea
             v-model="draft"
-            placeholder="Short answer"
+            placeholder="Your answer"
+            rows="3"
+            auto-grow
+            maxlength="4000"
+            counter="4000"
+            persistent-counter
             autocomplete="off"
-            enterkeyhint="done"
-            maxlength="500"
-            class="question-card__field"
-            hide-details
             :disabled="busy"
           />
-          <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'" type="submit" height="48" :loading="busy" :disabled="!draft.trim()">Save</v-btn>
-        </form>
+          <div class="d-flex justify-end">
+            <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'" height="44" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">Save</v-btn>
+          </div>
+        </div>
 
         <template v-else>
           <v-btn
