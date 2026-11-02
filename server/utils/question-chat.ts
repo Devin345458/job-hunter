@@ -17,7 +17,7 @@ import {
 } from './ai'
 import { scrubDashes, unsupportedNumbers } from './apply/text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
-import { memoryLogLine, memoryUrl, searchMemory } from './memory'
+import { memoryLogLine, memoryTarget, searchMemory } from './memory'
 import { LEAD_LIMITS, memoryQueries, storedLeads } from './memory-leads'
 import { EXAMPLE_MAX_CHARS, isLegacyQuestion, parseYesNo, questionExample, takesExample, waitingApplicationIds, type QuestionRow } from './questions'
 import { parseJson } from './review'
@@ -352,10 +352,10 @@ function wantsMemory(messages: QuestionChatTurn[]): boolean {
  * counts only.
  */
 async function chatMemory(ctx: QuestionChatContext): Promise<{ use: ChatMemoryUse; excerpts: ChatExcerpt[] }> {
-  const url = memoryUrl()
-  if (!url) return { use: null, excerpts: [] }
+  const target = memoryTarget()
+  if (!target.url) return { use: null, excerpts: [] }
   const q = ctx.question
-  const live = await searchMemory(url, memoryQueries(q), { question: q.question })
+  const live = await searchMemory(target, memoryQueries(q), { question: q.question })
   console.info(memoryLogLine(`chat, question ${q.id}`, live))
   const pool: ChatExcerpt[] = [
     ...(live.available ? live.results : []).map(r => ({ date: r.date, project: r.project, excerpt: r.excerpt, score: r.score })),

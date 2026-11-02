@@ -1,7 +1,7 @@
 import { and, desc, eq, isNotNull } from 'drizzle-orm'
 import { pipelineRuns, questions } from '../db/schema'
 import type { MemoryLeadsResponse, MemoryStatus, QuestionMemoryLeads, StoredMemoryLead } from '#shared/types/memory'
-import { leadLine, memoryLastCheck, memoryLogLine, memoryUrl, pingMemory, searchMemory, type MemoryResult } from './memory'
+import { leadLine, memoryLastCheck, memoryLogLine, memoryTarget, memoryUrl, pingMemory, searchMemory, type MemoryResult } from './memory'
 import { isLegacyQuestion, type QuestionRow } from './questions'
 import { parseJson } from './review'
 
@@ -20,13 +20,6 @@ export const LEAD_LIMITS = {
   maxQuestions: 40,
   /** One run stops after this long, so it never holds up the rest of the daily chain. */
   maxMs: 8 * 60 * 1000,
-  /** Searches that fail in a row before the run stops (the laptop went to sleep). */
-  giveUpAfter: 3,
-  /**
-   * Pause before retrying a failed search. The memory server is shared with every Claude session
-   * on the laptop, and a search that runs past the 15 second limit keeps it busy for a while.
-   */
-  retryPauseMs: 20_000,
 } as const
 
 export const MEMORY_TASK = 'memory:leads'
@@ -78,18 +71,16 @@ export function pendingLeads(): MemoryLeadsResponse {
 
 /**
  * The memory:leads task. Best effort: when memory is off or the laptop cannot be reached it
- * returns a plain note and changes nothing. Stats hold counts and the note only, never excerpt
- * text, because withRun logs them and stores them in pipeline_runs.
+ * returns a plain note and changes nothing. No retries: the daemon is shared with every Claude
+ * session on the laptop and can be busy for minutes reloading its index, so the first failure
+ * stops the run and the next daily run picks up where this one stopped. One session at a time
+ * (memory.ts queues them). Stats hold counts and the note only, never excerpt text, because
+ * withRun logs them and stores them in pipeline_runs.
  */
 export async function refreshMemoryLeads(log: (msg: string) => void, opts: { force?: boolean } = {}) {
-  const url = memoryUrl()
-  if (!url) return { checked: 0, note: 'Memory is off (NUXT_MEMORY_MCP_URL is not set), so no leads were looked up.' }
-  let ping = await pingMemory(url)
-  if (!ping.ok) {
-    log(`[memory] not reachable (${ping.reason}); trying once more in ${LEAD_LIMITS.retryPauseMs / 1000} seconds`)
-    await new Promise(r => setTimeout(r, LEAD_LIMITS.retryPauseMs))
-    ping = await pingMemory(url)
-  }
+  const target = memoryTarget()
+  if (!target.url) return { checked: 0, note: 'Memory is off (NUXT_MEMORY_MCP_URL is not set), so no leads were looked up.' }
+  const ping = await pingMemory(target)
   if (!ping.ok) return { checked: 0, note: `Your laptop's memory is not reachable right now (${ping.reason}), so no leads were looked up.` }
 
   const db = useDb()
@@ -103,8 +94,6 @@ export async function refreshMemoryLeads(log: (msg: string) => void, opts: { for
   let checked = 0
   let withLeads = 0
   let leadsStored = 0
-  let unreachable = 0
-  let inARow = 0
   let note: string | null = null
   const outOfTime = () => Date.now() - started > LEAD_LIMITS.maxMs
   for (const q of due) {
@@ -112,23 +101,12 @@ export async function refreshMemoryLeads(log: (msg: string) => void, opts: { for
       note = `Stopped after ${checked} questions to keep the daily run moving; the rest are checked next time.`
       break
     }
-    let search = await searchMemory(url, memoryQueries(q), { question: q.question })
+    const search = await searchMemory(target, memoryQueries(q), { question: q.question })
     log(memoryLogLine(`question ${q.id}`, search))
-    // One retry after a pause: a busy server usually answers the second time.
-    if (!search.available && !outOfTime()) {
-      await new Promise(r => setTimeout(r, LEAD_LIMITS.retryPauseMs))
-      search = await searchMemory(url, memoryQueries(q), { question: q.question })
-      log(memoryLogLine(`question ${q.id}, retry`, search))
-    }
     if (!search.available) {
-      unreachable++
-      if (++inARow >= LEAD_LIMITS.giveUpAfter) {
-        note = `Your laptop's memory stopped answering after ${checked} questions (${search.reason}); the rest are checked next time.`
-        break
-      }
-      continue
+      note = `Your laptop's memory stopped answering after ${checked} questions (${search.reason}); the rest are checked next time.`
+      break
     }
-    inARow = 0
     const leads = toStoredLeads(search.results, q.question, LEAD_LIMITS.perQuestion)
     const value: QuestionMemoryLeads = { checkedAt: new Date().toISOString(), leads }
     db.update(questions).set({ memoryLeadsJson: JSON.stringify(value) }).where(eq(questions.id, q.id)).run()
@@ -142,7 +120,6 @@ export async function refreshMemoryLeads(log: (msg: string) => void, opts: { for
     withLeads,
     leadsStored,
     checkedRecently: pending.length - due.length,
-    ...(unreachable ? { unreachable } : {}),
     ...(note ? { note } : {}),
   }
 }

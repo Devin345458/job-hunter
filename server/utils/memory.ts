@@ -1,3 +1,5 @@
+import { request as httpRequest, type IncomingMessage } from 'node:http'
+import { request as httpsRequest } from 'node:https'
 import { scrubDashes } from './apply/text'
 
 // A small MCP client for Devin's claude-self-reflect memory server (streamable HTTP, no login).
@@ -65,40 +67,99 @@ function noteCheck(ok: boolean, reason: string | null) {
 }
 
 // ── MCP over streamable HTTP ────────────────────────────────
+// node:http rather than fetch, because the memory daemon accepts only a local Host header (it
+// rejects others as DNS rebinding) and fetch does not reliably let a caller set Host. One
+// session at a time in this process: the daemon is shared with every Claude session on the laptop.
 
 class MemoryError extends Error {}
+
+/** Where the memory server is, and the Host header to send when the URL's host is not local. */
+export interface MemoryTarget {
+  url: string
+  hostHeader?: string | null
+}
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+
+/** The Host header to send: the configured one when the URL points somewhere other than this machine. */
+export function hostHeaderFor(target: MemoryTarget): string | null {
+  const wanted = target.hostHeader?.trim()
+  if (!wanted) return null
+  try {
+    return LOCAL_HOSTS.has(new URL(target.url).hostname) ? null : wanted
+  }
+  catch {
+    return null
+  }
+}
 
 /** A few plain words for why the memory server could not answer. Never includes excerpt text. */
 function reasonFor(e: unknown, timedOut: { connect: boolean; total: boolean }): string {
   if (timedOut.connect) return `it did not answer within ${MEMORY_LIMITS.connectMs / 1000} seconds`
   if (timedOut.total) return `the search took longer than ${MEMORY_LIMITS.totalMs / 1000} seconds`
   if (e instanceof MemoryError) return e.message
-  const code = (e as any)?.cause?.code ?? (e as any)?.code
+  const code = (e as any)?.code ?? (e as any)?.cause?.code
   if (code === 'ECONNREFUSED') return 'nothing is listening at that address'
   if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'the host name was not found'
   if (code === 'EHOSTUNREACH' || code === 'ENETUNREACH' || code === 'ETIMEDOUT') return 'the host is not reachable'
-  if (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET') return 'the connection was dropped'
+  if (code === 'ECONNRESET' || code === 'EPIPE') return 'the connection was dropped'
+  if (code === 'ERR_INVALID_URL') return 'the address in NUXT_MEMORY_MCP_URL is not a valid URL'
   return 'the connection failed'
 }
 
 interface Session {
-  url: string
+  target: MemoryTarget
   id: string | null
   signal: AbortSignal
 }
 
-function headers(session: Session | null): Record<string, string> {
+interface RawReply {
+  status: number
+  type: string
+  sessionId: string | null
+  body: IncomingMessage
+}
+
+function headers(target: MemoryTarget, session: Session | null): Record<string, string> {
+  const host = hostHeaderFor(target)
   return {
     'content-type': 'application/json',
     'accept': 'application/json, text/event-stream',
+    ...(host ? { host } : {}),
     ...(session?.id ? { 'mcp-session-id': session.id, 'mcp-protocol-version': PROTOCOL } : {}),
   }
 }
 
-/** Reads JSON-RPC messages from an SSE body until the one with this id arrives. */
-async function readSse(res: Response, id: number): Promise<any> {
-  if (!res.body) throw new MemoryError('it sent an empty reply')
-  const reader = res.body.getReader()
+/** One HTTP request. Resolves when the response headers arrive; the body is left to the caller. */
+function send(target: MemoryTarget, method: 'POST' | 'DELETE', session: Session | null, body: string | null, signal: AbortSignal): Promise<RawReply> {
+  return new Promise((resolve, reject) => {
+    let url: URL
+    try {
+      url = new URL(target.url)
+    }
+    catch (e) {
+      reject(Object.assign(new Error('invalid url'), { code: 'ERR_INVALID_URL', cause: e }))
+      return
+    }
+    const h: Record<string, string | number> = headers(target, session)
+    if (body !== null) h['content-length'] = Buffer.byteLength(body)
+    const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, { method, headers: h, signal }, (res) => {
+      const sid = res.headers['mcp-session-id']
+      resolve({
+        status: res.statusCode ?? 0,
+        type: String(res.headers['content-type'] ?? ''),
+        sessionId: Array.isArray(sid) ? sid[0] ?? null : sid ?? null,
+        body: res,
+      })
+    })
+    req.on('error', reject)
+    if (body !== null) req.write(body)
+    req.end()
+  })
+}
+
+/** Reads JSON-RPC messages from an SSE body until the one with this id arrives, then cancels the stream. */
+async function readSse(res: IncomingMessage, id: number): Promise<any> {
   const decoder = new TextDecoder()
   let buffer = ''
   const take = (block: string) => {
@@ -113,9 +174,8 @@ async function readSse(res: Response, id: number): Promise<any> {
     }
   }
   try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (value) buffer += decoder.decode(value, { stream: true })
+    for await (const chunk of res) {
+      buffer += decoder.decode(chunk as Buffer, { stream: true })
       let cut = buffer.search(/\r?\n\r?\n/)
       while (cut >= 0) {
         const block = buffer.slice(0, cut)
@@ -124,93 +184,125 @@ async function readSse(res: Response, id: number): Promise<any> {
         if (msg) return msg
         cut = buffer.search(/\r?\n\r?\n/)
       }
-      if (done) {
-        const msg = take(buffer)
-        if (msg) return msg
-        throw new MemoryError('its reply ended before the answer arrived')
-      }
     }
+    const msg = take(buffer)
+    if (msg) return msg
+    throw new MemoryError('its reply ended before the answer arrived')
   }
   finally {
-    reader.cancel().catch(() => {})
+    res.destroy()
   }
 }
 
-async function readReply(res: Response, id: number): Promise<any> {
-  if (!res.ok) throw new MemoryError(`it answered with HTTP ${res.status}`)
-  const type = res.headers.get('content-type') ?? ''
-  const msg = type.includes('text/event-stream')
-    ? await readSse(res, id)
-    : await res.json().then((body: any) => (Array.isArray(body) ? body.find(m => m?.id === id) : body))
+async function readJson(res: IncomingMessage): Promise<any> {
+  const chunks: Buffer[] = []
+  for await (const chunk of res) chunks.push(chunk as Buffer)
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  }
+  catch {
+    throw new MemoryError('it sent a reply the app could not read')
+  }
+}
+
+async function readReply(reply: RawReply, id: number): Promise<any> {
+  if (reply.status < 200 || reply.status >= 300) {
+    reply.body.destroy()
+    throw new MemoryError(reply.status === 403
+      ? 'it refused the request (HTTP 403); check NUXT_MEMORY_MCP_HOST_HEADER'
+      : `it answered with HTTP ${reply.status}`)
+  }
+  const msg = reply.type.includes('text/event-stream')
+    ? await readSse(reply.body, id)
+    : await readJson(reply.body).then((body: any) => (Array.isArray(body) ? body.find(m => m?.id === id) : body))
   if (!msg) throw new MemoryError('it sent a reply the app could not read')
   if (msg.error) throw new MemoryError(`it returned an error (${String(msg.error.message ?? msg.error.code ?? 'unknown').slice(0, 120)})`)
   return msg.result
 }
 
-async function rpc(session: Session, id: number, method: string, params: unknown, signal = session.signal): Promise<any> {
-  const res = await fetch(session.url, { method: 'POST', headers: headers(session), body: JSON.stringify({ jsonrpc: '2.0', id, method, params }), signal })
-  return await readReply(res, id)
+async function rpc(session: Session, id: number, method: string, params: unknown): Promise<any> {
+  const reply = await send(session.target, 'POST', session, JSON.stringify({ jsonrpc: '2.0', id, method, params }), session.signal)
+  return await readReply(reply, id)
 }
 
 /** Opens a session. The server must start answering within connectMs. */
-async function open(url: string, total: AbortSignal, timedOut: { connect: boolean }): Promise<Session> {
+async function open(target: MemoryTarget, total: AbortSignal, timedOut: { connect: boolean }): Promise<Session> {
   const connect = new AbortController()
   const timer = setTimeout(() => {
     timedOut.connect = true
     connect.abort()
   }, MEMORY_LIMITS.connectMs)
-  const signal = AbortSignal.any([total, connect.signal])
-  let res: Response
+  let reply: RawReply
   try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: headers(null),
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'job-hunter', version: '1' } } }),
-      signal,
-    })
+    reply = await send(target, 'POST', null, JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { protocolVersion: PROTOCOL, capabilities: {}, clientInfo: { name: 'job-hunter', version: '1' } },
+    }), AbortSignal.any([total, connect.signal]))
   }
   finally {
     clearTimeout(timer)
   }
-  const session: Session = { url, id: res.headers.get('mcp-session-id'), signal: total }
-  await readReply(res, 1)
-  const note = await fetch(url, { method: 'POST', headers: headers(session), body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }), signal: total })
-  await note.arrayBuffer().catch(() => null)
+  const session: Session = { target, id: reply.sessionId, signal: total }
+  try {
+    await readReply(reply, 1)
+    const note = await send(target, 'POST', session, JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }), total)
+    note.body.resume()
+  }
+  catch (e) {
+    close(session)
+    throw e
+  }
   return session
 }
 
-/** Ends the session on the server. Best effort, never awaited by callers. */
+/** Ends the session on the server so it does not hold it for minutes. Best effort, not awaited. */
 function close(session: Session) {
   if (!session.id) return
-  fetch(session.url, { method: 'DELETE', headers: headers(session), signal: AbortSignal.timeout(2000) })
-    .then(r => r.arrayBuffer())
+  send(session.target, 'DELETE', session, null, AbortSignal.timeout(2000))
+    .then(r => r.body.resume())
     .catch(() => {})
 }
 
-/** Runs fn inside a fresh session with the connect and total timeouts. Never throws. */
-async function withSession<T>(url: string, fn: (s: Session) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
-  const timedOut = { connect: false, total: false }
-  const total = new AbortController()
-  const timer = setTimeout(() => {
-    timedOut.total = true
-    total.abort()
-  }, MEMORY_LIMITS.totalMs)
-  let session: Session | null = null
-  try {
-    session = await open(url, total.signal, timedOut)
-    const value = await fn(session)
-    noteCheck(true, null)
-    return { ok: true, value }
-  }
-  catch (e) {
-    const reason = reasonFor(e, timedOut)
-    noteCheck(false, reason)
-    return { ok: false, reason }
-  }
-  finally {
-    clearTimeout(timer)
-    if (session) close(session)
-  }
+/** One session at a time in this process, so a chat and the leads run never stack requests on the daemon. */
+let queue: Promise<unknown> = Promise.resolve()
+
+function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const run = queue.then(fn, fn)
+  queue = run.catch(() => {})
+  return run
+}
+
+/**
+ * Runs fn inside a fresh session with the connect and total timeouts, then closes the session.
+ * Never throws and never retries: a timeout means "not reachable right now".
+ */
+function withSession<T>(target: MemoryTarget, fn: (s: Session) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+  return oneAtATime(async () => {
+    const timedOut = { connect: false, total: false }
+    const total = new AbortController()
+    const timer = setTimeout(() => {
+      timedOut.total = true
+      total.abort()
+    }, MEMORY_LIMITS.totalMs)
+    let session: Session | null = null
+    try {
+      session = await open(target, total.signal, timedOut)
+      const value = await fn(session)
+      noteCheck(true, null)
+      return { ok: true as const, value }
+    }
+    catch (e) {
+      const reason = reasonFor(e, timedOut)
+      noteCheck(false, reason)
+      return { ok: false as const, reason }
+    }
+    finally {
+      clearTimeout(timer)
+      if (session) close(session)
+    }
+  })
 }
 
 // ── Parsing the tool's answer ───────────────────────────────
@@ -463,23 +555,31 @@ function remember(key: string, value: MemorySearch) {
   while (cache.size > MEMORY_LIMITS.cacheEntries) cache.delete(cache.keys().next().value!)
 }
 
+function toTarget(target: string | MemoryTarget): MemoryTarget {
+  return typeof target === 'string' ? { url: target } : target
+}
+
 /**
- * Searches memory with one or more queries in one session (in parallel), merges the results,
- * and filters them. `question` is the question's own text, for the screen-dump filter.
+ * Searches memory with one or more queries in one session (one after another), merges the
+ * results, and filters them. `question` is the question's own text, for the screen-dump filter.
  * Never throws.
  */
-export async function searchMemory(url: string, queries: string[], opts: { question?: string | null; limit?: number } = {}): Promise<MemorySearch> {
+export async function searchMemory(target: string | MemoryTarget, queries: string[], opts: { question?: string | null; limit?: number } = {}): Promise<MemorySearch> {
+  const t = toTarget(target)
   const list = [...new Set(queries.map(q => q.trim()).filter(Boolean))]
-  if (!url) return { available: false, reason: 'memory is off' }
+  if (!t.url) return { available: false, reason: 'memory is off' }
   if (!list.length) return { available: true, results: [], found: 0, dropped: {} }
-  const key = `${url}\n${list.join('\n')}\n${opts.question ?? ''}`
+  const key = `${t.url}\n${list.join('\n')}\n${opts.question ?? ''}`
   const hit = cached(key)
   if (hit) return hit
-  const out = await withSession(url, async (session) => {
-    const answers = await Promise.all(list.map((query, i) => rpc(session, 10 + i, 'tools/call', {
-      name: TOOL,
-      arguments: { query, limit: opts.limit ?? MEMORY_LIMITS.fetchLimit, project: 'all' },
-    })))
+  const out = await withSession(t, async (session) => {
+    const answers: any[] = []
+    for (const [i, query] of list.entries()) {
+      answers.push(await rpc(session, 10 + i, 'tools/call', {
+        name: TOOL,
+        arguments: { query, limit: opts.limit ?? MEMORY_LIMITS.fetchLimit, project: 'all' },
+      }))
+    }
     const all: Array<MemoryResult & { rawExcerpt: string }> = []
     for (const a of answers) {
       if (a?.isError) throw new MemoryError('the search tool returned an error')
@@ -504,15 +604,21 @@ export async function searchMemory(url: string, queries: string[], opts: { quest
 }
 
 /** Opens a session and closes it: is the memory server there? Never throws. */
-export async function pingMemory(url: string): Promise<{ ok: boolean; reason: string | null }> {
-  if (!url) return { ok: false, reason: 'memory is off' }
-  const out = await withSession(url, async () => true)
+export async function pingMemory(target: string | MemoryTarget): Promise<{ ok: boolean; reason: string | null }> {
+  const t = toTarget(target)
+  if (!t.url) return { ok: false, reason: 'memory is off' }
+  const out = await withSession(t, async () => true)
   return out.ok ? { ok: true, reason: null } : { ok: false, reason: out.reason }
 }
 
 /** NUXT_MEMORY_MCP_URL, or an empty string when the feature is off. */
 export function memoryUrl(): string {
   return String(useRuntimeConfig().memoryMcpUrl ?? '').trim()
+}
+
+/** NUXT_MEMORY_MCP_URL plus NUXT_MEMORY_MCP_HOST_HEADER (sent only when the URL's host is not local). */
+export function memoryTarget(): MemoryTarget {
+  return { url: memoryUrl(), hostHeader: String(useRuntimeConfig().memoryMcpHostHeader ?? '').trim() || null }
 }
 
 /** One log line with counts only, never excerpt text or the query. */
