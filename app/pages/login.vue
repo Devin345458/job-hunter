@@ -47,10 +47,23 @@ async function submit() {
             :type="show ? 'text' : 'password'"
             autocomplete="current-password"
             autofocus
-            :append-inner-icon="show ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
             :error-messages="error ? [error] : []"
-            @click:append-inner="show = !show"
-          />
+          >
+            <!-- A real button with its own name. Vuetify's append-inner-icon named it "Password appended action". -->
+            <template #append-inner>
+              <v-btn
+                :icon="show ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                :aria-label="show ? 'Hide password' : 'Show password'"
+                :aria-pressed="show"
+                variant="text"
+                width="44"
+                height="44"
+                rounded="md"
+                class="login__eye"
+                @click="show = !show"
+              />
+            </template>
+          </v-text-field>
           <v-btn type="submit" color="primary" size="large" block :loading="busy" :disabled="!password" rounded="md">
             Sign in
           </v-btn>
@@ -73,5 +86,6 @@ async function submit() {
   &__brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; margin-bottom: 28px; }
   &__title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
   &__sub { opacity: 0.6; font-size: 14px; margin: 0 0 24px; }
+  &__eye { margin-inline-end: -8px; }
 }
 </style>
