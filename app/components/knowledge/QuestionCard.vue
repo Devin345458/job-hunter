@@ -1,28 +1,36 @@
 <script setup lang="ts">
 import type { QuestionListItem } from '#shared/types/learning'
+import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
 // tap; numbers and short facts take a field; open-ended questions from the original tailoring
 // flow open a text box. The parent sends the answer and removes or moves the card.
+// A skill or experience question asks for an example after Yes or Some experience: "Where did
+// you do it?" opens under the buttons, and nothing is saved until Save or Save without an example.
 
 const props = defineProps<{
   question: QuestionListItem
   /** Which list the card sits in. */
   mode: 'pending' | 'answered' | 'skipped'
-  /** The answer value being saved right now, so only that button spins. */
+  /** The answer value being saved right now ('example' while only the example saves), so only that button spins. */
   saving?: string | null
   /** This question is the one loaded in the chat panel. */
   asking?: boolean
-  /** A draft from the chat's "Use this draft". Each new nonce puts its text in the answer box; nothing is saved until Save. */
+  /** A draft from the chat's "Use this draft". Each new nonce puts its text in the answer box (or the example box); nothing is saved until Save. */
   prefill?: { text: string; nonce: number } | null
+  /** The chat's suggested Yes or Some experience on a skill or experience question. Each new nonce picks it and opens the example box. */
+  pick?: { level: string; nonce: number } | null
 }>()
 
 const emit = defineEmits<{
-  answer: [answer: string]
+  /** example: text sets it, null saves without one (or clears it), absent keeps the saved one. */
+  answer: [answer: string, example?: string | null]
+  /** Adds or changes the example on an answered Yes or Some experience question. */
+  example: [text: string]
   skip: []
   reopen: []
   ask: []
-  /** What is in the answer box while it is open, so the chat can ask before a draft replaces it. */
+  /** What is in the answer box (or the example box) while it is open, so the chat can ask before a draft replaces it. */
   boxText: [text: string]
 }>()
 
@@ -31,8 +39,24 @@ const COMP_FLOOR_SUBJECT = 'compensation floor'
 const editing = ref(false)
 const draft = ref('')
 
+// ── The example ("Where did you do it?") ──
+/** Yes or Some experience picked and waiting on the example box. */
+const level = ref<string | null>(null)
+const exampleOpen = ref(false)
+const exampleText = ref('')
+/** Answered card: adding or editing only the example, the answer stays. */
+const exampleOnly = ref(false)
+/** Which example button was pressed, so only it spins. */
+const exampleAction = ref<'save' | 'without' | null>(null)
+const exampleBoxId = computed(() => `question-${props.question.id}-example`)
+
 const isComp = computed(() => props.question.subject === COMP_FLOOR_SUBJECT)
 const isExperience = computed(() => props.question.kind === 'knows' || props.question.kind === 'has_done')
+const takesExample = computed(() => props.question.takesExample && !props.question.legacy)
+const isExampleLevel = (opt: string | null | undefined) => !!opt && (EXAMPLE_LEVELS as readonly string[]).includes(opt)
+/** Answered Yes or Some experience on a question that takes an example. */
+const answeredWithLevel = computed(() => props.mode === 'answered' && takesExample.value && isExampleLevel(props.question.answer))
+const missingExample = computed(() => answeredWithLevel.value && !props.question.example)
 const yesNoOptions = computed(() => isExperience.value ? ['Yes', 'Some experience', 'No'] : ['Yes', 'No'])
 const inputType = computed<'yes_no' | 'choice' | 'number' | 'text' | 'long'>(() => {
   if (props.question.legacy) return 'long'
@@ -85,14 +109,29 @@ function isCurrent(opt: string) {
   return props.mode === 'answered' && editing.value && (props.question.answer ?? '').trim().toLowerCase() === opt.toLowerCase()
 }
 
+/** The button shown as chosen: the picked Yes or Some experience, else the saved answer while changing it. */
+function isChosen(opt: string) {
+  return level.value ? level.value === opt : isCurrent(opt)
+}
+
+function closeExample() {
+  level.value = null
+  exampleOpen.value = false
+  exampleOnly.value = false
+  exampleText.value = ''
+  exampleAction.value = null
+}
+
 function startEdit() {
   draft.value = props.question.legacy || props.question.answerType === 'text' ? (props.question.answer ?? '') : ''
+  closeExample()
   editing.value = true
 }
 
 function cancelEdit() {
   editing.value = false
   draft.value = ''
+  closeExample()
 }
 
 function send(value: string) {
@@ -101,19 +140,85 @@ function send(value: string) {
   emit('answer', v)
 }
 
-// Leave edit mode once a saved answer comes back (a changed answer keeps status 'answered').
-watch(() => [props.question.status, props.question.answer, props.question.answeredAt], () => {
+/** A Yes or No tap. Yes and Some experience on a skill or experience question open the example box; nothing saves yet. */
+function tap(opt: string) {
+  if (busy.value) return
+  if (!takesExample.value || !isExampleLevel(opt)) {
+    closeExample()
+    send(opt)
+    return
+  }
+  // Changing a saved answer starts from the saved example, so switching Yes to Some experience keeps it.
+  if (!exampleOpen.value && !exampleText.value && props.mode === 'answered') exampleText.value = props.question.example ?? ''
+  level.value = opt
+  exampleOpen.value = true
+}
+
+function startExample() {
+  exampleText.value = props.question.example ?? ''
+  exampleOnly.value = true
+  exampleOpen.value = true
+}
+
+const exampleChanged = computed(() => exampleText.value.trim() !== (props.question.example ?? '').trim())
+const canSaveExample = computed(() => !!exampleText.value.trim()
+  && (exampleOnly.value ? exampleChanged.value : !!level.value)
+  && exampleText.value.trim().length <= EXAMPLE_MAX_CHARS)
+
+function saveExample() {
+  if (!canSaveExample.value || busy.value) return
+  exampleAction.value = 'save'
+  const text = exampleText.value.trim()
+  if (exampleOnly.value) emit('example', text)
+  else emit('answer', level.value!, text)
+}
+
+function saveWithoutExample() {
+  if (!level.value || busy.value) return
+  exampleAction.value = 'without'
+  emit('answer', level.value, null)
+}
+
+// Leave edit mode once a saved answer comes back (a changed answer keeps status 'answered';
+// an added example changes only the example).
+watch(() => [props.question.status, props.question.answer, props.question.answeredAt, props.question.example], () => {
   editing.value = false
+  closeExample()
 })
 
-watch(() => (showInput.value ? draft.value : ''), text => emit('boxText', text))
+// A failed save leaves the box open with its text; only the spinner choice resets.
+watch(() => props.saving, (now) => {
+  if (!now) exampleAction.value = null
+})
 
-// "Use this draft" in the chat: the draft goes into the answer box for Devin to edit and save.
+watch(() => (exampleOpen.value ? exampleText.value : showInput.value ? draft.value : ''), text => emit('boxText', text))
+
+// "Use this draft" in the chat: the draft goes into the answer box (or the example box) for Devin to edit and save.
 watch(() => props.prefill?.nonce, () => {
   const text = props.prefill?.text
   if (!text || props.mode === 'skipped') return
+  if (takesExample.value) {
+    if (props.mode === 'answered' && !editing.value) {
+      // Answered No has no example to write.
+      if (!answeredWithLevel.value) return
+      exampleOnly.value = true
+    }
+    exampleText.value = text
+    exampleOpen.value = true
+    return
+  }
   if (props.mode === 'answered' || inputType.value === 'long') editing.value = true
   draft.value = text
+})
+
+// The chat's "Answer: Yes" on a skill or experience question picks it here and opens the example box.
+watch(() => props.pick?.nonce, () => {
+  const lv = props.pick?.level
+  if (!lv || props.mode === 'skipped') return
+  if (props.mode === 'answered') {
+    if (editing.value === false) startEdit()
+  }
+  tap(lv)
 })
 </script>
 
@@ -159,7 +264,29 @@ watch(() => props.prefill?.nonce, () => {
 
       <!-- Answered: what was saved and where -->
       <div v-if="mode === 'answered' && !editing" class="question-card__answer mt-3">
-        <div class="text-body-2 question-card__answer-text">{{ shownAnswer }}</div>
+        <div class="text-body-2 question-card__answer-text">
+          <div>{{ shownAnswer }}</div>
+          <div v-if="question.example && !exampleOnly" class="question-card__example-saved">
+            <div class="text-caption text-medium-emphasis">Your example</div>
+            <div class="question-card__example-saved-text">{{ question.example }}</div>
+          </div>
+        </div>
+        <div v-if="answeredWithLevel && !exampleOnly" class="question-card__example-row">
+          <span v-if="missingExample" class="text-body-2 text-medium-emphasis question-card__example-missing">
+            No example yet, so the resume and letter can only make a bare claim.
+          </span>
+          <v-btn
+            :variant="missingExample ? 'tonal' : 'text'"
+            :color="missingExample ? 'primary' : undefined"
+            :prepend-icon="missingExample ? 'mdi-plus' : 'mdi-pencil-outline'"
+            height="44"
+            class="question-card__example-start"
+            :disabled="busy"
+            @click="startExample"
+          >
+            {{ missingExample ? 'Add an example' : 'Edit example' }}
+          </v-btn>
+        </div>
         <div v-if="savedAs" class="text-caption text-medium-emphasis mt-1">
           <v-icon icon="mdi-database-check-outline" size="14" class="mr-1" />Saved to your knowledge base as {{ savedAs }}
         </div>
@@ -171,14 +298,14 @@ watch(() => props.prefill?.nonce, () => {
           <v-btn
             v-for="opt in yesNoOptions"
             :key="opt"
-            :color="isCurrent(opt) ? 'primary' : undefined"
-            :variant="isCurrent(opt) ? 'outlined' : 'tonal'"
-            :prepend-icon="isCurrent(opt) ? 'mdi-check' : undefined"
-            :aria-pressed="isCurrent(opt)"
-            :loading="saving === opt"
+            :color="isChosen(opt) ? 'primary' : undefined"
+            :variant="isChosen(opt) ? 'outlined' : 'tonal'"
+            :prepend-icon="isChosen(opt) ? 'mdi-check' : undefined"
+            :aria-pressed="isChosen(opt)"
+            :loading="saving === opt && !exampleOpen"
             :disabled="busy && saving !== opt"
             class="question-card__tap"
-            @click="send(opt)"
+            @click="tap(opt)"
           >
             {{ opt }}
           </v-btn>
@@ -263,6 +390,55 @@ watch(() => props.prefill?.nonce, () => {
             </div>
           </div>
         </template>
+      </div>
+
+      <!-- After Yes or Some experience: where he did it, in his own words -->
+      <div v-if="exampleOpen && (showInput || exampleOnly)" class="question-card__example" role="group" :aria-labelledby="`${exampleBoxId}-label`">
+        <label :id="`${exampleBoxId}-label`" :for="exampleBoxId" class="question-card__example-label text-body-1 font-weight-medium">
+          Where did you do it?
+        </label>
+        <p class="question-card__example-hint text-body-2 text-medium-emphasis">
+          The job or project, what you did, and the result if there was one. It is saved exactly as you write it.
+        </p>
+        <p v-if="!level && !exampleOnly" class="question-card__example-pick text-body-2">
+          Tap Yes or Some experience above, then save.
+        </p>
+        <v-textarea
+          :id="exampleBoxId"
+          v-model="exampleText"
+          rows="3"
+          auto-grow
+          :maxlength="EXAMPLE_MAX_CHARS"
+          :counter="EXAMPLE_MAX_CHARS"
+          persistent-counter
+          autocomplete="off"
+          autofocus
+          :disabled="busy"
+          class="question-card__example-box"
+        />
+        <div class="question-card__example-actions">
+          <v-btn
+            :color="canSaveExample ? 'primary' : undefined"
+            :variant="canSaveExample ? 'flat' : 'tonal'"
+            height="44"
+            :loading="busy && exampleAction === 'save'"
+            :disabled="!canSaveExample || (busy && exampleAction !== 'save')"
+            @click="saveExample"
+          >
+            Save
+          </v-btn>
+          <v-btn
+            v-if="!exampleOnly"
+            variant="text"
+            height="44"
+            :loading="busy && exampleAction === 'without'"
+            :disabled="!level || (busy && exampleAction !== 'without')"
+            @click="saveWithoutExample"
+          >
+            Save without an example
+          </v-btn>
+          <v-btn v-else variant="text" height="44" :disabled="busy" @click="closeExample">Cancel</v-btn>
+        </div>
       </div>
     </v-card-text>
 
@@ -381,6 +557,71 @@ watch(() => props.prefill?.nonce, () => {
     padding: 10px 12px;
     border-radius: 8px;
     background: rgba(var(--v-theme-on-surface), 0.05);
+    overflow-wrap: anywhere;
+  }
+
+  &__example-saved {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__example-saved-text {
+    white-space: pre-wrap;
+  }
+
+  &__example-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    margin-top: 8px;
+  }
+
+  &__example-missing {
+    flex: 1 1 260px;
+    min-width: 0;
+  }
+
+  &__example-start {
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__example {
+    margin-top: 16px;
+    padding: 14px 16px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-theme-primary), 0.35);
+    background: rgba(var(--v-theme-primary), 0.05);
+  }
+
+  &__example-label {
+    display: block;
+    line-height: 1.4;
+  }
+
+  &__example-hint {
+    margin: 2px 0 12px;
+    line-height: 1.45;
+    text-wrap: pretty;
+  }
+
+  &__example-pick {
+    margin: -4px 0 12px;
+    color: rgb(var(--v-theme-warning));
+  }
+
+  &__example-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+
+    :deep(.v-btn) {
+      text-transform: none;
+      letter-spacing: normal;
+    }
   }
 }
 

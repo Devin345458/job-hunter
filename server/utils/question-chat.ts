@@ -14,9 +14,9 @@ import {
   aiSpentToday,
   aiStructured,
 } from './ai'
-import { scrubDashes } from './apply/text'
+import { scrubDashes, unsupportedNumbers } from './apply/text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
-import { isLegacyQuestion, waitingApplicationIds, type QuestionRow } from './questions'
+import { EXAMPLE_MAX_CHARS, isLegacyQuestion, parseYesNo, questionExample, takesExample, waitingApplicationIds, type QuestionRow } from './questions'
 import { parseJson } from './review'
 
 // The chat panel on /questions. Devin asks what a generated question means, or asks for help
@@ -73,6 +73,10 @@ interface QuestionChatContext {
   suggestOptions: string[]
   /** Character limit for a draft. Zero when no draft applies. */
   draftLimit: number
+  /** answer: a written answer for the answer box. example: the "Where did you do it?" example under a Yes or Some experience answer. */
+  draftKind: 'answer' | 'example' | null
+  /** The example saved with an answered Yes or Some experience question. */
+  example: string | null
 }
 
 const STOP_WORDS = new Set(['with', 'that', 'this', 'from', 'into', 'your', 'have', 'ability', 'experience', 'strong', 'years', 'their', 'about', 'using', 'work', 'working'])
@@ -193,10 +197,18 @@ export function questionChatContext(questionId: number): QuestionChatContext {
 
   const suggestOptions = q.status === 'pending' ? answerOptionsFor(q) : []
   let draftLimit = 0
+  let draftKind: QuestionChatContext['draftKind'] = null
   if (q.status !== 'skipped' && takesWrittenAnswer(q)) {
     // A few sentences fit any answer box (the card takes 4,000 characters); a form field's own limit wins.
     draftLimit = 1200
     if (formField?.maxLength) draftLimit = Math.min(draftLimit, formField.maxLength)
+    draftKind = 'answer'
+  }
+  // A skill or experience question takes an example with a Yes or Some experience answer, before
+  // he answers or after a Yes or Some experience. The chat can help him write it.
+  else if (takesExample(q) && (q.status === 'pending' || (q.status === 'answered' && parseYesNo(q.answer ?? '') !== 'no'))) {
+    draftLimit = EXAMPLE_MAX_CHARS
+    draftKind = 'example'
   }
 
   return {
@@ -208,6 +220,8 @@ export function questionChatContext(questionId: number): QuestionChatContext {
     posting: rawPosting ? postingExcerpt(rawPosting, needle) : null,
     suggestOptions,
     draftLimit,
+    draftKind,
+    example: questionExample(q),
   }
 }
 
@@ -295,17 +309,63 @@ The draft field (a written answer Devin can paste into the answer box and edit):
 - When you give a draft, the reply is one or two sentences naming the knowledge base entries it draws on. Do not repeat the draft in the reply.`
 }
 
+function exampleDraftRules(limit: number): string {
+  return `
+The draft field (an example Devin can put in the "Where did you do it?" box under his Yes or Some experience answer, then edit and save):
+- Leave it null unless Devin asks for help writing the example (for example "help me write the example") or asks you to change a draft.
+- The example comes only from what Devin types in this conversation. Never take any of it from the knowledge base, the job posting, or the question, and never guess.
+- When he asks for help and his messages do not yet say where he did it and what he did, leave draft null and ask at most two short questions in the reply: where he did it (the job or project) and what he did, plus the result if there was one.
+- Once his messages say where and what, write the draft in the first person as Devin: one to three plain sentences, under ${limit} characters, no dashes. Keep his own words where you can. Name no employer, product, event, audience, number, date, or result that he did not type here, and never make it stronger than what he said.
+- If he gave no result, leave the result out. Never ask about the result more than once.
+- When you give a draft, the reply is one short sentence saying it uses only what he told you here. Do not repeat the draft in the reply.`
+}
+
+/** Text of Devin's own messages, which an example draft may draw on. */
+function devinsWords(messages: QuestionChatTurn[]): string {
+  return messages.filter(m => m.role === 'user').map(m => m.content).join('\n')
+}
+
+/**
+ * Names in an example draft that Devin never typed: capitalized words past the start of a
+ * sentence (employers, products, events) that appear in none of his messages and not in the
+ * question itself. "I" and the question's own subject are fine.
+ */
+function namesNotFromDevin(draft: string, said: string, question: QuestionRow): string[] {
+  const allowed = `${said}\n${question.question}\n${question.subject ?? ''}`.toLowerCase()
+  const escape = (w: string) => w.replace(/[.*+?^$()|[\]\\{}]/g, m => `\\${m}`)
+  const has = (w: string) => new RegExp(`(^|[^a-z0-9])${escape(w.toLowerCase())}($|[^a-z0-9])`).test(allowed)
+  const out = new Set<string>()
+  for (const sentence of draft.split(/(?<=[.!?])\s+/)) {
+    const words = sentence.match(/[A-Za-z0-9][A-Za-z0-9.&'+#]*/g) ?? []
+    words.slice(1).forEach((raw) => {
+      const w = raw.replace(/[.']+$/, '')
+      if (w === 'I' || !/[A-Z]/.test(w)) return
+      if (!has(w)) out.add(w)
+    })
+  }
+  return [...out]
+}
+
 function describeAnswer(ctx: QuestionChatContext): string {
   const q = ctx.question
   if (isLegacyQuestion(q)) return 'Devin writes an answer in his own words.'
+  if (takesExample(q)) return `Devin taps one button: ${answerOptionsFor(q).join(', ')}. After Yes or Some experience, a box asks "Where did you do it?" for an example in his own words: the job or project, what he did, and the result if there was one.`
   if (q.answerType === 'yes_no') return `Devin taps one button: ${answerOptionsFor(q).join(', ')}.`
   if (q.answerType === 'choice' && answerOptionsFor(q).length) return `Devin picks one: ${answerOptionsFor(q).join(', ')}.`
   if (q.answerType === 'number') return 'Devin types a number.'
   return 'Devin types a short written answer.'
 }
 
-function describeStatus(q: QuestionRow): string {
-  if (q.status === 'answered') return `Already answered: "${q.answer ?? ''}". Devin may want to change it.`
+function describeStatus(ctx: QuestionChatContext): string {
+  const q = ctx.question
+  if (q.status === 'answered') {
+    if (ctx.draftKind === 'example') {
+      return ctx.example
+        ? `Already answered: "${q.answer ?? ''}", with this example in his words: "${ctx.example}". Devin may want to change it.`
+        : `Already answered: "${q.answer ?? ''}", with no example yet.`
+    }
+    return `Already answered: "${q.answer ?? ''}". Devin may want to change it.`
+  }
   if (q.status === 'skipped') return 'Skipped for now.'
   return 'Not answered yet.'
 }
@@ -316,7 +376,7 @@ function questionSection(ctx: QuestionChatContext): string {
     `Question: ${q.question}`,
     q.context ? `Why the tool asked: ${q.context}` : null,
     `How it is answered: ${describeAnswer(ctx)}`,
-    `Status: ${describeStatus(q)}`,
+    `Status: ${describeStatus(ctx)}`,
     ctx.job ? `Job: ${ctx.job.title} at ${ctx.job.company}` : null,
     ctx.requirement ? `Requirement from the posting: "${ctx.requirement.text}"${ctx.requirement.mustHave === true ? ' (a must have)' : ctx.requirement.mustHave === false ? ' (a nice to have)' : ''}` : null,
     ctx.formField
@@ -362,7 +422,11 @@ function schemaFor(ctx: QuestionChatContext | null) {
     shape.suggestionEvidence = z.string().nullable()
       .describe('Words copied exactly from Devin\'s own messages in this conversation that settle the answer, or null.')
   }
-  if (ctx?.draftLimit) {
+  if (ctx?.draftKind === 'example') {
+    shape.draft = z.string().nullable()
+      .describe('A first-person example built only from what Devin typed in this conversation, or null.')
+  }
+  else if (ctx?.draftLimit) {
     shape.draft = z.string().nullable()
       .describe('A first-person draft answer built only from the knowledge base and his messages, or null.')
     shape.draftSources = z.array(z.string())
@@ -443,7 +507,7 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   const entries = loadKnowledge()
   const extras = [
     ctx?.suggestOptions.length ? suggestionRules(ctx.suggestOptions) : '',
-    ctx?.draftLimit ? draftRules(ctx.draftLimit) : '',
+    ctx?.draftKind === 'example' ? exampleDraftRules(ctx.draftLimit) : ctx?.draftLimit ? draftRules(ctx.draftLimit) : '',
   ].join('')
   try {
     const out = await aiStructured(schemaFor(ctx), {
@@ -458,10 +522,21 @@ export async function questionChatReply(input: { questionId?: number | null; mes
     // The prompt forbids em and en dashes, and a draft can end up on an employer's form, so any
     // that slip through are rewritten here.
     const rawDraft = ctx?.draftLimit && out.draft?.trim() ? out.draft.trim() : null
-    const reply = scrubDashes(out.reply.trim())
-    const draft = rawDraft ? scrubDashes(rawDraft) : null
+    let reply = scrubDashes(out.reply.trim())
+    let draft = rawDraft ? scrubDashes(rawDraft) : null
     const removed = dashCount(out.reply) + dashCount(rawDraft)
     if (removed) console.info(`[question-chat] removed ${removed} dash${removed === 1 ? '' : 'es'} from Claude's reply`)
+    // An example must come from what Devin typed here. A number or a name he never typed means
+    // the draft guessed, so it is withheld and he is told what to add himself.
+    if (ctx?.draftKind === 'example' && draft) {
+      const said = devinsWords(input.messages)
+      const extra = [...unsupportedNumbers(draft, said), ...namesNotFromDevin(draft, said, ctx.question)]
+      if (extra.length) {
+        console.info(`[question-chat] withheld an example draft for question ${ctx.question.id}: not in Devin's messages: ${extra.join(', ')}`)
+        draft = null
+        reply = `I started a draft, but it named something you have not told me here (${extra.join(', ')}), so I left it out. Tell me in your own words where you did it and what you did, and I will draft it from that.`
+      }
+    }
     return { ok: true, reply, suggestedAnswer: suggested, draft }
   }
   catch (e) {

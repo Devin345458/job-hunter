@@ -91,6 +91,13 @@ export interface QuestionListItem {
   blocking: boolean
   status: string
   answer: string | null
+  /**
+   * Devin's example for an answered Yes or Some experience question ("Where did you do it?"), in his own
+   * words, read back from the question's knowledge entry. Null when he has not given one.
+   */
+  example: string | null
+  /** A yes or no question about a skill or past work: a Yes or Some experience answer asks for an example. */
+  takesExample: boolean
   askedAt: string
   answeredAt: string | null
   applicationId: number | null
