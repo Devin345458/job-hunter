@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { QuestionView } from '#shared/types/pipeline'
 
-// Open questions answered in place. Yes or no is one tap; text, numbers, and choices take one
-// short field and Save. Answers go through PATCH /api/questions/:id via the parent.
+// Open questions answered in place. Yes or no and choices are one tap; numbers take one short
+// field and written answers a growing box, each with Save. Answers go through
+// PATCH /api/questions/:id via the parent.
 const props = defineProps<{
   questions: QuestionView[]
   /** Question id currently saving. */
@@ -79,10 +80,40 @@ function inputMode(q: QuestionView) {
         <v-btn v-if="!q.blocking" variant="text" height="44" :disabled="savingId !== null" @click="emit('skip', q.id)">Skip</v-btn>
       </div>
 
+      <!-- Written answers can run to several paragraphs and bullet lines: the box grows with them,
+           Enter adds a line, and only Save sends. 4,000 characters is the server's limit. -->
+      <div v-else-if="q.answerType !== 'number'" class="qs__form qs__form--text">
+        <v-textarea
+          v-model="drafts[q.id]"
+          label="Your answer"
+          rows="3"
+          auto-grow
+          maxlength="4000"
+          counter="4000"
+          persistent-counter
+          autocomplete="off"
+          density="comfortable"
+          class="qs__textarea"
+        />
+        <div class="qs__form-actions">
+          <v-btn v-if="!q.blocking" variant="text" height="44" :disabled="savingId !== null" @click="emit('skip', q.id)">Skip</v-btn>
+          <v-btn
+            :color="(drafts[q.id] ?? '').trim() ? 'primary' : undefined"
+            :variant="(drafts[q.id] ?? '').trim() ? 'flat' : 'tonal'"
+            height="44"
+            :loading="savingId === q.id"
+            :disabled="!(drafts[q.id] ?? '').trim() || (savingId !== null && savingId !== q.id)"
+            @click="submitText(q)"
+          >
+            Save
+          </v-btn>
+        </div>
+      </div>
+
       <form v-else class="qs__form" @submit.prevent="submitText(q)">
         <v-text-field
           v-model="drafts[q.id]"
-          :label="q.answerType === 'number' ? 'Number' : 'Your answer'"
+          label="Number"
           :inputmode="inputMode(q)"
           enterkeyhint="send"
           autocomplete="off"
@@ -189,6 +220,21 @@ function inputMode(q: QuestionView) {
   &__field {
     flex: 1 1 200px;
     min-width: 0;
+  }
+
+  &__form--text {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  &__textarea {
+    width: 100%;
+  }
+
+  &__form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 
   &__refreshing {

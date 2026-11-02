@@ -52,7 +52,8 @@ async function answer(q: QuestionListItem, value: string) {
       body: { status: 'answered', answer: value },
     })
     replace(out.question)
-    const parts = [`Saved to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`)}.`]
+    // Keys made from a form label can end in a period already ("...professionally or personally.").
+    const parts = [`Saved to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`).replace(/[.\s]+$/, '')}.`]
     if (out.refreshedApplicationIds.length) parts.push(`${out.refreshedApplicationIds.length === 1 ? 'One application was' : `${out.refreshedApplicationIds.length} applications were`} updated.`)
     else if (out.refreshUnavailable) parts.push('Waiting applications pick it up once form answers can refresh.')
     if (out.rescored) parts.push(`${out.rescored} ${out.rescored === 1 ? 'job' : 'jobs'} rescored.`)
