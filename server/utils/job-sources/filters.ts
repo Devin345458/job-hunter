@@ -49,8 +49,15 @@ export function isEngineeringTitle(title: string): boolean {
 const NON_SOFTWARE_TITLE = /\b(sales|pre[\s-]?sales|customer success|professional services|solutions? (engineer\w*|architect\w*|consult\w*)|support engineer\w*|field (engineer\w*|service\w*)|deployment strategist|forward deployed|recruit(er|ing)?|account (executive|manager)|hardware|mechanical|electrical|manufacturing|analog|rf|silicon|asic|fpga|chip|technical writer|partner engineer\w*|implementation)\b/i
 
 /** An engineering title that is not a sales, support, services, or hardware role. */
+// Healthcare and trades titles that match "tech lead" or "engineer" ("Sterile Processing Tech
+// Lead", "HVAC Controls Engineer"). They only rule a title out when it names no software work,
+// so "Staff Engineer, Patient Platform" and "Software Engineer, Medical Devices" stay in.
+const NON_TECH_DOMAIN = /\b(sterile|surgical|nurs(e|es|ing)|clinical|medical|pharmac\w*|dental|veterinar\w*|patient|laborator\w*|radiolog\w*|hvac|plumb\w*|maintenance|facilities|warehouse|construction|processing tech\w*)\b/i
+const SOFTWARE_WORD = /\b(software|developers?|programmers?|full[\s-]?stack|front[\s-]?end|back[\s-]?end|devops|sre|platform|web|mobile|ios|android|cloud|data|api|systems? software|applications?)\b/i
+
 export function isSoftwareRoleTitle(title: string): boolean {
-  return isEngineeringTitle(title) && !NON_SOFTWARE_TITLE.test(title)
+  if (!isEngineeringTitle(title) || NON_SOFTWARE_TITLE.test(title)) return false
+  return !(NON_TECH_DOMAIN.test(title) && !SOFTWARE_WORD.test(title))
 }
 
 function escapeRegex(s: string) {
