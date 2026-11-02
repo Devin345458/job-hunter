@@ -2,6 +2,8 @@
 // Every JSON column added in migration 0001 stores one of these shapes.
 // Change a shape here first, then the code that writes it, then the code that reads it.
 
+import type { RepoSuggestionView } from './repos'
+
 export type AtsType =
   | 'greenhouse'
   | 'lever'
@@ -330,6 +332,8 @@ export interface QuestionView {
   blocking: boolean
   status: string
   answer: string | null
+  /** Pending knows or has_done question with evidence from Devin's own GitHub commits. Null when there is none. */
+  repoSuggestion?: RepoSuggestionView | null
 }
 
 export interface DemoProjectView {

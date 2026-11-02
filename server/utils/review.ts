@@ -19,6 +19,7 @@ import type {
 import { approveEffect } from './apply/approve-effect'
 import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
 import { negativeSkillTerms, rejectSkillOptions } from './reject-skills'
+import { repoSuggestionsFor } from './repos/suggest-store'
 
 type JobRow = InferSelectModel<typeof jobs>
 type AppRow = InferSelectModel<typeof applications>
@@ -59,7 +60,7 @@ export function htmlToText(html: string | null | undefined): string | null {
     .trim()
 }
 
-export function toQuestionView(q: QuestionRow): QuestionView {
+export function toQuestionView(q: QuestionRow, repoSuggestion: QuestionView['repoSuggestion'] = null): QuestionView {
   return {
     id: q.id,
     question: q.question,
@@ -71,6 +72,7 @@ export function toQuestionView(q: QuestionRow): QuestionView {
     blocking: q.blocking,
     status: q.status,
     answer: q.answer,
+    repoSuggestion: q.status === 'pending' ? repoSuggestion : null,
   }
 }
 
@@ -101,6 +103,7 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
   if (snapshot) snapshot.fields = snapshot.fields.map(f => ({ ...f, label: cleanFieldLabel(f.label) }))
   const answers = parseJson<FormAnswer[]>(app.answersJson, []).map(a => ({ ...a, label: cleanFieldLabel(a.label) }))
   const requirements = parseJson<Requirement[]>(job.requirementsJson, [])
+  const suggestions = repoSuggestionsFor(openQuestions.filter(q => q.status === 'pending' && (q.kind === 'knows' || q.kind === 'has_done')).map(q => q.id))
   return {
     applicationId: app.id,
     status: app.status as ApplicationStatus,
@@ -140,7 +143,7 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
     gap: parseJson<GapAnalysis | null>(app.gapAnalysisJson, null),
     demo: demo ? toDemoView(demo) : null,
     approveEffect: approveEffect(app, job, demo?.status),
-    openQuestions: openQuestions.map(toQuestionView),
+    openQuestions: openQuestions.map(q => toQuestionView(q, suggestions.get(q.id) ?? null)),
     submission: parseJson<SubmissionResult | null>(app.submissionJson, null),
     submitError: app.submitError,
   }

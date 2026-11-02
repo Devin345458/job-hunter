@@ -2,6 +2,7 @@
 // Owned by the learning unit. Pipeline-wide shapes stay in shared/types/pipeline.ts.
 
 import type { PipelineRunView, ScoreComponent } from './pipeline'
+import type { RepoSuggestionView } from './repos'
 
 export type RuleKind =
   | 'keyword'
@@ -109,6 +110,8 @@ export interface QuestionListItem {
   waitingApplications?: Array<{ id: number; company: string; title: string }>
   /** True for rows from the original tailoring flow (no kind, no answer type). */
   legacy: boolean
+  /** Pending knows or has_done question with evidence from Devin's own GitHub commits. Null when there is none. */
+  repoSuggestion?: RepoSuggestionView | null
 }
 
 export interface AnswerOutcome {

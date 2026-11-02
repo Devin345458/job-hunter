@@ -56,6 +56,7 @@ const API_KEYS = [
   { names: ['NUXT_ANTHROPIC_API_KEY'], text: 'Powers AI job matching and resume tailoring. Required for the core features.' },
   { names: ['NUXT_JSEARCH_API_KEY'], text: 'RapidAPI key for the JSearch source. Optional: other sources work without keys.' },
   { names: ['NUXT_ADZUNA_APP_ID', 'NUXT_ADZUNA_API_KEY'], text: 'Adzuna credentials. Optional: free keys at adzuna.com.' },
+  { names: ['NUXT_GITHUB_READ_TOKENS', 'NUXT_GITHUB_READ_TOKEN'], text: 'Read-only GitHub tokens for GitHub evidence (Contents, Metadata, Pull requests read), comma separated, one per owner. Optional: without them it uses NUXT_GITHUB_TOKEN.' },
 ]
 
 function parseJsonArray(val: string | null): string[] {
@@ -214,7 +215,7 @@ onMounted(fetchConfigs)
     <div class="page-header mb-8">
       <h1 class="text-h4 page-header__title">Settings</h1>
       <p class="text-body-2 page-header__subtitle">
-        Run the pipeline by hand, set what it searches for, and check which API keys it needs. Active searches run {{ PIPELINE_SCHEDULE_TEXT }}.
+        Run the pipeline by hand, choose the GitHub repos that can answer skill questions, set what it searches for, and check which API keys it needs. Active searches run {{ PIPELINE_SCHEDULE_TEXT }}.
       </p>
     </div>
 
@@ -237,6 +238,9 @@ onMounted(fetchConfigs)
         <ReviewPipelinePanel />
       </v-card-text>
     </v-card>
+
+    <!-- GitHub evidence: answers to skill questions from his own commits -->
+    <SettingsGithubEvidence id="github-evidence" class="mb-6" />
 
     <!-- Search Configurations -->
     <v-card variant="outlined" class="mb-6">

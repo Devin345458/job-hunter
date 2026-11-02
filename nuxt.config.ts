@@ -165,6 +165,15 @@ export default defineNuxtConfig({
     schedulerEnabled: 'true',
     // Token with push access to the demo and resume repos (used only on approve)
     githubToken: '',
+    // Read-only tokens for GitHub evidence (server/utils/repos): Contents, Metadata, and Pull
+    // requests read. A fine-grained token covers one owner, so NUXT_GITHUB_READ_TOKENS takes a
+    // comma separated list (Devin's account, then each organization). NUXT_GITHUB_READ_TOKEN is a
+    // single one. With neither set, the indexer falls back to githubToken. Never sent to the browser.
+    githubReadTokens: '',
+    githubReadToken: '',
+    // uid of the unprivileged user that runs git for the repo cache in the container (its own user,
+    // so demo build commands, which run as demoUid, cannot read the token or the cloned code)
+    repoUid: '10002',
     githubOwner: 'Devin345458',
     resumeRepo: 'Devin345458/resume',
     // Demo project builder (server/utils/demo). Model to try first; empty uses aiModel, and
