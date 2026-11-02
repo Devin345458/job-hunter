@@ -101,14 +101,18 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
   - [x] Login sweep: 47 routes, every protected route 401 without a session.
   - [x] Pipeline on today's listings: Devin's manual pipeline:daily at 15:34 UTC on the new token (run 125): 40 enriched, 47 scored, 0 failed; the five credit-failed applications prepared again, and three real employer forms were filled and not submitted (Spotify and Metabase on Lever, AppFolio on Ashby), each stopped at a captcha and waiting on answers. The last step (demos:build, run 131) was cut off by my deploy at about 15:42; the two credit-failed demos retry on the next run.
   - [x] Sandbox submit: both sandbox applications (11, 12) had found no form fields because their jobs still pointed at the sandbox posting page (enriched before the guard). Fixed in 4a0b7ad. Re-filled on production (20 fields, 16 filled each, no open questions), then approved application 11 in the deployed dashboard at 16:12 UTC: status submitted, sandbox confirmation "Reference number 2", 18 fields and the 37 KB resume PDF stored. Real submits stay off.
-  - [ ] Browser click-through at both widths: walked on f942433, one major open (CompanyCam demo block hidden). Ticks when the rewalk-fixes merge is checked on production.
+  - [x] Browser click-through at both widths: walked on f942433 (second walk). Its one major (CompanyCam hid why approve is off for its demo) and 15 minors are fixed in `rewalk-fixes` (fbd3fd9 to 5a9fcbb, live); I read its before and after screenshots, and the final walk rechecks them on production.
 - [ ] Pass 3: same four checks.
   - [x] Scheduler: the first slot of the new every-3-hours schedule fired at 12:00 Central (pipeline_runs 147, trigger `schedule`) in the deployed container 2282da270ab3, the one /api/health reported, with every step chained.
   - [x] Pipeline on today's listings: run 147 found 298 (1 new), enriched 40, scored 40 with 0 failures, asked 2 skill questions, and prepared 5 new real applications with forms filled and not submitted (Vanta twice for two different teams and Temporal on Ashby, Veeva on Lever, Calendly on Greenhouse; 11 to 18 fields filled each, each stopped at a captcha), and built one demo (Temporal). Login sweep after the deploy: 48 routes, 0 unexpected.
-  - [ ] Sandbox submit on the final build (application 17 reached reference 3 during the second walk on f942433; repeat after the last merge).
-  - [ ] Browser walk on the final build.
+  - [ ] Sandbox submit on the final build: in the final walk (applications 23 and 24 seeded and prepared on production at 12:40; enrich and match touched only those two, which also proves manual runs honor jobIds).
+  - [ ] Browser walk on the final build (4b22aa0, qa-walker running), with the sandbox submit on application 23 or 24.
 
 ## Found during the run
+
+- 2026-11-02: gap questions about experience no code can show ("Have you given a live product demo at an event?") said "The answer decides whether a demo project should be built". Now they say the answer decides what the resume and letter can mention, and a No skips the demo decision (1b5b407).
+- 2026-11-02: a bare Yes gave the resume and letter nothing to cite. Building in `yes-examples`: a yes now asks where you did it, and stores the example in your words.
+- 2026-11-02: demo previews run model-written code. Served from a token link with a CSP sandbox and no network; on production, from inside the preview, the session cookie, /api calls, and storage were all blocked (opaque origin).
 
 - 2026-11-02: agent worktrees run the production build, so each local server also ran the cron schedule (now every 3 hours): Claude calls through the TeamClaude proxy and dry-run fills on real employer forms from laptop copies. Two such servers were left running from removed worktrees; stopped. NUXT_SCHEDULER_ENABLED=false now turns the schedule off, and the worktree setup writes it (f2429b8).
 - 2026-11-02: the same role posted for several locations (Samsara six times, Discover and Lemon.io three times) could each become its own application. One application per role now (ee7ca43).
