@@ -1,8 +1,26 @@
+import type { QuestionListItem } from '#shared/types/learning'
 import type { QuestionChatResponse, QuestionChatTurn } from '#shared/types/question-chat'
 
 // Conversations for the chat panel on /questions, one per question plus one for free questions.
 // They live in this browser tab only (sessionStorage), so switching questions keeps each thread;
 // nothing is stored on the server.
+
+/**
+ * What the chat panel needs to know about a question. A /questions list item fits as is; the
+ * review card builds one from its QuestionView.
+ */
+export interface ChatQuestion {
+  id: number
+  question: string
+  status: string
+  answer: string | null
+  answerType: QuestionListItem['answerType']
+  choices: string[] | null
+  /** From the original tailoring flow: no kind and no answer type, answered in the long editor. */
+  legacy: boolean
+  job?: { title: string; company: string } | null
+  waitingApplications?: Array<{ company: string; title: string }>
+}
 
 export interface ChatMessage {
   id: string

@@ -22,6 +22,8 @@ const emit = defineEmits<{
   skip: []
   reopen: []
   ask: []
+  /** What is in the answer box while it is open, so the chat can ask before a draft replaces it. */
+  boxText: [text: string]
 }>()
 
 const COMP_FLOOR_SUBJECT = 'compensation floor'
@@ -103,6 +105,8 @@ function send(value: string) {
 watch(() => [props.question.status, props.question.answer, props.question.answeredAt], () => {
   editing.value = false
 })
+
+watch(() => (showInput.value ? draft.value : ''), text => emit('boxText', text))
 
 // "Use this draft" in the chat: the draft goes into the answer box for Devin to edit and save.
 watch(() => props.prefill?.nonce, () => {

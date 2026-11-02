@@ -14,6 +14,7 @@ import {
   aiSpentToday,
   aiStructured,
 } from './ai'
+import { scrubDashes } from './apply/text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
 import { isLegacyQuestion, waitingApplicationIds, type QuestionRow } from './questions'
 import { parseJson } from './review'
@@ -390,6 +391,10 @@ function groundedSuggestion(suggested: string | null | undefined, evidence: stri
   return statements.some(text => text.includes(quote)) ? suggested : null
 }
 
+function dashCount(text: string | null | undefined): number {
+  return (text ?? '').match(/[\u2013\u2014]/g)?.length ?? 0
+}
+
 function stop(kind: QuestionChatStop, message: string): QuestionChatResponse {
   return { ok: false, stop: kind, message }
 }
@@ -450,8 +455,14 @@ export async function questionChatReply(input: { questionId?: number | null; mes
       ref: ctx ? { type: 'question', id: ctx.question.id } : undefined,
     }) as { reply: string; suggestedAnswer?: string | null; suggestionEvidence?: string | null; draft?: string | null }
     const suggested = groundedSuggestion(out.suggestedAnswer, out.suggestionEvidence, input.messages, ctx?.suggestOptions ?? [])
-    const draft = ctx?.draftLimit && out.draft?.trim() ? out.draft.trim() : null
-    return { ok: true, reply: out.reply.trim(), suggestedAnswer: suggested, draft }
+    // The prompt forbids em and en dashes, and a draft can end up on an employer's form, so any
+    // that slip through are rewritten here.
+    const rawDraft = ctx?.draftLimit && out.draft?.trim() ? out.draft.trim() : null
+    const reply = scrubDashes(out.reply.trim())
+    const draft = rawDraft ? scrubDashes(rawDraft) : null
+    const removed = dashCount(out.reply) + dashCount(rawDraft)
+    if (removed) console.info(`[question-chat] removed ${removed} dash${removed === 1 ? '' : 'es'} from Claude's reply`)
+    return { ok: true, reply, suggestedAnswer: suggested, draft }
   }
   catch (e) {
     return stopFor(e)

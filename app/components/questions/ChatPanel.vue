@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { QuestionListItem } from '#shared/types/learning'
-import { chatThreadKey, useQuestionChat } from './chat-store'
+import { chatThreadKey, useQuestionChat, type ChatQuestion } from './chat-store'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
@@ -9,9 +8,11 @@ import { chatThreadKey, useQuestionChat } from './chat-store'
 
 const props = defineProps<{
   /** The question the chat is about. Null for a general question. */
-  question: QuestionListItem | null
+  question: ChatQuestion | null
   /** The answer value being saved for that question right now. */
   saving?: string | null
+  /** What is in that question's answer box now, so "Use this draft" can ask before replacing it. */
+  boxText?: string
   variant: 'panel' | 'dialog'
 }>()
 
@@ -70,6 +71,23 @@ function canSuggest(value: string) {
 }
 
 const canUseDraft = computed(() => !!props.question && props.question.status !== 'skipped')
+
+/** The draft message waiting on "Replace what you typed?". */
+const confirmingDraft = ref<string | null>(null)
+
+function useDraft(id: string, draft: string) {
+  const typed = (props.boxText ?? '').trim()
+  if (typed && typed !== draft.trim() && confirmingDraft.value !== id) {
+    confirmingDraft.value = id
+    return
+  }
+  confirmingDraft.value = null
+  emit('useDraft', draft)
+}
+
+watch(key, () => {
+  confirmingDraft.value = null
+})
 
 function scrollToEnd() {
   nextTick(() => {
@@ -176,8 +194,15 @@ defineExpose({ focus: () => input.value?.focus() })
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
             <div class="question-chat__draft-label text-caption text-medium-emphasis">Draft answer</div>
             <div class="question-chat__draft-text">{{ m.draft }}</div>
-            <div v-if="canUseDraft" class="question-chat__draft-actions">
-              <v-btn color="primary" variant="tonal" class="question-chat__action" prepend-icon="mdi-text-box-edit-outline" @click="emit('useDraft', m.draft!)">
+            <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
+              <span class="text-body-2">Replace what you already typed in the answer box?</span>
+              <div class="question-chat__confirm-actions">
+                <v-btn color="primary" variant="flat" class="question-chat__action" @click="useDraft(m.id, m.draft!)">Replace</v-btn>
+                <v-btn variant="text" class="question-chat__action" @click="confirmingDraft = null">Keep mine</v-btn>
+              </div>
+            </div>
+            <div v-else-if="canUseDraft" class="question-chat__draft-actions">
+              <v-btn color="primary" variant="tonal" class="question-chat__action" prepend-icon="mdi-text-box-edit-outline" @click="useDraft(m.id, m.draft!)">
                 Use this draft
               </v-btn>
               <span class="text-caption text-medium-emphasis">Puts it in the answer box on the card. Nothing is saved until you press Save.</span>
@@ -413,6 +438,23 @@ defineExpose({ focus: () => input.value?.focus() })
     align-items: center;
     gap: 6px 12px;
     margin-top: 10px;
+  }
+
+  &__confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
+  }
+
+  &__confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   &__action {

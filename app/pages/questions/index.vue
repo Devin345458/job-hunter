@@ -31,6 +31,8 @@ const chatOpen = ref(false)
 const chatPanel = ref<{ focus: () => void } | null>(null)
 /** Drafts sent to a card's answer box by "Use this draft", keyed by question id. */
 const prefills = ref<Record<number, { text: string; nonce: number }>>({})
+/** What each card's open answer box holds, so "Use this draft" asks before replacing typed text. */
+const boxTexts = ref<Record<number, string>>({})
 const chatQuestion = computed(() => all.value.find(q => q.id === chatQuestionId.value) ?? null)
 
 function isWide() {
@@ -202,6 +204,7 @@ onMounted(async () => {
               @answer="v => answer(q, v)"
               @skip="skip(q)"
               @ask="askAbout(q)"
+              @box-text="t => (boxTexts[q.id] = t)"
             />
           </div>
         </section>
@@ -225,6 +228,7 @@ onMounted(async () => {
               @answer="v => answer(q, v)"
               @skip="skip(q)"
               @ask="askAbout(q)"
+              @box-text="t => (boxTexts[q.id] = t)"
             />
           </div>
         </section>
@@ -248,6 +252,7 @@ onMounted(async () => {
               @answer="v => answer(q, v)"
               @skip="skip(q)"
               @ask="askAbout(q)"
+              @box-text="t => (boxTexts[q.id] = t)"
             />
           </div>
         </section>
@@ -288,6 +293,7 @@ onMounted(async () => {
                   :prefill="prefills[q.id]"
                   @answer="v => answer(q, v)"
                   @ask="askAbout(q)"
+                  @box-text="t => (boxTexts[q.id] = t)"
                 />
               </div>
             </div>
@@ -319,6 +325,7 @@ onMounted(async () => {
                   :asking="chatQuestionId === q.id"
                   @reopen="reopen(q)"
                   @ask="askAbout(q)"
+                  @box-text="t => (boxTexts[q.id] = t)"
                 />
               </div>
             </div>
@@ -334,6 +341,7 @@ onMounted(async () => {
         variant="panel"
         :question="chatQuestion"
         :saving="chatQuestion ? saving[chatQuestion.id] : null"
+        :box-text="chatQuestion ? boxTexts[chatQuestion.id] : ''"
         @answer="answerFromChat"
         @use-draft="useDraft"
         @detach="selectChat(null)"
@@ -353,6 +361,7 @@ onMounted(async () => {
         class="questions-page__dialog-panel"
         :question="chatQuestion"
         :saving="chatQuestion ? saving[chatQuestion.id] : null"
+        :box-text="chatQuestion ? boxTexts[chatQuestion.id] : ''"
         @answer="answerFromChat"
         @use-draft="useDraft"
         @detach="selectChat(null)"
@@ -427,11 +436,11 @@ onMounted(async () => {
 
 <style lang="scss">
 // The dialog content is teleported out of the page, so these rules cannot be scoped.
-.questions-page__dialog .questions-page__dialog-panel {
+.v-dialog.questions-page__dialog .question-chat.questions-page__dialog-panel {
   height: min(720px, calc(100dvh - 48px));
 }
 
-.questions-page__dialog.v-dialog--fullscreen .questions-page__dialog-panel {
+.v-dialog.questions-page__dialog.v-dialog--fullscreen .question-chat.questions-page__dialog-panel {
   height: 100%;
   height: 100dvh;
 }
