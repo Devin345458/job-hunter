@@ -241,7 +241,7 @@ export interface SearchCommitItem {
     fork: boolean
     html_url: string
   }
-  commit: { author: { date: string } }
+  commit: { author: { date: string }; message?: string }
 }
 
 export interface SearchPage {

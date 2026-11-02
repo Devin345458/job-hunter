@@ -613,7 +613,7 @@ onMounted(async () => {
           <v-alert v-if="confirm.owners.length" type="warning" density="compact" class="mb-3">{{ confirm.text }}</v-alert>
           <p v-else class="mb-0">{{ confirm.text }}</p>
           <p v-if="confirm.owners.length" class="ghe__hint mb-0">
-            Client and organization owners in this: {{ confirm.owners.join(', ') }}.
+            Owners other than you in this: {{ confirm.owners.join(', ') }}.
           </p>
         </v-card-text>
         <v-card-actions>

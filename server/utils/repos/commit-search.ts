@@ -33,6 +33,11 @@ class SearchRun {
   requests = 0
   /** repo full name -> distinct commit shas */
   readonly shas = new Map<string, Set<string>>()
+  /**
+   * repo full name -> the same commits keyed by author date and first message line, which a
+   * copied or rebased project keeps even when its SHAs change.
+   */
+  readonly keys = new Map<string, Set<string>>()
   /** repo full name -> the first search item seen for it, and the token that found it */
   readonly repoInfo = new Map<string, { item: SearchCommitItem['repository']; tokenIndex: number }>()
   readonly notes: string[] = []
@@ -60,9 +65,11 @@ class SearchRun {
       if (!set) {
         set = new Set()
         this.shas.set(repo, set)
+        this.keys.set(repo, new Set())
         this.repoInfo.set(repo, { item: it.repository, tokenIndex })
       }
       set.add(it.sha)
+      this.keys.get(repo)!.add(commitKey(it))
     }
   }
 
@@ -114,6 +121,13 @@ class SearchRun {
 }
 
 class StopSearch extends Error {}
+
+/** Author date to the second plus the first message line: the same commit in a copy of a project. */
+function commitKey(it: SearchCommitItem): string {
+  const date = Date.parse(it.commit?.author?.date ?? '')
+  const line = String(it.commit?.message ?? '').split('\n')[0]!.trim().toLowerCase()
+  return Number.isFinite(date) && line ? `${Math.floor(date / 1000)}|${line}` : `sha:${it.sha}`
+}
 
 let inFlight: Promise<StoredFind> | null = null
 
@@ -214,7 +228,7 @@ async function runFind(log: (m: string) => void, given?: TokenAccount[]): Promis
     }
     syncSearchOnlyRepos(run, accounts, byRepo, details)
     const distinct = new Set<string>()
-    for (const name of Object.keys(byRepo)) for (const sha of run.shas.get(name) ?? []) distinct.add(sha)
+    for (const name of Object.keys(byRepo)) for (const key of run.keys.get(name) ?? []) distinct.add(key)
 
     const result: StoredFind = {
       startedAt: run.startedAt,
@@ -256,8 +270,10 @@ type RepoDetail = Partial<GithubRepo> & { stargazers_count?: number }
  */
 async function creditCommits(run: SearchRun, accounts: TokenAccount[]) {
   const listed = new Set(accounts.flatMap(a => a.repos.map(r => r.full_name)))
+  // Commits are matched by author date and first message line, not SHA: a copy that was rebased
+  // or squashed onto new history keeps those two and changes every SHA.
   const holders = new Map<string, string[]>()
-  for (const [repo, shas] of run.shas) for (const sha of shas) holders.set(sha, [...(holders.get(sha) ?? []), repo])
+  for (const [repo, keys] of run.keys) for (const key of keys) holders.set(key, [...(holders.get(key) ?? []), repo])
 
   const others = [...run.shas.keys()].filter(n => !listed.has(n))
   const details = new Map<string, RepoDetail>()
@@ -282,8 +298,8 @@ async function creditCommits(run: SearchRun, accounts: TokenAccount[]) {
       continue
     }
     let n = 0
-    for (const sha of shas) {
-      const h = holders.get(sha) ?? [repo]
+    for (const key of run.keys.get(repo) ?? []) {
+      const h = holders.get(key) ?? [repo]
       if (h.some(x => listed.has(x))) continue
       const best = [...h].sort((a, b) => stars(b) - stars(a) || a.localeCompare(b))[0]
       if (best === repo) n++
