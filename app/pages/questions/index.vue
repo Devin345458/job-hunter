@@ -110,7 +110,7 @@ onMounted(load)
     <v-alert v-if="loadError" type="error" variant="tonal" class="mb-6">
       {{ loadError }}
       <template #append>
-        <v-btn variant="text" size="small" @click="load">Try again</v-btn>
+        <v-btn variant="text" height="44" @click="load">Try again</v-btn>
       </template>
     </v-alert>
 
@@ -179,23 +179,27 @@ onMounted(load)
       <section v-if="answered.length" class="mb-4">
         <v-btn
           variant="text"
-          class="px-1 mb-2 text-medium-emphasis"
+          class="px-1 mb-2 text-medium-emphasis questions-page__toggle"
           :prepend-icon="showAnswered ? 'mdi-chevron-down' : 'mdi-chevron-right'"
           :aria-expanded="showAnswered"
+          aria-controls="questions-answered"
           @click="showAnswered = !showAnswered"
         >
           Answered ({{ answered.length }})
         </v-btn>
         <v-expand-transition>
-          <div v-show="showAnswered" class="d-flex flex-column ga-3">
-            <KnowledgeQuestionCard
-              v-for="q in answered"
-              :key="q.id"
-              :question="q"
-              mode="answered"
-              :saving="saving[q.id]"
-              @answer="v => answer(q, v)"
-            />
+          <!-- v-show sits on a plain wrapper: .d-flex is display: flex !important and would beat it. -->
+          <div v-show="showAnswered" id="questions-answered">
+            <div class="d-flex flex-column ga-3">
+              <KnowledgeQuestionCard
+                v-for="q in answered"
+                :key="q.id"
+                :question="q"
+                mode="answered"
+                :saving="saving[q.id]"
+                @answer="v => answer(q, v)"
+              />
+            </div>
           </div>
         </v-expand-transition>
       </section>
@@ -204,22 +208,26 @@ onMounted(load)
       <section v-if="skipped.length" class="mb-4">
         <v-btn
           variant="text"
-          class="px-1 mb-2 text-medium-emphasis"
+          class="px-1 mb-2 text-medium-emphasis questions-page__toggle"
           :prepend-icon="showSkipped ? 'mdi-chevron-down' : 'mdi-chevron-right'"
           :aria-expanded="showSkipped"
+          aria-controls="questions-skipped"
           @click="showSkipped = !showSkipped"
         >
           Skipped ({{ skipped.length }})
         </v-btn>
         <v-expand-transition>
-          <div v-show="showSkipped" class="d-flex flex-column ga-3">
-            <KnowledgeQuestionCard
-              v-for="q in skipped"
-              :key="q.id"
-              :question="q"
-              mode="skipped"
-              @reopen="reopen(q)"
-            />
+          <!-- v-show sits on a plain wrapper: .d-flex is display: flex !important and would beat it. -->
+          <div v-show="showSkipped" id="questions-skipped">
+            <div class="d-flex flex-column ga-3">
+              <KnowledgeQuestionCard
+                v-for="q in skipped"
+                :key="q.id"
+                :question="q"
+                mode="skipped"
+                @reopen="reopen(q)"
+              />
+            </div>
           </div>
         </v-expand-transition>
       </section>
@@ -237,6 +245,10 @@ onMounted(load)
 
   &__count {
     font-variant-numeric: tabular-nums;
+  }
+
+  &__toggle {
+    min-height: 44px;
   }
 }
 </style>
