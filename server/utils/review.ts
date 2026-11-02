@@ -15,6 +15,7 @@ import type {
   SubmissionResult,
   TailoredResume,
 } from '#shared/types/pipeline'
+import { approveEffect } from './apply/approve-effect'
 import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
 
 type JobRow = InferSelectModel<typeof jobs>
@@ -134,6 +135,7 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
     },
     gap: parseJson<GapAnalysis | null>(app.gapAnalysisJson, null),
     demo: demo ? toDemoView(demo) : null,
+    approveEffect: approveEffect(app, job, demo?.status),
     openQuestions: openQuestions.map(toQuestionView),
     submission: parseJson<SubmissionResult | null>(app.submissionJson, null),
     submitError: app.submitError,

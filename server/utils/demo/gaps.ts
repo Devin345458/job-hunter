@@ -35,7 +35,7 @@ const DecisionSchema = z.object({
   decisions: z.array(z.object({
     index: z.number().int().describe('Index of the gap in the list you were given'),
     decision: z.enum(['demo', 'reframe', 'skip']),
-    rationale: z.string().describe('One or two sentences on why'),
+    rationale: z.string().describe('One or two sentences on why. Address the job seeker as "you"; never he, she, or they.'),
     demoIdea: z.object({
       title: z.string().describe('Short project name, title case, no more than five words'),
       summary: z.string().describe('Two sentences: what the project does and what it shows'),
@@ -135,7 +135,7 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
     if (answered) {
       base.questionId = answered.id
       if (YES.test(answered.answer)) {
-        items.push({ ...base, decision: 'reframe', rationale: `Devin answered "${answered.answer}" when asked about ${subject}, so the resume and letter can say so. No demo needed.` })
+        items.push({ ...base, decision: 'reframe', rationale: `You answered "${answered.answer}" when asked about ${subject}, so the resume and letter can say so. No demo needed.` })
         continue
       }
       const status = NO.test(answered.answer) ? 'lack' : 'partial'
@@ -144,7 +144,7 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
     }
     if (c.status === 'unknown') {
       if (wasSkipped(subject)) {
-        items.push({ ...base, decision: 'skip', rationale: `The knowledge base does not mention ${subject} and Devin skipped the question about it.` })
+        items.push({ ...base, decision: 'skip', rationale: `The knowledge base does not mention ${subject} and you skipped the question about it.` })
         continue
       }
       const q = askQuestion({
@@ -277,7 +277,7 @@ Plain American English. No dashes. Quote the knowledge base as written; never ad
   const demo = items.find(i => i.decision === 'demo')
   const parts = [
     demo ? `Demo planned: ${demo.demoIdea?.title} (for ${demo.requirement}).` : 'No demo planned.',
-    count('ask') ? `${count('ask')} ${count('ask') === 1 ? 'question' : 'questions'} waiting on Devin.` : null,
+    count('ask') ? `${count('ask')} ${count('ask') === 1 ? 'question' : 'questions'} waiting on you.` : null,
     count('reframe') ? `${count('reframe')} covered by existing experience.` : null,
     count('skip') ? `${count('skip')} skipped.` : null,
   ].filter(Boolean)

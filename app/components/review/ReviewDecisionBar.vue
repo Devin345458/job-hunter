@@ -16,7 +16,8 @@ const emit = defineEmits<{
 }>()
 
 const blocking = computed(() => props.item.openQuestions.filter(q => q.blocking).length)
-const canApprove = computed(() => CAN_APPROVE.includes(props.item.status) && blocking.value === 0)
+const demoBlocked = computed(() => props.item.approveEffect?.demoBlocked ?? null)
+const canApprove = computed(() => CAN_APPROVE.includes(props.item.status) && blocking.value === 0 && !demoBlocked.value)
 const canReject = computed(() => CAN_REJECT.includes(props.item.status))
 const isRetry = computed(() => props.item.status === 'submit_failed')
 const isManual = computed(() => props.item.status === 'needs_manual')
@@ -26,7 +27,7 @@ const prepareFailed = computed(() => isManual.value && /^prepare_failed/.test(pr
 const canRetryManual = computed(() => isManual.value && !prepareFailed.value && props.item.submission?.method === 'manual')
 const demoWillPublish = computed(() => props.item.demo?.status === 'built')
 
-const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : 'Approve and submit'))
+const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item.approveEffect?.submit === 'manual' && !props.item.isSandbox ? 'Approve' : 'Approve and submit'))
 
 /** Why approve is off, said in the bar rather than a tooltip so it reads on a phone. */
 const blockedReason = computed(() => {
@@ -36,16 +37,20 @@ const blockedReason = computed(() => {
     return 'Answers saved. Approve unlocks when the pipeline marks this ready.'
   }
   if (blocking.value > 0) return `Answer ${plural(blocking.value, 'question')} above to unlock approve.`
+  if (demoBlocked.value && CAN_APPROVE.includes(props.item.status)) return `${demoBlocked.value}. Set it, or discard the demo, to approve.`
   return null
 })
 
 const consequence = computed(() => {
-  const target = props.item.isSandbox ? 'the sandbox test form' : (props.item.job.company || hostOf(props.item.job.applyUrl))
-  const parts = []
-  if (demoWillPublish.value && !isRetry.value) parts.push('Publishes the demo repo, then sends')
-  else parts.push('Sends')
-  parts.push(`the application to ${target} under your name.`)
-  return parts.join(' ')
+  const effect = props.item.approveEffect
+  const company = props.item.job.company || hostOf(props.item.job.applyUrl)
+  const demo = demoWillPublish.value && !isRetry.value ? 'Publishes the demo repo, then ' : ''
+  if (props.item.isSandbox || effect?.submit === 'sandbox') return `${demo ? demo : ''}${demo ? 'sends' : 'Sends'} the application to the sandbox test form under your name.`
+  if (effect?.submit === 'manual') {
+    const why = effect.manualReason ? ` (${effect.manualReason})` : ''
+    return `${demo}${demo ? 'marks' : 'Marks'} it approved for you to submit on ${company}'s site yourself${why}. The resume, cover letter, and answers stay here to copy.`
+  }
+  return `${demo}${demo ? 'sends' : 'Sends'} the application to ${company} under your name.`
 })
 </script>
 

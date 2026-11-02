@@ -19,6 +19,9 @@ export default defineEventHandler(async (event) => {
   if (blocking.length > 0) {
     throw createError({ statusCode: 409, statusMessage: `Answer ${blocking.length} open ${blocking.length === 1 ? 'question' : 'questions'} first` })
   }
+  if (item.approveEffect.demoBlocked) {
+    throw createError({ statusCode: 409, statusMessage: `${item.approveEffect.demoBlocked}. Set it, or discard the demo, then approve.` })
+  }
   if (!retry) {
     const decision = recordDecision(id, 'approve', null, null)
     setApplicationStatus(id, 'approved', 'Approved, starting', { decidedAt: nowSql() })

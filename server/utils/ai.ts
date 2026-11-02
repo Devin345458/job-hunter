@@ -318,7 +318,7 @@ export interface MatchResult {
 
 const MatchResultSchema = z.object({
   score: z.number().describe('Match score from 0 to 100'),
-  reasoning: z.string().describe('Two or three sentences explaining the score'),
+  reasoning: z.string().describe('Two or three sentences explaining the score, addressed to the job seeker as "you". Never refer to the job seeker as he, she, or they.'),
   missingSkills: z.array(z.string()),
   keywordOverlap: z.array(z.string()),
   recommendation: z.enum(['strong_match', 'good_match', 'partial_match', 'weak_match']),

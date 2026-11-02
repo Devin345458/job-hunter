@@ -6,7 +6,7 @@ import type { FormAnswer, FormSnapshot, SubmissionResult } from '#shared/types/p
 import { candidateContact, loadKnowledge } from '../knowledge'
 import { saveCoverLetterPdf } from '../pdf'
 import { parseJson } from '../review'
-import { publicBaseUrl, sandboxToken } from '../sandbox'
+import { isOwnSandbox } from '../sandbox'
 import { resolveStoredPath } from '../paths'
 import { ATS_LABELS, requiresAccount } from './ats'
 import { openBlockingQuestionIds } from './answers'
@@ -21,23 +21,6 @@ import { coverLetterPdfPath } from './prepare'
 // - the target is this app's own sandbox form, or real submits are switched on
 //   (runtimeConfig.realSubmitEnabled === 'true').
 // Account-required ATS, captchas, login walls and closed postings return method 'manual'.
-
-/** True when the URL is this app's own sandbox form with the configured token. */
-export function isOwnSandbox(url: string | null | undefined): boolean {
-  const token = sandboxToken()
-  if (!url || !token) return false
-  try {
-    const u = new URL(url)
-    if (u.pathname !== `/sandbox/apply/${token}`) return false
-    const own = new Set(['localhost', '127.0.0.1', '::1'])
-    try { own.add(new URL(publicBaseUrl()).hostname) }
-    catch {}
-    return own.has(u.hostname)
-  }
-  catch {
-    return false
-  }
-}
 
 function manual(reason: string, sandbox: boolean, finalUrl: string | null = null, screenshotPath: string | null = null): SubmissionResult {
   return { method: 'manual', submittedAt: new Date().toISOString(), finalUrl, confirmationText: null, screenshotPath, sandbox, manualReason: reason }

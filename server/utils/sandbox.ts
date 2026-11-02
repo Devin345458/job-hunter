@@ -54,3 +54,20 @@ Compensation and benefits
 - $1,500 yearly learning budget and a $1,000 home office stipend.
 `,
 }
+
+/** True when the URL is this app's own sandbox form with the configured token. */
+export function isOwnSandbox(url: string | null | undefined): boolean {
+  const token = sandboxToken()
+  if (!url || !token) return false
+  try {
+    const u = new URL(url)
+    if (u.pathname !== `/sandbox/apply/${token}`) return false
+    const own = new Set(['localhost', '127.0.0.1', '::1'])
+    try { own.add(new URL(publicBaseUrl()).hostname) }
+    catch {}
+    return own.has(u.hostname)
+  }
+  catch {
+    return false
+  }
+}

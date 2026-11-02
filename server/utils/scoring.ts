@@ -37,7 +37,7 @@ const SkillsSchema = z.object({
   stack: z.number().describe('0 to 25: how close the main languages and frameworks are to the candidate\'s primary stack.'),
   seniority: z.number().describe('0 to 20: role level against the candidate\'s target role and years of experience.'),
   domain: z.number().describe('0 to 10: how close the industry or product domain is to work the candidate has done.'),
-  reasoning: z.string().describe('Two or three plain sentences naming the biggest strengths and gaps.'),
+  reasoning: z.string().describe('Two or three plain sentences naming the biggest strengths and gaps. Address the job seeker as "you" ("You have Laravel and Vue; you have not used Go."). Never refer to the job seeker as he, she, or they.'),
   matched: z.array(z.string()).describe('Short names of requirements the candidate has.'),
   missing: z.array(z.string()).describe('Short names of must-have requirements the candidate lacks or that the knowledge base does not mention.'),
 })

@@ -378,6 +378,12 @@ export interface ReviewItem {
   gap: GapAnalysis | null
   demo: DemoProjectView | null
   openQuestions: QuestionView[]
+  /** What approve will do for this application, decided on the server from its settings and form. */
+  approveEffect: {
+    submit: 'sandbox' | 'automatic' | 'manual'
+    manualReason: string | null
+    demoBlocked: string | null
+  }
   submission: SubmissionResult | null
   submitError: string | null
 }
