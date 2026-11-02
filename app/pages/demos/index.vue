@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { DemoDetail } from '#shared/types/pipeline'
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Demo projects' })
@@ -87,7 +88,7 @@ onBeforeUnmount(() => {
         No demo projects yet
       </p>
       <p class="text-body-2 text-medium-emphasis">
-        The daily run builds one when a gap analysis recommends it.
+        The pipeline builds one when a gap analysis recommends it. It runs {{ PIPELINE_SCHEDULE_TEXT }}.
       </p>
     </div>
 

@@ -298,7 +298,7 @@ onBeforeUnmount(() => {
                     @click="openFile(f.path)"
                   >
                     <v-list-item-title class="demo-detail__file-name">
-                      {{ f.path }}
+                      <DemoPath :path="f.path" />
                     </v-list-item-title>
                     <template #append>
                       <span class="text-caption text-medium-emphasis ms-3 text-no-wrap">{{ formatBytes(f.bytes) }}</span>
@@ -315,7 +315,7 @@ onBeforeUnmount(() => {
                   </p>
                   <template v-else-if="fileContent">
                     <div class="demo-detail__viewer-head text-body-2 font-weight-medium">
-                      {{ fileContent.path }}
+                      <DemoPath :path="fileContent.path" />
                       <span v-if="fileContent.truncated" class="text-caption text-medium-emphasis"> (first 300 KB)</span>
                     </div>
                     <p v-if="fileContent.binary" class="text-body-2 text-medium-emphasis pa-4">
@@ -470,7 +470,6 @@ onBeforeUnmount(() => {
 
   &__file-name {
     font-size: 0.875rem;
-    overflow-wrap: anywhere;
     white-space: normal;
   }
 
@@ -481,7 +480,6 @@ onBeforeUnmount(() => {
   &__viewer-head {
     padding: 12px 16px;
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    overflow-wrap: anywhere;
   }
 
   &__code {

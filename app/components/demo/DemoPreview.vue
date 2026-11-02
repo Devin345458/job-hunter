@@ -123,7 +123,7 @@ const buildLabel = computed(() => {
         <div class="demo-preview__tests">
           <div v-for="(g, gi) in groups" :key="gi" class="demo-preview__group">
             <div v-if="g.suite" class="demo-preview__suite text-body-2 font-weight-medium">
-              {{ g.suite }}
+              <DemoPath :path="g.suite" />
             </div>
             <ul class="demo-preview__list">
               <li v-for="(t, ti) in g.tests" :key="ti" class="demo-preview__test">
@@ -251,7 +251,6 @@ const buildLabel = computed(() => {
 
   &__suite {
     padding: 10px 14px 2px;
-    overflow-wrap: anywhere;
   }
 
   &__list {

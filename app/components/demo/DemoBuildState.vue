@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { DemoDetail } from '#shared/types/pipeline'
 import { plainError } from '#shared/utils/plain-text'
+import { nextPipelineRunText } from '#shared/utils/schedule'
 
 // The part of a demo that changes while it builds: live progress, why the last build stopped,
 // and the Build again button with its cost. Shared by the demos list card and the detail page.
@@ -67,7 +68,7 @@ function elapsed(startedAt: string) {
           {{ STOPPED[demo.stoppedFor] }}
         </div>
         <div>
-          The build itself did not fail. The next daily run (6 AM Central) retries it automatically{{ demo.stoppedFor === 'key' ? ' once a working key is set' : '' }}.
+          The build itself did not fail. The next pipeline run, at {{ nextPipelineRunText() }} Central, retries it automatically{{ demo.stoppedFor === 'key' ? ' once a working key is set' : '' }}.
         </div>
       </v-alert>
       <v-alert v-else-if="demo.status === 'failed' && demo.error" type="error" variant="tonal" density="compact" class="text-body-2 mb-3 demo-build-state__wrap">

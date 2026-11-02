@@ -2,6 +2,7 @@ import { and, desc, eq, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { aiCalls, applications, demoProjects, jobs } from '../../db/schema'
 import type { DemoDetail, GapAnalysis, GapItem } from '#shared/types/pipeline'
+import { plainGap } from './gap-text'
 import { previewView } from './preview-state'
 import { buildProgress } from './progress'
 import { stopKind } from './stop-reason'
@@ -72,7 +73,10 @@ export function demoItem(gap: GapAnalysis | null): GapItem | null {
 
 export function toDemoDetail(d: DemoRow): DemoDetail {
   const row = getAppWithJob(d.applicationId)
-  const gap = parseJson<GapAnalysis | null>(row?.app.gapAnalysisJson, null)
+  const stored = parseJson<GapAnalysis | null>(row?.app.gapAnalysisJson, null)
+  // Shown in plain words: real plurals, "you", and knowledge base references by name.
+  const gap = stored ? plainGap(stored) : null
+  const itemIndex = stored?.items.findIndex(i => i.decision === 'demo' && i.requirement === d.gapAddressed) ?? -1
   return {
     ...toDemoView(d),
     applicationId: d.applicationId,
@@ -87,7 +91,7 @@ export function toDemoDetail(d: DemoRow): DemoDetail {
     createdAt: d.createdAt,
     builtAt: d.builtAt,
     publishedAt: d.publishedAt,
-    gapItem: gap?.items.find(i => i.decision === 'demo' && i.requirement === d.gapAddressed) ?? null,
+    gapItem: itemIndex >= 0 ? gap!.items[itemIndex]! : null,
     gap,
     progress: buildProgress(d.id),
     stoppedFor: d.status === 'failed' ? stopKind(d.error) : null,
