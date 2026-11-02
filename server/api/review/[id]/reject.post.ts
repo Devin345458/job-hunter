@@ -28,7 +28,8 @@ export default defineEventHandler(async (event) => {
   useDb().update(jobs).set({ status: 'rejected' }).where(eq(jobs.id, item.job.id)).run()
   await onDecision(decision.id).catch(e => console.error('[learning] onDecision failed', e))
   // After the rules update, so the rescores the question answers trigger use them.
-  if (rejectSkills?.mode === 'lack') {
+  // Sandbox cards are test data: they make sandbox rules only and never touch the knowledge base.
+  if (rejectSkills?.mode === 'lack' && !item.isSandbox) {
     await applyRejectSkillKnowledge(decision.id, rejectSkills, job).catch(e => console.error('[reject-skills] knowledge step failed', e))
   }
   return getReviewItem(id)

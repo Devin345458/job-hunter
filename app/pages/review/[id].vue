@@ -180,6 +180,7 @@ async function answer(questionId: number, value: string | null, skip = false) {
         :title="item.job.title"
         :company="item.job.company"
         :skill-options="item.rejectSkillOptions"
+        :is-sandbox="item.isSandbox"
         :busy="rejecting"
         :error="rejectError"
         @confirm="confirmReject"

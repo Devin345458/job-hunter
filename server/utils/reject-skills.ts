@@ -129,7 +129,11 @@ export function resolveRejectSkills(job: JobRow, reasonCode: string, rawSkills: 
     const term = ruleTerm(label)
     if (!term || seen.has(term)) continue
     seen.add(term)
-    skills.push({ value, label, term })
+    // A skill the knowledge base says Devin has is never overwritten from the reject dialog;
+    // "I don't have these" then only lowers jobs that ask for it.
+    const existing = mode === 'lack' ? findKnowledgeEntry('skill', label) : null
+    const kept = !!existing && !isNegativeKnowledge(existing.value)
+    skills.push(kept ? { value, label, term, kept } : { value, label, term })
   }
   return skills.length ? { mode, skills } : null
 }
@@ -149,7 +153,7 @@ export async function applyRejectSkillKnowledge(decisionId: number, record: Reje
   const pending = db.select().from(questions)
     .where(and(eq(questions.status, 'pending'), inArray(questions.kind, ['knows', 'has_done'])))
     .all()
-  for (const skill of record.skills) {
+  for (const skill of record.skills.filter(s => !s.kept)) {
     let knowsAnswered = false
     for (const q of pending.filter(q => q.subject && ruleTerm(q.subject) === skill.term)) {
       if (outcome.questionsAnswered.includes(q.id)) continue
@@ -169,8 +173,8 @@ export async function applyRejectSkillKnowledge(decisionId: number, record: Reje
     if (knowsAnswered) continue
     try {
       const existing = findKnowledgeEntry('skill', skill.label)
-      // An entry that already says No keeps its own wording and where it came from.
-      if (existing && isNegativeKnowledge(existing.value)) continue
+      // An entry that already says No keeps its own wording; a positive one is never overwritten here.
+      if (existing) continue
       const key = existing?.key ?? skill.label
       const value = negativeSkillValue(skill.label, `(Said when rejecting ${job.title} at ${job.company} for the wrong tech stack.)`)
       upsertKnowledge('skill', key, value, 'user_answer')

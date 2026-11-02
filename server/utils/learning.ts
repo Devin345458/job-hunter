@@ -449,7 +449,7 @@ export function deriveRules(scoped: ScopedDecision[], knownSkills: Set<string>):
         if (picks.length > 0) {
           for (const p of picks) {
             const t = p.term || ruleTerm(p.label)
-            if (t && !seen.has(t)) { seen.add(t); add(s, code, 'tech', t, p.label, 'avoid', undefined, f.rejectSkills!.mode === 'avoid' ? 'avoid' : 'lack') }
+            if (t && !seen.has(t)) { seen.add(t); add(s, code, 'tech', t, p.label, 'avoid', undefined, f.rejectSkills!.mode === 'avoid' || p.kept ? 'avoid' : 'lack') }
           }
           break
         }

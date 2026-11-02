@@ -329,6 +329,7 @@ const leftLabel = computed(() => {
       :title="selected.job.title"
       :company="selected.job.company"
       :skill-options="selected.rejectSkillOptions"
+      :is-sandbox="selected.isSandbox"
       :busy="rejecting"
       :error="rejectError"
       @confirm="confirmReject"

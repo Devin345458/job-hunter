@@ -12,7 +12,9 @@ const props = withDefaults(defineProps<{
   busy: boolean
   error: string | null
   skillOptions?: RejectSkillOption[]
-}>(), { skillOptions: () => [] })
+  /** Sandbox cards only make sandbox rules; the knowledge base is never changed from them. */
+  isSandbox?: boolean
+}>(), { skillOptions: () => [], isSandbox: false })
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -150,16 +152,19 @@ function confirm() {
               </button>
             </div>
             <p class="rj__hint">
-              <template v-if="skillsMode === 'lack'">
-                Each one is saved to your knowledge base as a No, so no resume, letter, or form claims it. Jobs that ask for them score lower.
+              <template v-if="isSandbox">
+                Sandbox card: this only makes sandbox rules. Your knowledge base is not changed.
+              </template>
+              <template v-else-if="skillsMode === 'lack'">
+                Each one not already on your record is saved to your knowledge base as a No, so no resume, letter, or form claims it. Jobs that ask for them score lower.
               </template>
               <template v-else>
                 Your knowledge base stays as it is. Jobs that ask for them score lower.
               </template>
             </p>
-            <p v-if="pickedHave.length" class="rj__warn" role="status">
-              <v-icon icon="mdi-alert-outline" size="16" />
-              <span>Your knowledge base lists {{ listText(pickedHave) }} as {{ pickedHave.length === 1 ? 'a skill' : 'skills' }} you have. Saving a No means {{ pickedHave.length === 1 ? 'it is' : 'they are' }} never claimed again.</span>
+            <p v-if="pickedHave.length && !isSandbox" class="rj__warn" role="status">
+              <v-icon icon="mdi-information-outline" size="16" />
+              <span>{{ listText(pickedHave) }} {{ pickedHave.length === 1 ? 'is' : 'are' }} on your record, so {{ pickedHave.length === 1 ? 'it stays' : 'they stay' }}. This only lowers jobs that ask for {{ pickedHave.length === 1 ? 'it' : 'them' }}. To remove a skill, edit it on the Knowledge base page.</span>
             </p>
           </template>
         </section>

@@ -309,7 +309,8 @@ export interface RejectSkillOption {
 /** decisions.features_json.rejectSkills: what a wrong_stack rejection named, and what it wrote. */
 export interface RejectSkillsRecord {
   mode: RejectSkillsMode
-  skills: Array<{ value: string; label: string; term: string }>
+  /** kept: the knowledge base lists this skill as one Devin has, so "I don't have these" leaves it there and only lowers jobs. */
+  skills: Array<{ value: string; label: string; term: string; kept?: boolean }>
   /** Filled after the knowledge step ran (lack only). */
   knowledge?: {
     written: Array<{ category: string; key: string; replaced: string | null }>
