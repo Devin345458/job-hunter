@@ -266,7 +266,7 @@ export async function scoreJobs(opts: { jobIds?: number[]; limit?: number; fresh
  * skill does not queue hundreds of Claude calls. A subject of three characters or fewer ("Go")
  * must match as a whole word with its own capitalization; longer ones ignore case.
  */
-export function queueSkillRescore(subject: string | null | undefined, exceptJobIds: number[] = []): number {
+export function queueSkillRescore(subject: string | null | undefined, exceptJobIds: number[] = [], answeredAt: string | null = null): number {
   const s = (subject ?? '').trim()
   if (s.length < 2) return 0
   const esc = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -274,13 +274,28 @@ export function queueSkillRescore(subject: string | null | undefined, exceptJobI
   const db = useDb()
   const closed = new Set(db.select({ jobId: applications.jobId }).from(applications)
     .where(inArray(applications.status, ['submitted', 'declined', 'approved', 'submitting'])).all().map(r => r.jobId))
-  const rows = db.select({ id: jobs.id, breakdown: jobs.scoreBreakdown }).from(jobs)
+  const rows = db.select({ id: jobs.id, breakdown: jobs.scoreBreakdown, scoredAt: jobs.scoredAt }).from(jobs)
     .where(and(isNotNull(jobs.scoredAt), sql`${jobs.matchScore} >= 50`, sql`${jobs.status} not in ('rejected', 'expired')`))
     .all()
-    .filter(r => !closed.has(r.id) && !exceptJobIds.includes(r.id) && re.test(r.breakdown ?? ''))
+    .filter(r => !closed.has(r.id) && !exceptJobIds.includes(r.id) && (!answeredAt || (r.scoredAt ?? '') < answeredAt) && re.test(r.breakdown ?? ''))
   if (!rows.length) return 0
   db.update(jobs).set({ scoredAt: null }).where(inArray(jobs.id, rows.map(r => r.id))).run()
   return rows.length
+}
+
+/**
+ * Skill judgments made before a related answer: for every answered skill or experience question,
+ * open jobs that name its subject and were scored before the answer are queued for re-scoring.
+ * Catches answers given before queueSkillRescore existed, and any path that missed it. Idempotent:
+ * a re-scored job is newer than the answer and is left alone.
+ */
+export function queueStaleSkillJudgments(): number {
+  const answered = useDb().select({ subject: questions.subject, answeredAt: questions.answeredAt }).from(questions)
+    .where(and(eq(questions.status, 'answered'), inArray(questions.kind, ['knows', 'has_done']), isNotNull(questions.answeredAt)))
+    .all()
+  let queued = 0
+  for (const q of answered) queued += queueSkillRescore(q.subject, [], q.answeredAt)
+  return queued
 }
 
 export async function rescoreJobs(jobIds: number[] | 'open', reason: 'rescore' | 'rule_change'): Promise<{ rescored: number }> {

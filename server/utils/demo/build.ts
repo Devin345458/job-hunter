@@ -68,7 +68,9 @@ export function vetCommand(argv: string[], root: string): string[] {
       if (!pkg || !existsSync(join(root, 'node_modules', '.bin', pkg))) {
         throw new Error('npx only runs binaries already installed in node_modules/.bin. Add the package to devDependencies and run npm install first.')
       }
-      return ['npx', '--no', ...args]
+      // Only the binary and its own arguments, after "--": npm would otherwise read options it knows
+      // (--json, --loglevel, --package) as its own, and the model's npx options are not needed.
+      return ['npx', '--no', '--', ...args.slice(args.indexOf(pkg))]
     }
     case 'go': {
       const sub = args[0]
