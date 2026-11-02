@@ -5,6 +5,7 @@
 // Text that has none of those shapes passes through unchanged.
 
 export const CREDIT_SENTENCE = 'Claude is out of credit (add credit in the Anthropic Console)'
+export const KEY_SENTENCE = 'Anthropic rejected the API key (set a working key in Coolify)'
 
 const CREDIT = /credit balance is too low|\bis out of credit\b|\bout of credit:/i
 
@@ -73,6 +74,15 @@ const CREDIT_PHRASES: RegExp[] = [
   /Your credit balance is too low to access the Anthropic API\.?(\s*Please go to Plans & Billing to upgrade or purchase credits\.?)?/gi,
 ]
 
+const KEY_PHRASES: RegExp[] = [
+  // AiKeyRejected, which names the environment variable.
+  /Anthropic rejected the (?:API )?key in \w+(?: \(401\))?\.\s*Set a [^.]*\.?/gi,
+  // ai_calls.error for a refused call.
+  /^key rejected:\s*401\b.*$/gi,
+  // The bare 401 from Anthropic.
+  /(?:\b401\s+)?invalid x-api-key\b\.?/gi,
+]
+
 /** Upper-cases the first letter when the first word is all lowercase; "hCaptcha" and "iCIMS" stay as written. */
 export function capitalize(text: string): string {
   const first = /^\S*/.exec(text)![0]
@@ -100,8 +110,9 @@ export function plainError(raw: string | null | undefined): string {
     .replace(/^#(\d+):\s*/, 'Job $1: ')
   line = replaceBodies(line)
   for (const re of CREDIT_PHRASES) line = line.replace(re, `${CREDIT_SENTENCE}.`)
-  // A credit error says everything the turn number would.
-  if (line.includes(CREDIT_SENTENCE)) line = line.replace(/Claude call failed on turn \d+:\s*/i, '')
+  for (const re of KEY_PHRASES) line = line.replace(re, `${KEY_SENTENCE}.`)
+  // A credit or key error says everything the turn number would.
+  if (line.includes(CREDIT_SENTENCE) || line.includes(KEY_SENTENCE)) line = line.replace(/Claude call failed on turn \d+:\s*/i, '')
   line = line
     .replace(/\s+/g, ' ')
     .replace(/\s+([.,;:)])/g, '$1')

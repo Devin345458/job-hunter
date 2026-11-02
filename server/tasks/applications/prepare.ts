@@ -43,7 +43,7 @@ export default defineTask({
         : jobIds?.length
           ? useDb().select().from(jobs).where(inArray(jobs.id, jobIds)).all().slice(0, remaining)
           : pickJobsToPrepare(threshold, remaining)
-      log(`retried ${retries.length}, picked ${picked.length} new job(s) at threshold ${threshold}`)
+      log(`retried ${retries.length}, picked ${picked.length} new ${picked.length === 1 ? 'job' : 'jobs'} at threshold ${threshold}`)
 
       for (const job of picked) {
         try {

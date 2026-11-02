@@ -277,7 +277,7 @@ Plain American English. No dashes. Quote the knowledge base as written; never ad
   const demo = items.find(i => i.decision === 'demo')
   const parts = [
     demo ? `Demo planned: ${demo.demoIdea?.title} (for ${demo.requirement}).` : 'No demo planned.',
-    count('ask') ? `${count('ask')} question(s) waiting on Devin.` : null,
+    count('ask') ? `${count('ask')} ${count('ask') === 1 ? 'question' : 'questions'} waiting on Devin.` : null,
     count('reframe') ? `${count('reframe')} covered by existing experience.` : null,
     count('skip') ? `${count('skip')} skipped.` : null,
   ].filter(Boolean)
@@ -285,7 +285,7 @@ Plain American English. No dashes. Quote the knowledge base as written; never ad
   return {
     items,
     demoRecommended: Boolean(demo),
-    summary: items.length ? `${items.length} gap(s). ${parts.join(' ')}` : 'No gaps: the knowledge base covers every requirement.',
+    summary: items.length ? `${items.length} ${items.length === 1 ? 'gap' : 'gaps'}. ${parts.join(' ')}` : 'No gaps: the knowledge base covers every requirement.',
     analyzedAt,
   }
 }

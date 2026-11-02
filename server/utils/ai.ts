@@ -17,7 +17,7 @@ export function useAI() {
 
 export class AiBudgetExceeded extends Error {
   constructor(spent: number, budget: number, message?: string) {
-    super(message ?? `Daily AI budget reached: $${spent.toFixed(2)} of $${budget.toFixed(2)} spent today`)
+    super(message ?? `Daily AI budget reached: $${spent.toFixed(2)} of $${budget.toFixed(2)} spent today.`)
   }
 }
 
@@ -39,7 +39,7 @@ export class AiCreditExhausted extends AiBudgetExceeded {
  */
 export class AiKeyRejected extends AiBudgetExceeded {
   constructor() {
-    super(0, 0, 'Anthropic rejected the key in NUXT_ANTHROPIC_API_KEY (401). Set a Console API key (it starts with sk-ant-api) in Coolify.')
+    super(0, 0, 'Anthropic rejected the API key in NUXT_ANTHROPIC_API_KEY. Set a working key in Coolify.')
   }
 }
 

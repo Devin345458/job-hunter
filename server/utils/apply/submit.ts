@@ -116,7 +116,7 @@ export async function submitApplication(applicationId: number): Promise<Submissi
   const blocking = openBlockingQuestionIds(answers, snapshot)
   const missingRequired = answers.filter(a => a.value === null && snapshot.fields.find(f => f.id === a.fieldId)?.required && snapshot.fields.find(f => f.id === a.fieldId)?.type !== 'file')
   if (blocking.length > 0 || missingRequired.length > 0) {
-    throw new Error(`Refusing to submit: ${blocking.length} blocking question(s) open, ${missingRequired.length} required field(s) without an answer${missingRequired.length ? ` (${missingRequired.map(a => a.label).join('; ')})` : ''}`)
+    throw new Error(`Refusing to submit: ${blocking.length} blocking ${blocking.length === 1 ? 'question' : 'questions'} open, ${missingRequired.length} required ${missingRequired.length === 1 ? 'field' : 'fields'} without an answer${missingRequired.length ? ` (${missingRequired.map(a => a.label).join('; ')})` : ''}`)
   }
 
   const resumePath = app.tailoredResumePdfPath ? resolveStoredPath(app.tailoredResumePdfPath) : null
@@ -144,7 +144,7 @@ export async function submitApplication(applicationId: number): Promise<Submissi
     const filled = await fillAnswers(frame, snapshot.fields, answers, { attachFiles: true, files: { resume: resumePath, coverLetter: coverPath } })
     const failedRequired = filled.filter(a => !a.filled && snapshot.fields.find(f => f.id === a.fieldId)?.required && a.value !== null)
     if (failedRequired.length > 0) {
-      throw new Error(`Could not fill required field(s): ${failedRequired.map(a => `${a.label} (${a.fillError})`).join('; ')}`)
+      throw new Error(`Could not fill ${failedRequired.length === 1 ? 'a required field' : 'required fields'}: ${failedRequired.map(a => `${a.label} (${a.fillError})`).join('; ')}`)
     }
     await screenshot(page, `app-${app.id}-presubmit.png`).catch(() => null)
 

@@ -17,7 +17,7 @@ export default defineEventHandler(async (event) => {
   }
   const blocking = item.openQuestions.filter(q => q.blocking)
   if (blocking.length > 0) {
-    throw createError({ statusCode: 409, statusMessage: `Answer ${blocking.length} open question(s) first` })
+    throw createError({ statusCode: 409, statusMessage: `Answer ${blocking.length} open ${blocking.length === 1 ? 'question' : 'questions'} first` })
   }
   if (!retry) {
     const decision = recordDecision(id, 'approve', null, null)
