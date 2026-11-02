@@ -9,6 +9,7 @@ import { dataPath } from '../paths'
 import { saveCoverLetterPdf, saveResumePdf } from '../pdf'
 import { nowSql, parseJson, setApplicationStatus } from '../review'
 import { tailorResumeForJob } from '../tailor'
+import { ruleCompanyKey } from '../learned-score'
 import { writeCoverLetter } from '../cover-letter'
 import { ATS_LABELS, atsFromUrl, requiresAccount } from './ats'
 import { deriveAnswers, openBlockingQuestionIds, refreshStoredAnswers } from './answers'
@@ -280,8 +281,19 @@ export async function refillApplicationForm(applicationId: number): Promise<Prep
 }
 
 /** Jobs the daily run prepares: strong matches with an apply link and no application yet. */
+/** "Vanta" + "Senior Fullstack Software Engineer": the same role, whichever posting or location it came from. */
+export function roleKey(company: string | null | undefined, title: string | null | undefined): string {
+  const t = (title ?? '').toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\s[-|,]\s.*(remote|hybrid|onsite|on-site|united states|usa|us|[a-z]+,\s?[a-z]{2})\s*$/i, ' ')
+    .replace(/[^a-z0-9+#]+/g, ' ')
+    .trim()
+  return `${ruleCompanyKey(company)}|${t}`
+}
+
 export function pickJobsToPrepare(threshold = DEFAULT_MATCH_THRESHOLD, limit = MAX_PER_RUN): JobRow[] {
-  return useDb().select({ job: jobs })
+  const db = useDb()
+  const candidates = db.select({ job: jobs })
     .from(jobs)
     .leftJoin(applications, eq(applications.jobId, jobs.id))
     .where(and(
@@ -291,9 +303,24 @@ export function pickJobsToPrepare(threshold = DEFAULT_MATCH_THRESHOLD, limit = M
       notInArray(jobs.status, ['rejected', 'expired']),
     ))
     .orderBy(desc(jobs.matchScore))
-    .limit(limit)
+    .limit(limit * 10)
     .all()
     .map(r => r.job)
+  // One application per role: a second posting of the same title at the same company (another
+  // location or board) is skipped, and so is a role Devin already has an application for, in
+  // any state, rejected included.
+  const taken = new Set(db.select({ company: jobs.company, title: jobs.title })
+    .from(applications).innerJoin(jobs, eq(applications.jobId, jobs.id)).all()
+    .map(r => roleKey(r.company, r.title)))
+  const picked: JobRow[] = []
+  for (const job of candidates) {
+    const key = roleKey(job.company, job.title)
+    if (taken.has(key)) continue
+    taken.add(key)
+    picked.push(job)
+    if (picked.length >= limit) break
+  }
+  return picked
 }
 
 /**
