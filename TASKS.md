@@ -115,6 +115,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- 2026-11-02 17:11, at Devin's request ("clear out all the data on production but my login so I can do a fresh run through"; he chose to wipe his answers but keep the seeded profile, and keep the search configs but wipe learning): backup /data/backups/pre-reset-202611021711.db (7.5 MB, quick_check ok), then deleted all jobs, applications, questions, decisions, learned rules, demos, runs, AI cost rows, score history, sandbox submissions, and repo evidence rows, plus the 44 answer-based knowledge entries and 4 entries derived from them; removed generated resumes, letters, screenshots, demo folders, and sandbox uploads. Kept: 132 seeded knowledge rows (44 after dedupe), 3 search configs, 538 GitHub repo switches. Integrity ok; every page loads with empty data. The login lives in Coolify env and was never in the database.
+
 - 2026-11-02 16:17: the claude-self-reflect daemon on the laptop stopped answering (another session's hook rebuilt its 1.7 GB index at 16:23). Restarted with launchctl kickstart; it reloaded in about 7 minutes. My test connections may have added load.
 
 - [x] 2026-11-02: `walk4-fixes` merged and live (eed5fde): gap wording matches each demo's real state and override rows are one plain sentence; the resume row and confirmation quote read right after submit; evidence reasons in second person; base and total pay labeled; "out of 100"; chip names (TypeScript); manual demo rebuilds and previews write run rows.
