@@ -42,7 +42,7 @@
   - `NUXT_AI_MODEL` (default `claude-opus-5-5`), `NUXT_AI_FALLBACK_MODEL` (default `claude-haiku-4-5`)
   - `NUXT_DAILY_AI_BUDGET_USD` (default 10)
   - `NUXT_GITHUB_TOKEN` (push access for demo repos and the resume site; used only on approve)
-  - `NUXT_GITHUB_READ_TOKENS` (comma separated read-only fine-grained tokens for GitHub evidence: Contents, Metadata, Pull requests read; one per owner) or `NUXT_GITHUB_READ_TOKEN` (one token). With neither set, GitHub evidence reads with `NUXT_GITHUB_TOKEN`.
+  - `NUXT_GITHUB_READ_TOKENS` (comma separated read-only fine-grained tokens for GitHub evidence, one per owner, with Contents, Metadata, and Pull requests read access) or `NUXT_GITHUB_READ_TOKEN` (one token). With neither set, GitHub evidence reads with `NUXT_GITHUB_TOKEN`.
   - `NUXT_JSEARCH_API_KEY`
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`
@@ -76,7 +76,7 @@
 - Browser: `launchBrowser()` / `newBrowserContext()` in `server/utils/browser.ts`. The Docker image installs Chromium at the bundled Playwright version.
 
 ## GitHub evidence (added 2026-11-02)
-- Purpose: suggest answers to pending `knows` and `has_done` questions from Devin's own commits. Code in a repo he can read is not code he wrote: only commits whose author email he listed, or that GitHub attributes to his login, count. The system only suggests (level Yes or Some experience, never No, plus commit links); Devin taps Use this and Save. No evidence shows nothing.
+- Purpose: suggest answers to pending `knows` and `has_done` questions from Devin's own commits. Code in a repo he can read is not code he wrote: only commits whose author email he listed, or that GitHub attributes to his login, count. The system only suggests (level Yes or Some experience, never No, plus commit links). Devin taps Use this and Save. No evidence shows nothing.
 - Settings > GitHub evidence (`app/components/settings/GithubEvidence.vue`, `GET /api/repos`, `POST /api/repos/include`, `PUT /api/repos/identities`): repos grouped by owner. His own repos are on by default. Organization and other people's repos are off, and turning one on shows the client code warning. Turning a repo off deletes its commits, facts, clone, and the suggestions citing it.
 - Data (migration `0003_repo_evidence`, CREATE TABLE only): `repo_sources`, `repo_commits` (commit metadata, never diffs), `repo_facts` (languages, dependency names), `repo_suggestions` (one row per question: status suggested, none, or error, with the commit set it was judged from), `app_settings` (identities, unlisted emails).
 - Tasks: `repos:index` is the first step of `pipeline:daily` (partial clones `--filter=blob:none --no-checkout` under `dataDir()/repo-cache`, his commits only, max 5,000 per repo, repos over 500 MB skipped). `repos:suggest` is the last step and is queued within a minute of a new knows or has_done question (not where the schedule is off). Payload `{ questionIds }` limits it.

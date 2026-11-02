@@ -4,7 +4,7 @@ import type { RepoSuggestionView } from '#shared/types/repos'
 // "Found in your GitHub" on a pending skill or experience question: the commits of Devin's own
 // that suggest an answer, each linked to GitHub, and Use this, which picks the suggested level
 // and puts the draft in the "Where did you do it?" box. Nothing is saved until Save. The parent
-// decides what Use this does; this block only shows the evidence and asks.
+// decides what Use this does. This block only shows the evidence and asks.
 const props = defineProps<{
   suggestion: RepoSuggestionView
   disabled?: boolean

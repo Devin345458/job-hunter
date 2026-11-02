@@ -63,7 +63,7 @@ export function repoIdentity(): { uid: number; gid: number } | null {
   catch {}
   if (!identity) {
     identity = untrustedIdentity()
-    console.warn(`[repos] uid ${uid} does not exist; git runs as the demo user${identity ? '' : ' (not sandboxed)'}`)
+    console.warn(`[repos] uid ${uid} does not exist, so git runs as the demo user${identity ? '' : ' (not sandboxed)'}`)
   }
   return identity
 }
@@ -112,7 +112,7 @@ function gitEnv(token: string | null): Record<string, string> {
     env[`GIT_CONFIG_KEY_${i}`] = k
     env[`GIT_CONFIG_VALUE_${i}`] = v
   })
-  // Without a token there is nothing to fetch with; a missing object fails instead of trying.
+  // Without a token there is nothing to fetch with, so a missing object fails instead of trying.
   if (!token) env.GIT_NO_LAZY_FETCH = '1'
   return env
 }

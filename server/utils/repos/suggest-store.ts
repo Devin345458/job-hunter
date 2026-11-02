@@ -39,7 +39,7 @@ let timer: ReturnType<typeof setTimeout> | null = null
 /**
  * A new knows or has_done question was asked: suggest from GitHub within a minute, when any
  * repo is indexed. Off where the schedule is off (every Orca worktree), so a laptop copy never
- * calls Claude on its own; the daily run's repos:suggest step covers it there.
+ * calls Claude on its own. The daily run's repos:suggest step covers it there.
  */
 export function queueRepoSuggest(questionId: number) {
   try {

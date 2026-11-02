@@ -216,7 +216,7 @@ watch(() => props.prefill?.nonce, () => {
 })
 
 // "Use this" on Found in your GitHub: the same handoff as the chat's "Use this draft". It picks the
-// suggested level and puts the draft in the example box; nothing is saved until Save.
+// suggested level and puts the draft in the example box. Nothing is saved until Save.
 function useRepoSuggestion() {
   const s = props.question.repoSuggestion
   if (!s || props.mode !== 'pending' || busy.value) return

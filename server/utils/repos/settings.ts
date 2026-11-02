@@ -6,7 +6,7 @@ import { tokenAccounts, readTokens, type TokenAccount } from './github'
 import { removeRepoCache } from './git'
 
 // Settings > GitHub evidence: which repos the read tokens can see, which ones Devin switched on,
-// and which commit authors count as him. Repos owned by his own login are on by default; every
+// and which commit authors count as him. Repos owned by his own login are on by default. Every
 // organization's or other person's repo is off until he turns it on.
 
 const IDENTITIES_KEY = 'repo_identities'
@@ -160,7 +160,7 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
         .onConflictDoUpdate({ target: repoSources.fullName, set: values }).run()
     }
   }
-  // Only forget repos when every token answered; a failed token must not wipe its repos.
+  // Only forget repos when every token answered. A failed token must not wipe its repos.
   if (!failed.length) {
     const gone = db.select().from(repoSources).where(or(lt(repoSources.listedAt, at), sql`${repoSources.listedAt} is null`)).all()
     for (const g of gone) forgetRepoData(g.fullName)

@@ -70,7 +70,7 @@ export interface RepoIdentities {
   emails: string[]
   /** His GitHub logins. A commit counts by login when GitHub attributes it to that account or its noreply email. */
   logins: string[]
-  /** False until he saves his own list; the defaults come from the knowledge base and the tokens. */
+  /** False until he saves his own list. The defaults come from the knowledge base and the tokens. */
   edited: boolean
 }
 

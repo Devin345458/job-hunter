@@ -6,11 +6,14 @@ import { commitLogins, repoLanguages, tokenAccounts, tokenAt } from './github'
 import { gitOk, prepareRepoCache, remoteUrl, repoCacheDir, repoCacheRoot, runGit } from './git'
 import { MAX_REPO_KB, currentIdentities, forgetRepoData, includedRepos, refreshRepoList, saveIdentityCandidates, type RepoRow } from './settings'
 
-// repos:index. For each repo switched on in Settings: a partial clone (commits and trees only)
-// into <dataDir>/repo-cache, updated with fetch on later runs; Devin's own commits (author email
-// or login he listed), with message, date, changed paths, and GitHub URL; the blobs those commits
-// changed, so the suggester can search his diffs offline; the repo's languages; and dependency
-// names from manifests at the default branch. Code by anyone else is never indexed.
+// repos:index. For each repo switched on in Settings it keeps:
+// - a partial clone (commits and trees only) in <dataDir>/repo-cache, updated with fetch later
+// - Devin's own commits (an author email he listed, or his login), with message, date, changed
+//   paths, and GitHub URL
+// - the blobs those commits changed, so the suggester can search his diffs offline
+// - the repo's languages
+// - dependency names from manifests at the default branch
+// Code by anyone else is never indexed.
 
 export const MAX_COMMITS_PER_REPO = 5000
 /** A commit touching this many files (a vendored import, a mass rename) is listed but its diff is not searched. */
@@ -450,7 +453,7 @@ export async function runRepoIndex(opts: { repos?: string[] }, log: (m: string) 
       stats.errors.push(`${row.fullName}: ${res.note ?? 'failed'}`)
     }
   }
-  // Only a full run replaces the offered emails; a run limited to some repos would drop the rest.
+  // Only a full run replaces the offered emails. A run limited to some repos would drop the rest.
   if (!opts.repos?.length) saveIdentityCandidates(candidates)
   stats.unlistedEmails = Object.keys(candidates).length
   return stats

@@ -79,7 +79,7 @@ The app will search his own git commits (messages, changed file paths, diff line
 }
 
 function judgeSystem() {
-  return `You review Devin's own GitHub commits for evidence that answers a skill or experience question on a job application. Every commit listed was authored by Devin (checked against his author emails and logins); code by anyone else was left out. Your result is only a suggestion with links; Devin reads the commits and confirms or changes it.
+  return `You review Devin's own GitHub commits for evidence that answers a skill or experience question on a job application. Every commit listed was authored by Devin (checked against his author emails and logins). Code by anyone else was left out. Your result is only a suggestion with links. Devin reads the commits and confirms or changes it.
 
 Rules:
 - level Yes: the commits show he built or used the subject itself, in real code or configuration, more than in passing.
@@ -88,7 +88,7 @@ Rules:
 - When the question asks about production and the commits do not show the work shipped or ran for users, the level is at most Some experience.
 - A dependency in a manifest is context only. Evidence is always one of the listed commits.
 - evidence: one to five listed commits that best show it, by sha, each with one plain factual line about what that commit did ("Added WebAuthn registration and login endpoints"). Never cite a sha that is not listed.
-- Prefer commits that changed code or configuration. A commit that only edited notes, docs, or a task list is weaker; cite it only when nothing better shows the point.
+- Prefer commits that changed code or configuration. A commit that only edited notes, docs, or a task list is weaker. Cite it only when nothing better shows the point.
 - draft: the example only, for a box under the question that asks "Where did you do it?". The level is picked separately, so never start with Yes, No, or the level. First person as Devin, one to three plain sentences, under ${DRAFT_MAX} characters. Say which repo, what he built or did, and when (month and year from the commit dates). Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes. Empty when level is None.`
 }
 
@@ -216,7 +216,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         stats.results.push({ questionId: q.id, subject, outcome: 'no matching commits', hits: 0 })
         continue
       }
-      // Keep a standing suggestion while every commit it cites is still found; judge again otherwise.
+      // Keep a standing suggestion while every commit it cites is still found. Judge again otherwise.
       if (!opts.force && prev && prev.subject === subject) {
         const cited = parseEvidence(prev.evidenceJson).map(e => e.sha)
         const sameSet = JSON.stringify(hitShas) === (prev.commitShasJson ?? '')
@@ -269,7 +269,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         break
       }
       const msg = String(e?.message ?? e).slice(0, 300)
-      // A failed rerun keeps a standing suggestion; only the error is noted.
+      // A failed rerun keeps a standing suggestion. Only the error is noted.
       upsert(q.id, prev?.status === 'suggested' ? { status: 'suggested', error: msg } : { status: 'error', subject, error: msg })
       stats.failed++
       stats.errors.push(`question ${q.id}: ${msg}`)

@@ -255,7 +255,7 @@ export const aiCalls = sqliteTable('ai_calls', {
 // ── Migration 0003: GitHub evidence (server/utils/repos). CREATE TABLE only. ──
 // Only Devin's own commits count as evidence. These tables hold what the indexer read from the
 // repos he switched on in Settings: commit metadata (never diffs), languages, and dependency
-// names. Tokens are never stored; token_index points at a position in the configured list.
+// names. Tokens are never stored. token_index points at a position in the configured list.
 
 export const repoSources = sqliteTable('repo_sources', {
   fullName: text('full_name').primaryKey(), // owner/name as GitHub returns it
@@ -271,7 +271,7 @@ export const repoSources = sqliteTable('repo_sources', {
   pushedAt: text('pushed_at'),
   tokenIndex: integer('token_index'), // which configured read token sees this repo (0-based)
   included: integer('included', { mode: 'boolean' }), // null: never switched, the owner default applies
-  listedAt: text('listed_at'), // last time a token listed it; older rows are repos the tokens lost
+  listedAt: text('listed_at'), // last time a token listed it. Older rows are repos the tokens lost.
   headSha: text('head_sha'),
   indexedAt: text('indexed_at'),
   commitCount: integer('commit_count'),
