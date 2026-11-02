@@ -32,6 +32,7 @@ import {
 } from './questions'
 import { rejectSkillLabel } from './reject-skills'
 import { parseJson, toQuestionView } from './review'
+import { repoSuggestionsFor } from './repos/suggest-store'
 import { scoreJobs } from './scoring'
 
 // The skill panel: Devin taps a Missing chip or a requirement row that is not Have, says whether
@@ -343,6 +344,7 @@ export function skillClaimPreview(ctx: SkillClaimContext): SkillClaimPreview {
       status: q?.status ?? null,
       answer: q?.answer ?? null,
       example: q ? questionExample(q) : null,
+      repoSuggestion: q && q.status === 'pending' && !ctx.isSandbox ? repoSuggestionsFor([q.id]).get(q.id) ?? null : null,
     },
     knowledge: toKnowledge(claimKnowledge(ctx)),
     isSandbox: ctx.isSandbox,

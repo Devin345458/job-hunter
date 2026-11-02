@@ -42,6 +42,8 @@
   - `NUXT_AI_MODEL` (default `claude-opus-5-5`), `NUXT_AI_FALLBACK_MODEL` (default `claude-haiku-4-5`)
   - `NUXT_DAILY_AI_BUDGET_USD` (default 10)
   - `NUXT_GITHUB_TOKEN` (push access for demo repos and the resume site; used only on approve)
+  - `NUXT_GITHUB_READ_TOKENS` (comma separated read-only fine-grained tokens for GitHub evidence, one per owner, with Contents, Metadata, and Pull requests read access) or `NUXT_GITHUB_READ_TOKEN` (one token). With neither set, GitHub evidence reads with `NUXT_GITHUB_TOKEN`.
+  - `NUXT_REPO_UID` (default 10002; the unprivileged user git runs as for the GitHub evidence cache in the container)
   - `NUXT_JSEARCH_API_KEY`
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`
@@ -73,6 +75,14 @@
 - Review: `GET /api/review/queue`, `GET /api/review/:id`, `POST /api/review/:id/approve`, `POST /api/review/:id/reject {reasonCode, reasonText, skills?, skillsMode?}`. A Wrong tech stack reject can name skills (`server/utils/reject-skills.ts`): learning then makes evidence only for them, and skillsMode `lack` writes each one to the knowledge base as a No and answers pending knows/has_done questions about it with No; `avoid` writes nothing. Approve is the only path to `runApproval()` in `server/utils/approval.ts`, which is the only caller of `publishDemo()` and `submitApplication()`.
 - Files the app writes (resumes, screenshots, demo repos, sandbox uploads) go under `dataDir()`, next to the database, so they land on the persistent volume.
 - Browser: `launchBrowser()` / `newBrowserContext()` in `server/utils/browser.ts`. The Docker image installs Chromium at the bundled Playwright version.
+
+## GitHub evidence (added 2026-11-02)
+- Purpose: suggest answers to pending `knows` and `has_done` questions from Devin's own commits. Code in a repo he can read is not code he wrote: only commits whose author email he listed, or that GitHub attributes to his login, count. The system only suggests (level Yes or Some experience, never No, plus commit links). Devin taps Use this and Save. No evidence shows nothing.
+- Settings > GitHub evidence (`app/components/settings/GithubEvidence.vue`, `GET /api/repos`, `POST /api/repos/include`, `PUT /api/repos/identities`): repos grouped by owner. His own repos are on by default, except forks. Organization and other people's repos are off, and turning one on shows the client code warning. Turning a repo off deletes its commits, facts, clone, and the suggestions citing it.
+- Data (migration `0003_repo_evidence`, CREATE TABLE only): `repo_sources`, `repo_commits` (commit metadata, never diffs), `repo_facts` (languages, dependency names), `repo_suggestions` (one row per question: status suggested, none, or error, with the commit set it was judged from), `app_settings` (identities, unlisted emails).
+- Tasks: `repos:index` is the first step of `pipeline:daily` (partial clones `--filter=blob:none --no-checkout` under `dataDir()/repo-cache`, his commits only, max 5,000 per repo, repos over 500 MB skipped). `repos:suggest` is the last step and is queued within a minute of a new knows or has_done question (not where the schedule is off). Payload `{ questionIds }` limits it.
+- Tokens: `server/utils/repos/github.ts` only. Git gets the token through `GIT_CONFIG_*` environment entries, never argv, never `.git/config`, never logs or API responses. In the container git runs as uid 10002 (`NUXT_REPO_UID`), not the demo uid, and nothing is ever checked out.
+- Claude: one cheap call per subject for search terms (cached), one judge call per question when there are hits, and only when the hit set changed. Organization repo snippets reach Claude only after Devin turns that repo on.
 
 ## API and Data Safety
 - Do not commit API keys or private profile data.

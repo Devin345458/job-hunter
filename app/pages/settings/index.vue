@@ -56,7 +56,21 @@ const API_KEYS = [
   { names: ['NUXT_ANTHROPIC_API_KEY'], text: 'Powers AI job matching and resume tailoring. Required for the core features.' },
   { names: ['NUXT_JSEARCH_API_KEY'], text: 'RapidAPI key for the JSearch source. Optional: other sources work without keys.' },
   { names: ['NUXT_ADZUNA_APP_ID', 'NUXT_ADZUNA_API_KEY'], text: 'Adzuna credentials. Optional: free keys at adzuna.com.' },
+  { names: ['NUXT_GITHUB_TOKEN'], text: 'Publishes demo repos and the resume site when you approve an application. Optional: without it nothing is published.' },
+  { names: ['NUXT_GITHUB_READ_TOKENS', 'NUXT_GITHUB_READ_TOKEN'], text: 'Read-only GitHub tokens for GitHub evidence (Contents, Metadata, Pull requests read), comma separated, one per owner. Optional: without them GitHub evidence reads with NUXT_GITHUB_TOKEN.' },
 ]
+
+/** Which of those variables the server has, from GET /api/settings/keys. Booleans only, never a value. */
+const keysSet = ref<Record<string, boolean> | null>(null)
+
+async function fetchKeyStatus() {
+  try {
+    keysSet.value = (await $fetch<{ set: Record<string, boolean> }>('/api/settings/keys')).set
+  }
+  catch {
+    keysSet.value = null
+  }
+}
 
 function parseJsonArray(val: string | null): string[] {
   if (!val) return []
@@ -205,7 +219,10 @@ async function saveConfig() {
   }
 }
 
-onMounted(fetchConfigs)
+onMounted(() => {
+  fetchConfigs()
+  fetchKeyStatus()
+})
 </script>
 
 <template>
@@ -214,7 +231,7 @@ onMounted(fetchConfigs)
     <div class="page-header mb-8">
       <h1 class="text-h4 page-header__title">Settings</h1>
       <p class="text-body-2 page-header__subtitle">
-        Run the pipeline by hand, set what it searches for, and check which API keys it needs. Active searches run {{ PIPELINE_SCHEDULE_TEXT }}.
+        Run the pipeline by hand, choose the GitHub repos that can answer skill questions, set what it searches for, and check which API keys it needs. Active searches run {{ PIPELINE_SCHEDULE_TEXT }}.
       </p>
     </div>
 
@@ -237,6 +254,9 @@ onMounted(fetchConfigs)
         <ReviewPipelinePanel />
       </v-card-text>
     </v-card>
+
+    <!-- GitHub evidence: answers to skill questions from his own commits -->
+    <SettingsGithubEvidence id="github-evidence" class="mb-6" />
 
     <!-- Search Configurations -->
     <v-card variant="outlined" class="mb-6">
@@ -472,14 +492,21 @@ onMounted(fetchConfigs)
       <v-card-text>
         <v-alert type="info" variant="tonal" class="mb-0">
           <div class="text-body-2 font-weight-medium mb-2">
-            Required environment variables:
+            Environment variables, and whether each is set on this server:
           </div>
           <!-- A stacked list, not a table: at 390 the alert's icon column left the description
                column one word wide and cut it off on the right. -->
           <dl class="settings__keys">
             <div v-for="k in API_KEYS" :key="k.names.join()" class="settings__key">
               <dt class="settings__key-names">
-                <code v-for="n in k.names" :key="n">{{ n }}</code>
+                <span v-for="n in k.names" :key="n" class="settings__key-name">
+                  <code>{{ n }}</code>
+                  <span
+                    v-if="keysSet"
+                    class="settings__key-status"
+                    :class="keysSet[n] ? 'settings__key-status--set' : 'settings__key-status--unset'"
+                  >{{ keysSet[n] ? 'Set' : 'Not set' }}</span>
+                </span>
               </dt>
               <dd class="settings__key-text">{{ k.text }}</dd>
             </div>
@@ -538,6 +565,31 @@ onMounted(fetchConfigs)
 
   code {
     overflow-wrap: anywhere;
+  }
+}
+
+.settings__key-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  min-width: 0;
+}
+
+.settings__key-status {
+  font-weight: 600;
+  font-size: 0.6875rem;
+  padding: 1px 6px;
+  border-radius: 6px;
+
+  &--set {
+    color: rgb(var(--v-theme-success));
+    background: rgba(var(--v-theme-success), 0.14);
+  }
+
+  &--unset {
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    background: rgba(var(--v-theme-on-surface), 0.08);
   }
 }
 

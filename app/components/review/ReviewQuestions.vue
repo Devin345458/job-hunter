@@ -88,6 +88,15 @@ function saveWithoutExample(q: QuestionView) {
   emit('answer', q.id, level)
 }
 
+/** "Use this" on Found in your GitHub: picks the suggested level and fills the example box. Nothing saves until Save. */
+function useRepoSuggestion(q: QuestionView) {
+  const s = q.repoSuggestion
+  if (!s || props.savingId !== null) return
+  levels[q.id] = s.level
+  examples[q.id] = s.draft
+  exampleOpen[q.id] = true
+}
+
 // The spinner choice resets once the save ends; a failed save keeps the box and its text.
 watch(() => props.savingId, (now, before) => {
   if (now === null && before !== null) exampleAction[before] = null
@@ -195,6 +204,15 @@ const chatBoxText = computed(() => {
       <p v-if="q.context" class="qs__context">{{ plainKnowledgeRefs(plainQuestionContext(q.context)) }}</p>
 
       <template v-if="q.answerType === 'yes_no'">
+        <!-- Suggested from his own commits. Silent when there is nothing: no evidence is never a No. -->
+        <QuestionsRepoEvidence
+          v-if="takesExample(q) && q.repoSuggestion"
+          :suggestion="q.repoSuggestion"
+          :disabled="savingId !== null"
+          :box-text="exampleOpen[q.id] ? examples[q.id] ?? '' : ''"
+          class="qs__evidence"
+          @use="useRepoSuggestion(q)"
+        />
         <div class="qs__actions">
           <v-btn
             v-for="opt in yesNoOptions(q)"
@@ -411,6 +429,11 @@ const chatBoxText = computed(() => {
     font-size: 0.8125rem;
     margin: 0 0 12px;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  // Two classes, so this wins over the block's own top margin.
+  & &__evidence {
+    margin: 0 0 12px;
   }
 
   &__actions {
