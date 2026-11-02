@@ -266,7 +266,7 @@ export function runDemos(stats: Record<string, unknown> | null): RunDemo[] {
   return list.filter(d => typeof d?.id === 'number').map((d) => {
     const preview = typeof d.preview === 'string' ? d.preview : null
     const state = preview
-      ? (preview === 'none' ? 'no preview for this project' : `preview ${preview}`)
+      ? (preview === 'none' ? 'no preview' : `preview ${preview}`)
       : typeof d.status === 'string' ? d.status : ''
     return { id: d.id as number, name: String(d.title || d.slug || `Demo ${d.id}`), state }
   })
