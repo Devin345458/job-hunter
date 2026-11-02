@@ -258,6 +258,12 @@ p {
     min-height: 44px;
   }
 
+  // A button group has a fixed height and hides overflow, which would clip its 44px buttons.
+  :root .v-btn-group {
+    height: auto;
+    min-height: 44px;
+  }
+
   // The slider track is the touch surface (a press anywhere moves the nearest thumb); give it
   // 44px of height without making the thumbs bigger.
   :root .v-slider.v-input--horizontal > .v-input__control {

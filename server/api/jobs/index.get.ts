@@ -56,10 +56,12 @@ export default defineEventHandler(async (event) => {
 
     const totalResult = countResult[0]
 
-    // id breaks ties so paging never repeats or skips a job that shares found_at with another.
-    const orderBy = sortBy === 'score'
-      ? [desc(jobs.matchScore), desc(jobs.id)]
-      : [desc(jobs.foundAt), desc(jobs.id)]
+    // Default: best match first. Unscored jobs come after every scored one, newest first within
+    // equal scores. sortBy=date gives plain newest first. id breaks the remaining ties so paging
+    // never repeats or skips a job.
+    const orderBy = sortBy === 'date'
+      ? [desc(jobs.foundAt), desc(jobs.id)]
+      : [sql`${jobs.matchScore} IS NULL`, desc(jobs.matchScore), desc(jobs.foundAt), desc(jobs.id)]
 
     // Only what a job card shows. The full row (description HTML, posting text, score and pay
     // breakdowns) made a page of 20 about 110 KB; GET /api/jobs/:id serves it to the detail page.

@@ -17,9 +17,13 @@ export interface JobFilters {
   remoteType?: RemoteType
   minScore?: number
   maxScore?: number
+  /** score (default): best match first, unscored last. date: newest first. */
+  sort?: JobSort
   page?: number
   limit?: number
 }
+
+export type JobSort = 'score' | 'date'
 
 export interface JobsResponse {
   jobs: JobListItem[]
@@ -88,6 +92,7 @@ export function useJobs() {
       if (filters?.maxScore !== undefined) params.maxScore = filters.maxScore
       if (filters?.page) params.page = filters.page
       if (filters?.limit) params.limit = filters.limit
+      if (filters?.sort) params.sortBy = filters.sort
 
       // A request that never finishes would leave the progress bar up for good; give up after
       // 20 seconds and show the error with a retry instead. ofetch ignores its timeout option

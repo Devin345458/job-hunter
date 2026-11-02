@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { JobFilters } from '~/composables/useJobs'
+import type { JobFilters, JobSort } from '~/composables/useJobs'
 import type { JobFilterValues } from '~/components/jobs/JobFilters.vue'
 import { SupersededRequest } from '~/composables/useJobs'
 
@@ -15,6 +15,8 @@ const { jobs, total, page, loading, error, fetchJobs, triggerSearch } = useJobs(
 const snackbar = useSnackbar()
 
 const filters = ref<JobFilters>({})
+/** Best match first by default, so strong matches lead instead of whatever was found last. */
+const sort = ref<JobSort>('score')
 const loadingMore = ref(false)
 const hasMore = computed(() => jobs.value.length < total.value)
 
@@ -22,6 +24,7 @@ async function load(options: { append?: boolean } = {}) {
   try {
     await fetchJobs({
       ...filters.value,
+      sort: sort.value,
       page: options.append ? page.value + 1 : 1,
       limit: PAGE_SIZE,
     }, options)
@@ -43,6 +46,8 @@ function onFiltersUpdate(values: JobFilterValues) {
   load()
 }
 
+watch(sort, () => load())
+
 async function loadMore() {
   loadingMore.value = true
   try {
@@ -62,11 +67,14 @@ async function runSearch() {
   searching.value = true
   try {
     const result = await triggerSearch()
-    await load()
+    // New postings are not scored until the daily run, so under Best match they would sit at
+    // the end. Show them first.
+    if (result.jobsFound > 0 && sort.value !== 'date') sort.value = 'date'
+    else await load()
     const found = `${result.found} listing${result.found === 1 ? '' : 's'} checked`
     const settingsAction = { text: 'View run', handler: () => router.push('/settings') }
     if (result.jobsFound > 0) {
-      snackbar.success(`Search finished: ${result.jobsFound} new job${result.jobsFound === 1 ? '' : 's'}, ${found}.`, settingsAction)
+      snackbar.success(`Search finished: ${result.jobsFound} new job${result.jobsFound === 1 ? '' : 's'}, shown first under Newest. ${found}.`, settingsAction)
     }
     else {
       snackbar.info(`Search finished: no new jobs, ${found}.`, settingsAction)
@@ -135,8 +143,28 @@ onMounted(() => {
     </v-alert>
 
     <div class="jobs-page__status">
-      <div v-if="jobs.length" class="text-caption text-medium-emphasis tabular" aria-live="polite">
-        Showing {{ jobs.length }} of {{ total }} job{{ total !== 1 ? 's' : '' }}
+      <div class="jobs-page__status-row">
+        <div class="text-caption text-medium-emphasis tabular" aria-live="polite">
+          <template v-if="jobs.length">
+            Showing {{ jobs.length }} of {{ total }} job{{ total !== 1 ? 's' : '' }}
+          </template>
+        </div>
+        <v-btn-toggle
+          v-model="sort"
+          mandatory
+          density="compact"
+          variant="outlined"
+          divided
+          class="jobs-page__sort"
+          aria-label="Sort jobs"
+        >
+          <v-btn value="score" prepend-icon="mdi-sort-numeric-descending">
+            Best match
+          </v-btn>
+          <v-btn value="date" prepend-icon="mdi-clock-outline">
+            Newest
+          </v-btn>
+        </v-btn-toggle>
       </div>
       <v-progress-linear
         v-if="loading && !loadingMore"
@@ -214,7 +242,7 @@ onMounted(() => {
             This runs every active search configuration against the job boards right away, instead of waiting for the 6:00 daily run. It can take a minute.
           </p>
           <p class="text-body-2 text-medium-emphasis mb-0">
-            New postings appear at the top of this list. The run is logged in Settings under Recent runs.
+            New postings are listed first under Newest until the daily run scores them. The run is logged in Settings under Recent runs.
           </p>
         </v-card-text>
         <v-card-actions class="px-6 pb-5">
@@ -237,8 +265,23 @@ onMounted(() => {
     display: flex;
     flex-direction: column;
     gap: 8px;
-    min-height: 18px;
     margin-bottom: 12px;
+  }
+
+  &__status-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+  }
+
+  &__sort {
+    flex: 0 0 auto;
+
+    .v-btn {
+      font-size: 0.8125rem;
+    }
   }
 
   &__more {
