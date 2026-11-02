@@ -86,6 +86,6 @@ async function submit() {
   &__brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; margin-bottom: 28px; }
   &__title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
   &__sub { opacity: 0.6; font-size: 14px; margin: 0 0 24px; }
-  &__eye { margin-inline-end: -8px; }
+  &__eye { margin-inline-end: -4px; }
 }
 </style>

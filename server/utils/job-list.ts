@@ -12,6 +12,21 @@ export function latestApplication(column: 'id' | 'status' | 'form_error'): SQL<a
   return sql`(select a.${sql.raw(column)} from applications a where a.job_id = ${jobs.id} order by a.id desc limit 1)`
 }
 
+/**
+ * The state a job card shows, as a status filter key: in_review while its application is under
+ * way, applied once sent, rejected once Devin rejected it, otherwise the job's own status. The
+ * jobs page's status filter matches on this, so a filter never returns a card labeled otherwise.
+ */
+export function jobStateKey(): SQL<string> {
+  const app = latestApplication('status')
+  const list = (values: string[]) => sql.join(values.map(v => sql`${v}`), sql`, `)
+  return sql<string>`case
+    when ${app} in (${list(IN_REVIEW_APP_STATUSES)}) then 'in_review'
+    when ${app} in (${list(['submitted', 'response_received', 'interviewing', 'offer'])}) then 'applied'
+    when ${app} = 'declined' then 'rejected'
+    else ${jobs.status} end`
+}
+
 /** Same company and same title, ignoring case and outer spaces. */
 export function jobGroupKey(): SQL<string> {
   return sql<string>`lower(trim(${jobs.company})) || char(31) || lower(trim(${jobs.title}))`

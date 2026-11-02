@@ -1,6 +1,6 @@
-import { eq, and, desc, sql, count, inArray, or } from 'drizzle-orm'
+import { eq, and, desc, sql, count, inArray } from 'drizzle-orm'
 import { jobs } from '~~/server/db/schema'
-import { IN_REVIEW_APP_STATUSES, jobGroupKey, latestApplication, toJobApplication } from '~~/server/utils/job-list'
+import { jobGroupKey, jobStateKey, latestApplication, toJobApplication } from '~~/server/utils/job-list'
 
 // GET /api/jobs: one card per company and title. A company that posts the same role several times
 // (Spotify's two "Staff Machine Learning Engineer, Home Surfaces" postings, Samsara's six city
@@ -29,16 +29,11 @@ export default defineEventHandler(async (event) => {
     const conditions = []
 
     if (status) {
-      // The jobs page sends several statuses joined by commas. "new" means nothing has been done
-      // with the job yet, so a job with an application is not new; "in_review" is a job whose
-      // application is being prepared, waits on a decision, or is being sent.
+      // The jobs page sends several statuses joined by commas. Each matches the state the card
+      // shows (jobStateKey): "in_review" is a job whose application is being prepared, waits on a
+      // decision, or is being sent, and "new" leaves those out because the card no longer says New.
       const statuses = status.split(',').map(s => s.trim()).filter(Boolean)
-      const parts = statuses.map((s) => {
-        if (s === 'new') return and(eq(jobs.status, 'new'), sql`${appId} IS NULL`)
-        if (s === 'in_review') return inArray(appStatus, IN_REVIEW_APP_STATUSES)
-        return eq(jobs.status, s)
-      })
-      if (parts.length) conditions.push(parts.length > 1 ? or(...parts)! : parts[0]!)
+      if (statuses.length) conditions.push(inArray(jobStateKey(), statuses))
     }
 
     if (source) {

@@ -202,7 +202,8 @@ onBeforeRouteLeave((to) => {
 
     <div class="jobs-page__status">
       <div class="jobs-page__status-row">
-        <div class="text-caption text-medium-emphasis tabular" aria-live="polite">
+        <!-- Not tabular: under tabular figures the font gives the comma and period a digit-wide slot. -->
+        <div class="text-caption text-medium-emphasis" aria-live="polite">
           <template v-if="jobs.length">
             {{ countText }}
           </template>
