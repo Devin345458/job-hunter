@@ -1,5 +1,5 @@
 import { isCreditError } from './plain-text'
-import { properName } from './names'
+import { properName, properNamesIn } from './names'
 
 // One outcome per pipeline run, derived from what the run recorded. A run that finished without
 // throwing is not automatically a success: a step that scored 0 of 38 jobs, or stopped because
@@ -9,7 +9,7 @@ import { properName } from './names'
 export type RunOutcome = 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
 
 export const TASK_LABELS: Record<string, string> = {
-  'pipeline:daily': 'Full daily run',
+  'pipeline:daily': 'Full run',
   'learn:daily': 'Learn from decisions',
   'jobs:search': 'Search listings',
   'jobs:enrich': 'Read postings',
@@ -45,6 +45,8 @@ function creditErrors(stats: Record<string, unknown>): boolean {
  * The problems one run recorded, each a few plain words ("38 failed, Claude is out of credit",
  * "stopped: out of credit"). Empty for a clean run. pipeline:daily runs list their steps' problems,
  * from the problems they recorded or, for runs recorded before that, from their chained steps.
+ * Source ids are written as product names here, so a problem stored as "adzuna search failed"
+ * on an old run reads "Adzuna search failed" too.
  */
 export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
   const stats = run.stats ?? {}
@@ -67,7 +69,7 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
       const status = typeof value === 'string' ? value : (value as { status?: string } | null)?.status
       if (status === 'failed' || status === 'skipped') out.push(`${taskLabel(step)}: ${status}`)
     }
-    return [...new Set(out)]
+    return [...new Set(out.map(properNamesIn))]
   }
 
   const out: string[] = []
@@ -85,7 +87,7 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
     const down = Object.entries(sources).filter(([, s]) => s?.status === 'failed').map(([name]) => name)
     if (down.length) out.push(`${down.map(properName).join(', ')} search failed`)
   }
-  return out
+  return out.map(properNamesIn)
 }
 
 /** Failed when the run threw, partial when it finished with problems, otherwise its status. */

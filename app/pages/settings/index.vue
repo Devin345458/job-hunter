@@ -51,6 +51,13 @@ const sourceOptions = [
   { title: 'Arbeitnow', value: 'arbeitnow', description: 'European and remote jobs. No API key needed.' },
 ]
 
+/** The environment variables the API Keys card lists, with what each one is for. */
+const API_KEYS = [
+  { names: ['NUXT_ANTHROPIC_API_KEY'], text: 'Powers AI job matching and resume tailoring. Required for the core features.' },
+  { names: ['NUXT_JSEARCH_API_KEY'], text: 'RapidAPI key for the JSearch source. Optional: other sources work without keys.' },
+  { names: ['NUXT_ADZUNA_APP_ID', 'NUXT_ADZUNA_API_KEY'], text: 'Adzuna credentials. Optional: free keys at adzuna.com.' },
+]
+
 function parseJsonArray(val: string | null): string[] {
   if (!val) return []
   try {
@@ -207,7 +214,7 @@ onMounted(fetchConfigs)
     <div class="page-header mb-8">
       <h1 class="text-h4 page-header__title">Settings</h1>
       <p class="text-body-2 page-header__subtitle">
-        Run the pipeline by hand, set what it searches for, and check which API keys it needs. Active searches run every day.
+        Run the pipeline by hand, set what it searches for, and check which API keys it needs. Active searches run {{ PIPELINE_SCHEDULE_TEXT }}.
       </p>
     </div>
 
@@ -243,7 +250,7 @@ onMounted(fetchConfigs)
           Search Configurations
         </v-card-title>
         <v-card-subtitle>
-          Define what jobs to search for. Each config runs independently during the daily search.
+          Define what jobs to search for. Each active config runs on its own in every scheduled search, {{ PIPELINE_SCHEDULE_TEXT }}.
         </v-card-subtitle>
         <template #append>
           <v-btn
@@ -361,7 +368,7 @@ onMounted(fetchConfigs)
                   color="success"
                   hide-details
                   density="compact"
-                  :aria-label="`Include ${config.name} in the daily search`"
+                  :aria-label="`Include ${config.name} in the scheduled searches`"
                   @update:model-value="toggleConfig(config)"
                 />
               </template>
@@ -388,7 +395,7 @@ onMounted(fetchConfigs)
               </template>
             </v-card-item>
             <v-card-text class="pt-0">
-              <div class="d-flex flex-wrap ga-2">
+              <div class="d-flex flex-wrap ga-2 settings__config-chips">
                 <v-chip
                   v-if="config.excludedKeywords"
                   size="x-small"
@@ -467,39 +474,16 @@ onMounted(fetchConfigs)
           <div class="text-body-2 font-weight-medium mb-2">
             Required environment variables:
           </div>
-          <v-table density="compact" class="bg-transparent">
-            <tbody>
-              <tr>
-                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
-                  <code>NUXT_ANTHROPIC_API_KEY</code>
-                </td>
-                <td class="text-caption text-medium-emphasis">
-                  Powers AI job matching and resume tailoring (required for core features)
-                </td>
-              </tr>
-              <tr>
-                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
-                  <code>NUXT_JSEARCH_API_KEY</code>
-                </td>
-                <td class="text-caption text-medium-emphasis">
-                  RapidAPI key for the JSearch source. Optional: other sources work without keys.
-                </td>
-              </tr>
-              <tr>
-                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
-                  <code>NUXT_ADZUNA_APP_ID</code>
-                </td>
-                <td class="text-caption text-medium-emphasis" rowspan="2">
-                  Adzuna credentials. Optional: free keys at adzuna.com.
-                </td>
-              </tr>
-              <tr>
-                <td class="text-caption font-weight-bold" style="white-space: nowrap;">
-                  <code>NUXT_ADZUNA_API_KEY</code>
-                </td>
-              </tr>
-            </tbody>
-          </v-table>
+          <!-- A stacked list, not a table: at 390 the alert's icon column left the description
+               column one word wide and cut it off on the right. -->
+          <dl class="settings__keys">
+            <div v-for="k in API_KEYS" :key="k.names.join()" class="settings__key">
+              <dt class="settings__key-names">
+                <code v-for="n in k.names" :key="n">{{ n }}</code>
+              </dt>
+              <dd class="settings__key-text">{{ k.text }}</dd>
+            </div>
+          </dl>
           <div class="text-caption text-medium-emphasis mt-3">
             Set these in your <code>.env</code> file or Coolify environment settings. Free sources (Remotive, RemoteOK, Himalayas, Jobicy, Arbeitnow) work without any API keys.
           </div>
@@ -519,6 +503,48 @@ onMounted(fetchConfigs)
 
 .settings__pipeline {
   scroll-margin-top: 72px;
+}
+
+// A long exclude list or location list wraps inside its chip instead of being cut off at 390.
+.settings__config-chips :deep(.v-chip) {
+  max-width: 100%;
+  height: auto;
+  min-height: 20px;
+  padding-top: 2px;
+  padding-bottom: 2px;
+  white-space: normal;
+}
+
+.settings__keys {
+  margin: 0;
+}
+
+.settings__key {
+  padding: 8px 0;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+  &:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+}
+
+.settings__key-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+
+  code {
+    overflow-wrap: anywhere;
+  }
+}
+
+.settings__key-text {
+  margin: 2px 0 0;
+  font-size: 0.75rem;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 }
 
 // Phone: Add Config drops under the section title so the title and subtitle get the full width.
