@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
 import type { QuestionView } from '#shared/types/pipeline'
+import { plainKnowledgeRefs } from '#shared/utils/plain-text'
 import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, takesExample, type ChatQuestion } from '~/components/questions/chat-store'
 
 // Open questions answered in place. Yes or no and choices are one tap; numbers take one short
@@ -190,7 +191,7 @@ const chatBoxText = computed(() => {
         </v-btn>
       </div>
       <h4 class="qs__question">{{ q.question }}</h4>
-      <p v-if="q.context" class="qs__context">{{ q.context }}</p>
+      <p v-if="q.context" class="qs__context">{{ plainKnowledgeRefs(q.context) }}</p>
 
       <template v-if="q.answerType === 'yes_no'">
         <div class="qs__actions">
@@ -387,7 +388,7 @@ const chatBoxText = computed(() => {
   }
 
   &__flag {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;

@@ -2,12 +2,15 @@
 // The evidence record stored in tailoring_notes: what the tailoring emphasized, then for the
 // resume and the cover letter how many lines were checked against the knowledge base and
 // exactly which lines were rewritten or dropped, and why.
+import { plainKnowledgeRefs } from '#shared/utils/plain-text'
+
 const props = defineProps<{ notes: string | null }>()
 
 interface Check { title: string; summary: string; rewritten: string[]; dropped: string[] }
 
 const parsed = computed(() => {
-  const blocks = (props.notes ?? '').split(/\n{2,}/).map(b => b.trim()).filter(Boolean)
+  // Knowledge base keys ("skill/Sentry") read as plain words ("your Sentry entry").
+  const blocks = plainKnowledgeRefs(props.notes).split(/\n{2,}/).map(b => b.trim()).filter(Boolean)
   const checks: Check[] = []
   const notes: string[] = []
   const warnings: string[] = []

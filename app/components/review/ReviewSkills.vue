@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Requirement, ScoreBreakdown } from '#shared/types/pipeline'
-import { knowledgeRef } from '~/composables/review/format'
+import { knowledgeSource } from '~/composables/review/format'
 
 // Skills fit: matched and missing skills first, then each posting requirement with what the
 // knowledge base says about it.
@@ -46,7 +46,7 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
         <div class="skills__req-body">
           <span class="skills__req-text">{{ r.text }}</span>
           <span class="skills__req-meta">
-            {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeRef(r.evidence)}` : '' }}
+            {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeSource(r.evidence)}` : '' }}
           </span>
         </div>
       </li>

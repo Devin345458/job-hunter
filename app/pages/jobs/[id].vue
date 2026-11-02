@@ -2,7 +2,7 @@
 import { properName } from '~/composables/review/format'
 import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import type { Job, JobStatus } from '~/composables/useJobs'
-import { ATS_LABELS } from '~/components/jobs/format'
+import { ATS_LABELS, uniqueTags } from '~/components/jobs/format'
 
 /** GET /api/jobs/:id adds the parsed pipeline fields to the row. */
 type JobDetail = Job & {
@@ -31,15 +31,9 @@ const applicationId = ref<number | null>(null)
 
 const jobId = computed(() => Number(route.params.id))
 
-const tags = computed(() => {
-  if (!job.value?.tags) return []
-  try {
-    return JSON.parse(job.value.tags) as string[]
-  }
-  catch {
-    return []
-  }
-})
+useHead(() => ({ title: job.value ? `${job.value.title} at ${job.value.company} · Jobs · Job Hunter` : 'Job · Jobs · Job Hunter' }))
+
+const tags = computed(() => uniqueTags(job.value?.tags))
 
 const salaryDisplay = computed(() => {
   if (!job.value) return ''
@@ -194,13 +188,17 @@ onMounted(() => {
 
             <v-card-text>
               <div class="d-flex flex-wrap align-center ga-2 mb-4">
+                <!-- Long multi-office lists wrap to two lines; the whole list is in the tooltip and the accessible name. -->
                 <v-chip
                   v-if="job.location && !/^\s*remote\s*$/i.test(job.location)"
                   variant="outlined"
                   prepend-icon="mdi-map-marker-outline"
                   size="small"
+                  class="job-detail__location"
+                  :title="job.location"
+                  :aria-label="`Location: ${job.location}`"
                 >
-                  {{ job.location }}
+                  <span class="job-detail__location-text">{{ job.location }}</span>
                 </v-chip>
 
                 <v-chip
@@ -330,12 +328,12 @@ onMounted(() => {
             <v-card-text>
               <div
                 v-if="hasHtmlDescription"
-                class="job-description text-body-2"
+                class="job-description tap-inline-links text-body-2"
                 v-html="job.description"
               />
               <div
                 v-else-if="job.postingText"
-                class="job-description job-description--plain text-body-2"
+                class="job-description job-description--plain tap-inline-links text-body-2"
               >
                 {{ job.postingText }}
               </div>
@@ -422,6 +420,29 @@ onMounted(() => {
   white-space: normal;
   overflow-wrap: anywhere;
   line-height: 1.25;
+}
+
+// The chip grows to two lines instead of clipping at the card edge.
+.job-detail__location {
+  height: auto !important;
+  min-height: 24px;
+  max-width: 100%;
+  padding-block: 3px;
+
+  :deep(.v-chip__content) {
+    min-width: 0;
+  }
+}
+
+.job-detail__location-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 
 .job-detail__links {

@@ -5,15 +5,15 @@ import { answerSourceText, answerText, blockerText, clockTime, hostOf } from '~/
 import { plainError } from '#shared/utils/plain-text'
 
 // The employer form as the pipeline filled it: every field's value, where the value came
-// from, and how sure the pipeline is, beside a screenshot of the filled page. In copy mode
-// (submit by hand) each value gets a copy button.
+// from, and how sure the pipeline is, beside a screenshot of the filled page. Every filled value
+// has a Copy button, and Copy all answers takes the lot, because approve on a real employer
+// means Devin pastes them into the employer's form himself.
 const props = defineProps<{
   answers: FormAnswer[]
   snapshot: FormSnapshot | null
   screenshotUrl: string | null
   filledAt: string | null
   formError: string | null
-  copyMode?: boolean
   /** Where the question a field waits on sits on this page ("in Answer first, above"). */
   questionHint?: (questionId: number) => string
 }>()
@@ -46,7 +46,6 @@ function waitingText(a: FormAnswer) {
 const { smAndDown } = useDisplay()
 const fitWidth = ref(false)
 const shotOpen = ref(false)
-const copiedId = ref<string | null>(null)
 // Long answers are clamped to a few lines; tapping "Show all" opens one in full.
 const expanded = ref<Set<string>>(new Set())
 function toggle(id: string) {
@@ -55,20 +54,29 @@ function toggle(id: string) {
   else next.add(id)
   expanded.value = next
 }
-const copyError = ref<string | null>(null)
-
 const fieldsById = computed(() => new Map((props.snapshot?.fields ?? []).map(f => [f.id, f])))
 
-async function copy(a: FormAnswer) {
-  copyError.value = null
-  try {
-    await navigator.clipboard.writeText(answerText(a.value))
-    copiedId.value = a.fieldId
-    setTimeout(() => { if (copiedId.value === a.fieldId) copiedId.value = null }, 1600)
-  }
-  catch {
-    copyError.value = 'The browser blocked the clipboard. Select the text and copy it instead.'
-  }
+/** A filled answer that pastes: a file field's value is only the attachment's name. */
+function copyable(a: FormAnswer) {
+  return !!answerText(a.value) && fieldsById.value.get(a.fieldId)?.type !== 'file'
+}
+
+const filled = computed(() => props.answers.filter(copyable))
+
+/**
+ * Every filled answer as "Label: value", one per line, in form order. A value with line breaks
+ * keeps them and sits under its label with a blank line around it, so it pastes as written.
+ */
+function allAnswersText(): string {
+  const parts = filled.value.map((a) => {
+    const value = answerText(a.value)
+    return value.includes('\n') ? `${a.label}:\n${value}` : `${a.label}: ${value}`
+  })
+  return parts.reduce((out, part, i) => {
+    if (i === 0) return part
+    const spaced = part.includes('\n') || parts[i - 1]!.includes('\n')
+    return `${out}${spaced ? '\n\n' : '\n'}${part}`
+  }, '')
 }
 
 function isLong(a: FormAnswer) {
@@ -90,6 +98,15 @@ function isLong(a: FormAnswer) {
       </div>
     </div>
 
+    <div v-if="filled.length" class="fa__tools">
+      <ReviewCopyButton
+        :text="allAnswersText"
+        variant="tonal"
+        :label="`Copy all answers (${filled.length})`"
+        aria-label="Copy all filled answers, label then value, one per line"
+      />
+    </div>
+
     <div class="fa__layout" :class="{ 'fa__layout--shot': screenshotUrl }">
       <ul class="fa__list">
         <li v-for="a in answers" :key="a.fieldId" class="fa__row">
@@ -109,18 +126,12 @@ function isLong(a: FormAnswer) {
             <span v-if="isDryRunNote(a)">Attached when you approve</span>
             <span v-else-if="a.fillError" class="text-error">Not filled: {{ plainError(a.fillError) }}</span>
           </div>
-          <v-btn
-            v-if="copyMode && answerText(a.value)"
+          <ReviewCopyButton
+            v-if="copyable(a)"
             class="fa__copy"
-            variant="tonal"
-            size="small"
-            height="44"
-            :prepend-icon="copiedId === a.fieldId ? 'mdi-check' : 'mdi-content-copy'"
+            :text="answerText(a.value)"
             :aria-label="`Copy ${a.label}`"
-            @click="copy(a)"
-          >
-            {{ copiedId === a.fieldId ? 'Copied' : 'Copy' }}
-          </v-btn>
+          />
         </li>
       </ul>
 
@@ -133,8 +144,6 @@ function isLong(a: FormAnswer) {
         </figcaption>
       </figure>
     </div>
-
-    <p v-if="copyError" class="fa__copy-error" role="alert">{{ copyError }}</p>
 
     <v-dialog v-model="shotOpen" max-width="960" :fullscreen="smAndDown" scrollable>
       <v-card>
@@ -316,10 +325,10 @@ function isLong(a: FormAnswer) {
     }
   }
 
-  &__copy-error {
-    font-size: 0.8125rem;
-    color: rgb(var(--v-theme-error));
-    margin: 8px 0 0;
+  &__tools {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
   }
 
   &__dialog-head {

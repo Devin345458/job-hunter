@@ -1,5 +1,9 @@
 <script setup lang="ts">
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
+import { properName } from '#shared/utils/names'
+
+// Chip close buttons are 18px targets, so the phone removes a source through the menu instead.
+const isDesktop = useState<boolean>('shell-is-desktop')
 definePageMeta({ layout: 'default' })
 
 const snackbar = useSnackbar()
@@ -326,7 +330,7 @@ onMounted(fetchConfigs)
                     label="Job sources"
                     multiple
                     chips
-                    closable-chips
+                    :closable-chips="isDesktop"
                     hint="If none selected, defaults to JSearch, Adzuna, and Remotive"
                     persistent-hint
                   />
@@ -426,7 +430,7 @@ onMounted(fetchConfigs)
                   variant="tonal"
                   color="secondary"
                 >
-                  {{ source }}
+                  {{ properName(source) }}
                 </v-chip>
               </div>
             </v-card-text>

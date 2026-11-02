@@ -237,7 +237,7 @@ onMounted(() => {
   }
 
   &__ai {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     padding: 1px 6px;
     border-radius: 4px;

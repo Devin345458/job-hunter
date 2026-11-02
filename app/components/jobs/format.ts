@@ -1,5 +1,32 @@
 // Number and label formatting shared by the job components.
 
+/**
+ * A job's stored tags (a JSON array) with repeats removed, case and spacing ignored, first
+ * spelling kept. Some boards list a category twice ("Software Engineering", "software engineering").
+ */
+export function uniqueTags(raw: string | null | undefined): string[] {
+  if (!raw) return []
+  let list: unknown
+  try {
+    list = JSON.parse(raw)
+  }
+  catch {
+    return []
+  }
+  if (!Array.isArray(list)) return []
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const t of list) {
+    if (typeof t !== 'string') continue
+    const tag = t.trim().replace(/\s+/g, ' ')
+    const key = tag.toLowerCase()
+    if (!tag || seen.has(key)) continue
+    seen.add(key)
+    out.push(tag)
+  }
+  return out
+}
+
 export function formatMoney(value: number | null | undefined, currency: string | null = 'USD'): string {
   if (value == null) return ''
   const n = Math.round(value).toLocaleString('en-US')

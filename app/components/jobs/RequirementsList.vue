@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Requirement } from '#shared/types/pipeline'
+import { plainKnowledgeRefs } from '#shared/utils/plain-text'
 
 const props = defineProps<{
   requirements: Requirement[]
@@ -44,7 +45,7 @@ const counts = computed(() => {
                 {{ r.text }}
               </div>
               <div class="text-caption text-medium-emphasis">
-                {{ STATUS[r.status].label }}{{ r.evidence ? `, from ${r.evidence}` : '' }}
+                {{ STATUS[r.status].label }}{{ r.evidence ? `, from ${plainKnowledgeRefs(r.evidence)}` : '' }}
               </div>
             </div>
           </div>

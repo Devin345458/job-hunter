@@ -39,6 +39,10 @@ function isActiveRoute(item: NavItem) {
 
 const activePageTitle = computed(() => navItems.find(isActiveRoute)?.title || 'Job Hunter')
 
+// Every page gets a tab title: the section name here, which a page's own useHead replaces
+// (a page's head entry is registered after the layout's, so it wins).
+useHead({ title: () => (activePageTitle.value === 'Job Hunter' ? 'Job Hunter' : `${activePageTitle.value} · Job Hunter`) })
+
 // First paint guess from the request, so a phone does not render the desktop drawer and then
 // jump. The media query below corrects it once the page is interactive.
 const ua = import.meta.server ? useRequestHeaders(['user-agent', 'sec-ch-ua-mobile']) : {}
@@ -338,7 +342,7 @@ function badgeFor(item: NavItem): number {
   }
 
   &__bottom-label {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 500;
     margin-top: 2px;
     white-space: nowrap;

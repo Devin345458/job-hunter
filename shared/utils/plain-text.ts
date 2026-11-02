@@ -100,6 +100,65 @@ export function plainQuestionRefs(text: string | null | undefined): string {
     .replace(/\bquestion #\d+/gi, 'a question on the Questions page')
 }
 
+// Knowledge base categories. Facts about Devin read as "your Full Name"; list entries (one skill,
+// one job, one project) read as "your Sentry entry".
+const FACT_CATEGORIES = 'profile|personal|preferences?'
+const ENTRY_CATEGORIES = 'skills?|experience|projects?|education|certifications?|facts?|other'
+// "category/" (or "category:" glued to the key), not inside a path or URL.
+const KNOWLEDGE_REF = new RegExp(`(?<![\\w./-])(${FACT_CATEGORIES}|${ENTRY_CATEGORIES})(?:/|:(?=[A-Z0-9]))`, 'gi')
+// Small words that sit inside a key ("Ruby on Rails", "Game dev or animation").
+const KEY_CONNECTORS = new Set(['of', 'and', 'or', 'on', 'the', 'in', 'a', 'an', 'for', 'to', 'with', '&', '-'])
+
+/** Where a key that starts at `start` ends: at , ; ( ) " a line break or the end, or before a sentence word ("mentions United States"). */
+function keyEnd(text: string, start: number): number {
+  const rest = text.slice(start)
+  const stop = /[,;()"“”\n]|\s\(/.exec(rest)
+  // The next reference starts a new key ("skill/AI coding tools and skill/Ruby on Rails").
+  const nextRef = new RegExp(KNOWLEDGE_REF.source, 'i').exec(rest)
+  const end = start + Math.min(stop ? stop.index : rest.length, nextRef ? nextRef.index : rest.length)
+  const span = text.slice(start, end)
+  // A lowercase word that more capitalized words follow is the sentence going on, not the key:
+  // "Work Authorization mentions United States". Lowercase words at the end are the key's own
+  // ("AI coding tools"), and so are connectors ("Ruby on Rails").
+  const words = [...span.matchAll(/\S+/g)]
+  let cut = words.length
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i]![0]
+    if (/^[a-z]/.test(w) && !KEY_CONNECTORS.has(w) && words.slice(i + 1).some(n => /^[A-Z0-9]/.test(n[0]))) {
+      cut = i
+      break
+    }
+  }
+  // A connector left at the end joins the key to what follows ("skill/X and skill/Y").
+  while (cut > 1 && KEY_CONNECTORS.has(words[cut - 1]![0])) cut--
+  return cut < words.length ? start + words[cut]!.index! : end
+}
+
+/**
+ * Knowledge base references as plain words. Stored notes and answer sources name entries the
+ * way the database does ("parsed from personal/Street Address", "initials of profile/Full Name",
+ * "the source is skill/Sentry"); on screen they read "parsed from your Street Address", "initials
+ * of your Full Name", "the source is your Sentry entry". Text without a reference comes back unchanged.
+ */
+export function plainKnowledgeRefs(text: string | null | undefined): string {
+  if (!text) return ''
+  let out = ''
+  let last = 0
+  KNOWLEDGE_REF.lastIndex = 0
+  for (let m = KNOWLEDGE_REF.exec(text); m; m = KNOWLEDGE_REF.exec(text)) {
+    const keyStart = m.index + m[0].length
+    const end = keyEnd(text, keyStart)
+    const key = text.slice(keyStart, end).trim()
+    if (!key) continue
+    const isFact = new RegExp(`^(?:${FACT_CATEGORIES})$`, 'i').test(m[1]!)
+    const trailing = text.slice(keyStart, end).match(/\s*$/)![0]
+    out += `${text.slice(last, m.index)}your ${key}${isFact ? '' : ' entry'}${trailing}`
+    last = end
+    KNOWLEDGE_REF.lastIndex = end
+  }
+  return out + text.slice(last)
+}
+
 /** Upper-cases the first letter when the first word is all lowercase; "hCaptcha" and "iCIMS" stay as written. */
 export function capitalize(text: string): string {
   const first = /^\S*/.exec(text)![0]

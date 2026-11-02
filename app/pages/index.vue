@@ -36,16 +36,33 @@ function defaultId(): number | null {
   return groups.value.decide[0]?.applicationId ?? groups.value.attention[0]?.applicationId ?? null
 }
 
+/** Where the open card sits in the whole queue, for previous and next. */
+const orderedIndex = computed(() => ordered.value.findIndex(x => x.applicationId === selectedId.value))
+
+const GROUP_POSITION: Record<'decide' | 'attention' | 'sending' | 'sent', string> = {
+  decide: 'Card',
+  attention: 'Needs you:',
+  sending: 'Sending:',
+  sent: 'Submitted:',
+}
+
+/**
+ * The open card's place within its own group, so the phone header agrees with the count beside
+ * it: "10 left to decide" sits over "Card 1 of 10", not "Card 1 of 12" counting sent ones too.
+ */
 const position = computed(() => {
-  const list = ordered.value
-  const i = list.findIndex(x => x.applicationId === selectedId.value)
-  return { index: i, total: list.length }
+  for (const key of ['decide', 'attention', 'sending', 'sent'] as const) {
+    const list = groups.value[key]
+    const i = list.findIndex(x => x.applicationId === selectedId.value)
+    if (i >= 0) return { text: `${GROUP_POSITION[key]} ${i + 1} of ${list.length}` }
+  }
+  return null
 })
 
 function step(delta: number) {
   const list = ordered.value
   if (!list.length) return
-  const i = position.value.index
+  const i = orderedIndex.value
   const next = list[(i + delta + list.length) % list.length]
   if (next) select(next.applicationId)
 }
@@ -94,8 +111,9 @@ async function approve() {
     await queue.approve(item.applicationId)
     health.refresh()
     const next = wasRetry ? null : nextDecideAfter(item.applicationId, snapshot)
+    // The phone notice sits in the app bar and keeps to two lines; the queue button shows Sending.
     snackbar.notify(
-      `${wasRetry ? 'Retrying' : 'Approved'}: ${item.job.title} at ${item.job.company}. Following it under Sending.`,
+      `${wasRetry ? 'Retrying' : 'Approved'}: ${item.job.title} at ${item.job.company}.${isDesktop.value ? ' Following it under Sending.' : ''}`,
       'success',
       { timeout: 6000, action: next ? { text: 'Show', handler: () => select(item.applicationId) } : undefined },
     )
@@ -281,7 +299,7 @@ const leftLabel = computed(() => {
       <div class="rv__mhead">
         <div>
           <p class="rv__left tabular" :class="{ 'rv__left--done': !groups.decide.length }">{{ leftLabel }}</p>
-          <p v-if="position.index >= 0" class="rv__pos tabular">Card {{ position.index + 1 }} of {{ position.total }}</p>
+          <p v-if="position" class="rv__pos tabular">{{ position.text }}</p>
         </div>
         <div class="rv__nav">
           <v-btn icon="mdi-chevron-left" variant="tonal" width="44" height="44" aria-label="Previous card" @click="step(-1)" />
@@ -386,7 +404,7 @@ const leftLabel = computed(() => {
   &__keys {
     margin: auto 0 0;
     padding: 8px;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     color: rgba(var(--v-theme-on-surface), var(--v-disabled-opacity));
   }
 
@@ -401,11 +419,20 @@ const leftLabel = computed(() => {
     gap: 12px;
   }
 
+  // Phone: the count and Previous, Next, Queue stay pinned under the app bar while the card
+  // scrolls, so moving on never means scrolling back to the top. One 44px row plus padding.
   &__mhead {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+    position: sticky;
+    top: var(--v-layout-top, 56px);
+    z-index: 3;
+    margin: -8px -16px 0;
+    padding: 6px 16px;
+    background: rgb(var(--v-theme-background));
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 
   &__pos {

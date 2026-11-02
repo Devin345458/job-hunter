@@ -261,7 +261,7 @@ const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/
   &__panel--info &__panel-title { color: rgb(var(--v-theme-info)); }
 
   &__sandbox {
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
     padding: 1px 6px;
     border-radius: 4px;

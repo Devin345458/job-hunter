@@ -84,7 +84,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
   <div class="comp">
     <div class="comp__head">
       <div>
-        <div class="comp__figure tabular">{{ headline }}</div>
+        <div class="comp__figure">{{ headline }}</div>
         <div class="comp__label">{{ headlineLabel }}</div>
       </div>
       <div class="comp__verdict" :class="`comp__verdict--${verdict.tone}`">
@@ -120,13 +120,13 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
       <dl class="comp__lines">
         <div class="comp__line">
           <dt>Base salary</dt>
-          <dd class="tabular">{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'Not stated' }}</dd>
+          <dd>{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'Not stated' }}</dd>
         </div>
         <div class="comp__line">
           <dt>Bonus</dt>
           <dd>
             <template v-if="comp?.bonus">
-              <span class="tabular">{{ comp.bonus.estimatedAnnual !== null ? money(comp.bonus.estimatedAnnual, currency) : 'Amount not stated' }}</span>
+              <span>{{ comp.bonus.estimatedAnnual !== null ? money(comp.bonus.estimatedAnnual, currency) : 'Amount not stated' }}</span>
               <span class="comp__desc">{{ comp.bonus.description }}</span>
               <q class="comp__quote">{{ comp.bonus.quote }}</q>
             </template>
@@ -137,7 +137,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
           <dt>Equity</dt>
           <dd>
             <template v-if="comp?.equity">
-              <span class="tabular">{{ comp.equity.estimatedAnnual !== null ? money(comp.equity.estimatedAnnual, currency) : 'Amount not stated' }}</span>
+              <span>{{ comp.equity.estimatedAnnual !== null ? money(comp.equity.estimatedAnnual, currency) : 'Amount not stated' }}</span>
               <span class="comp__desc">{{ comp.equity.description }}</span>
               <q class="comp__quote">{{ comp.equity.quote }}</q>
             </template>
@@ -151,7 +151,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
               <li v-for="(b, i) in benefits" :key="i">
                 <div class="comp__benefit-row">
                   <span class="comp__benefit-name">{{ b.name }}</span>
-                  <span class="tabular comp__benefit-value">{{ b.estimatedAnnualValue !== null ? `${money(b.estimatedAnnualValue, currency)}/yr` : 'not valued' }}</span>
+                  <span class="comp__benefit-value">{{ b.estimatedAnnualValue !== null ? `${money(b.estimatedAnnualValue, currency)}/yr` : 'not valued' }}</span>
                 </div>
                 <span v-if="b.detail" class="comp__desc">{{ b.detail }}</span>
                 <q class="comp__quote">{{ b.quote }}</q>
@@ -245,7 +245,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
     left: 50%;
     transform: translateX(-50%);
     white-space: nowrap;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     font-weight: 600;
   }
 
@@ -256,7 +256,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
     top: 30px;
     display: flex;
     justify-content: space-between;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     color: rgba(var(--v-theme-on-surface), var(--v-disabled-opacity));
   }
 

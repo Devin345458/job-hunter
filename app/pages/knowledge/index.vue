@@ -79,7 +79,7 @@ onMounted(() => fetchEntries())
 </script>
 
 <template>
-  <div class="knowledge-page fade-in has-floating-action">
+  <div class="knowledge-page fade-in">
     <div class="page-header page-header--split">
       <div>
         <h1 class="text-h4 page-header__title">Knowledge Base</h1>
@@ -87,7 +87,8 @@ onMounted(() => fetchEntries())
           Your professional profile in structured form. The AI uses this to match jobs, tailor resumes, and generate interview prep. The more complete your profile, the better the results.
         </p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" class="d-none d-sm-flex" @click="openEditor()">
+      <!-- In the header on every screen. On a phone it used to float over the list cards. -->
+      <v-btn color="primary" prepend-icon="mdi-plus" class="knowledge-page__add" @click="openEditor()">
         Add entry
       </v-btn>
     </div>
@@ -179,7 +180,17 @@ onMounted(() => fetchEntries())
 
       <v-row class="stagger-in">
         <v-col v-for="entry in groupEntries" :key="entry.id" cols="12" md="6" lg="4">
-          <v-card variant="outlined" class="entry-card" @click="openEditor(entry)">
+          <!-- A real button for the keyboard: Tab reaches each entry, Enter or Space opens it. -->
+          <v-card
+            variant="outlined"
+            class="entry-card"
+            role="button"
+            tabindex="0"
+            :aria-label="`Edit ${entry.key}`"
+            @click="openEditor(entry)"
+            @keydown.enter.prevent="openEditor(entry)"
+            @keydown.space.prevent="openEditor(entry)"
+          >
             <v-card-title class="text-subtitle-2 font-weight-medium pb-1">
               {{ entry.key }}
             </v-card-title>
@@ -213,17 +224,6 @@ onMounted(() => fetchEntries())
       </v-row>
     </div>
 
-    <!-- Phone: labeled, and above the bottom bar (global .floating-action) -->
-    <v-btn
-      color="primary"
-      size="large"
-      prepend-icon="mdi-plus"
-      class="floating-action d-sm-none"
-      @click="openEditor()"
-    >
-      Add entry
-    </v-btn>
-
     <!-- The editor renders its own dialog. Mounting it per open gives a fresh form each time. -->
     <KnowledgeEntryEditor
       v-if="showEditor"
@@ -237,6 +237,12 @@ onMounted(() => fetchEntries())
 </template>
 
 <style scoped>
+@media (max-width: 599.98px) {
+  .knowledge-page__add {
+    width: 100%;
+  }
+}
+
 .entry-card {
   cursor: pointer;
   transition: transform 0.15s, box-shadow 0.15s;
