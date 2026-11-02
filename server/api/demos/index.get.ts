@@ -10,5 +10,11 @@ export default defineEventHandler((event) => {
   const rows = all
     ? db.select().from(demoProjects).orderBy(desc(demoProjects.id)).all()
     : db.select().from(demoProjects).where(ne(demoProjects.status, 'discarded')).orderBy(desc(demoProjects.id)).all()
-  return { demos: rows.map(d => ({ ...toDemoDetail(d), buildLog: null, gap: null })) }
+  return {
+    demos: rows.map((d) => {
+      const detail = toDemoDetail(d)
+      // The list polls while a build runs; the log, the gap analysis, and the test list stay on the detail page.
+      return { ...detail, buildLog: null, gap: null, preview: { ...detail.preview, tests: null } }
+    }),
+  }
 })

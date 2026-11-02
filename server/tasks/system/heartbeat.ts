@@ -10,6 +10,7 @@ export default defineTask({
     description: 'Prove the scheduler fires in the running container',
   },
   async run({ payload }) {
+    if (scheduleSkipped(payload as Record<string, unknown> | undefined)) return { result: { skipped: 'the schedule is off on this server' } }
     const outcome = await withRun('system:heartbeat', triggerOf(payload), async () => {
       const removed = useDb().delete(pipelineRuns)
         .where(and(eq(pipelineRuns.task, 'system:heartbeat'), lt(pipelineRuns.startedAt, sql`datetime('now', '-2 days')`)))

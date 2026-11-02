@@ -11,12 +11,19 @@ const props = defineProps<{
   mode: 'pending' | 'answered' | 'skipped'
   /** The answer value being saved right now, so only that button spins. */
   saving?: string | null
+  /** This question is the one loaded in the chat panel. */
+  asking?: boolean
+  /** A draft from the chat's "Use this draft". Each new nonce puts its text in the answer box; nothing is saved until Save. */
+  prefill?: { text: string; nonce: number } | null
 }>()
 
 const emit = defineEmits<{
   answer: [answer: string]
   skip: []
   reopen: []
+  ask: []
+  /** What is in the answer box while it is open, so the chat can ask before a draft replaces it. */
+  boxText: [text: string]
 }>()
 
 const COMP_FLOOR_SUBJECT = 'compensation floor'
@@ -97,6 +104,16 @@ function send(value: string) {
 // Leave edit mode once a saved answer comes back (a changed answer keeps status 'answered').
 watch(() => [props.question.status, props.question.answer, props.question.answeredAt], () => {
   editing.value = false
+})
+
+watch(() => (showInput.value ? draft.value : ''), text => emit('boxText', text))
+
+// "Use this draft" in the chat: the draft goes into the answer box for Devin to edit and save.
+watch(() => props.prefill?.nonce, () => {
+  const text = props.prefill?.text
+  if (!text || props.mode === 'skipped') return
+  if (props.mode === 'answered' || inputType.value === 'long') editing.value = true
+  draft.value = text
 })
 </script>
 
@@ -200,19 +217,24 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
           <v-btn :color="numberValid ? 'primary' : undefined" :variant="numberValid ? 'flat' : 'tonal'" type="submit" height="48" :loading="busy" :disabled="!numberValid">Save</v-btn>
         </form>
 
-        <form v-else-if="inputType === 'text'" class="d-flex flex-wrap align-start ga-2" @submit.prevent="send(draft)">
-          <v-text-field
+        <!-- Written answers can run to several paragraphs and bullet lines, so the box grows with them.
+             Enter adds a line; only Save sends. 4,000 characters is the server's limit. -->
+        <div v-else-if="inputType === 'text'" class="d-flex flex-column ga-2">
+          <v-textarea
             v-model="draft"
-            placeholder="Short answer"
+            placeholder="Your answer"
+            rows="3"
+            auto-grow
+            maxlength="4000"
+            counter="4000"
+            persistent-counter
             autocomplete="off"
-            enterkeyhint="done"
-            maxlength="500"
-            class="question-card__field"
-            hide-details
             :disabled="busy"
           />
-          <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'" type="submit" height="48" :loading="busy" :disabled="!draft.trim()">Save</v-btn>
-        </form>
+          <div class="d-flex justify-end">
+            <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'" height="44" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">Save</v-btn>
+          </div>
+        </div>
 
         <template v-else>
           <v-btn
@@ -245,6 +267,17 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
     </v-card-text>
 
     <v-card-actions v-if="mode === 'pending' || mode === 'skipped' || (mode === 'answered' && !(editing && inputType === 'long'))" class="px-4 pb-3 pt-0 question-card__actions">
+      <v-btn
+        variant="text"
+        size="small"
+        :color="asking ? 'primary' : undefined"
+        prepend-icon="mdi-chat-question-outline"
+        :aria-pressed="!!asking"
+        class="question-card__ask"
+        @click="emit('ask')"
+      >
+        Ask about this
+      </v-btn>
       <v-spacer />
       <v-btn v-if="mode === 'pending'" variant="text" size="small" prepend-icon="mdi-skip-next" :disabled="busy" @click="emit('skip')">
         Skip

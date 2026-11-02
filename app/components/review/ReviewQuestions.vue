@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { useDisplay } from 'vuetify'
 import type { QuestionView } from '#shared/types/pipeline'
 import { plainKnowledgeRefs } from '#shared/utils/plain-text'
+import type { ChatQuestion } from '~/components/questions/chat-store'
 
-// Open questions answered in place. Yes or no is one tap; text, numbers, and choices take one
-// short field and Save. Answers go through PATCH /api/questions/:id via the parent.
+// Open questions answered in place. Yes or no and choices are one tap; numbers take one short
+// field and written answers a growing box, each with Save. Answers go through
+// PATCH /api/questions/:id via the parent. Ask about this opens the same chat as /questions
+// in a dialog here, because the review card has no room for a side panel.
 const props = defineProps<{
   questions: QuestionView[]
   /** Question id currently saving. */
@@ -28,38 +32,101 @@ function submitText(q: QuestionView) {
 function inputMode(q: QuestionView) {
   return q.answerType === 'number' ? 'decimal' : 'text'
 }
+
+/** Same answer buttons as /questions: experience questions take Some experience too. */
+function yesNoOptions(q: QuestionView) {
+  return q.kind === 'knows' || q.kind === 'has_done' ? ['Yes', 'Some experience', 'No'] : ['Yes', 'No']
+}
+
+const YES_NO_ICONS: Record<string, string> = { 'Yes': 'mdi-check', 'Some experience': 'mdi-circle-half-full', 'No': 'mdi-close' }
+
+// ── Ask Claude ──
+const { xs } = useDisplay()
+const root = ref<HTMLElement | null>(null)
+const chatOpen = ref(false)
+/** A copy of the question the chat is about. It stays after an answer removes it from the list. */
+const chatQuestion = ref<ChatQuestion | null>(null)
+/** The answer the chat sent, until the question leaves the open list. */
+const chatAnswer = ref<string | null>(null)
+
+function toChatQuestion(q: QuestionView): ChatQuestion {
+  return {
+    id: q.id,
+    question: q.question,
+    status: q.status,
+    answer: q.answer,
+    answerType: q.answerType,
+    choices: q.choices,
+    legacy: !q.kind && !q.answerType,
+  }
+}
+
+function askAbout(q: QuestionView) {
+  chatQuestion.value = toChatQuestion(q)
+  chatAnswer.value = null
+  chatOpen.value = true
+}
+
+function answerFromChat(value: string) {
+  const q = chatQuestion.value
+  if (!q) return
+  chatAnswer.value = value
+  emit('answer', q.id, value)
+}
+
+// The queue drops a question from the open list once its answer is saved.
+watch(() => props.questions.map(q => q.id), (ids) => {
+  const q = chatQuestion.value
+  if (q && chatAnswer.value && !ids.includes(q.id)) {
+    chatQuestion.value = { ...q, status: 'answered', answer: chatAnswer.value }
+    chatAnswer.value = null
+  }
+})
+
+function useDraft(text: string) {
+  const q = chatQuestion.value
+  if (!q) return
+  drafts[q.id] = text
+  chatOpen.value = false
+  nextTick(() => {
+    root.value?.querySelector(`[data-question-id="${q.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
 </script>
 
 <template>
-  <div class="qs">
-    <article v-for="q in questions" :key="q.id" class="qs__item" :class="{ 'qs__item--blocking': q.blocking }">
+  <div ref="root" class="qs">
+    <article v-for="q in questions" :key="q.id" class="qs__item" :class="{ 'qs__item--blocking': q.blocking }" :data-question-id="q.id">
       <div class="qs__top">
         <span v-if="q.blocking" class="qs__flag">Blocks approve</span>
         <span v-else class="qs__flag qs__flag--soft">Optional</span>
+        <v-btn
+          variant="text"
+          size="small"
+          :color="chatOpen && chatQuestion?.id === q.id ? 'primary' : undefined"
+          prepend-icon="mdi-chat-question-outline"
+          class="qs__ask"
+          @click="askAbout(q)"
+        >
+          Ask about this
+        </v-btn>
       </div>
       <h4 class="qs__question">{{ q.question }}</h4>
       <p v-if="q.context" class="qs__context">{{ plainKnowledgeRefs(q.context) }}</p>
 
       <div v-if="q.answerType === 'yes_no'" class="qs__actions">
         <v-btn
+          v-for="opt in yesNoOptions(q)"
+          :key="opt"
           variant="tonal"
           :disabled="savingId !== null"
           min-width="96"
           height="44"
-          prepend-icon="mdi-check"
-          @click="emit('answer', q.id, 'Yes')"
+          :prepend-icon="YES_NO_ICONS[opt]"
+          class="qs__yes-no"
+          @click="emit('answer', q.id, opt)"
         >
-          Yes
-        </v-btn>
-        <v-btn
-          variant="tonal"
-          :disabled="savingId !== null"
-          min-width="96"
-          height="44"
-          prepend-icon="mdi-close"
-          @click="emit('answer', q.id, 'No')"
-        >
-          No
+          {{ opt }}
         </v-btn>
         <v-btn v-if="!q.blocking" variant="text" height="44" :disabled="savingId !== null" @click="emit('skip', q.id)">Skip</v-btn>
       </div>
@@ -80,10 +147,40 @@ function inputMode(q: QuestionView) {
         <v-btn v-if="!q.blocking" variant="text" height="44" :disabled="savingId !== null" @click="emit('skip', q.id)">Skip</v-btn>
       </div>
 
+      <!-- Written answers can run to several paragraphs and bullet lines: the box grows with them,
+           Enter adds a line, and only Save sends. 4,000 characters is the server's limit. -->
+      <div v-else-if="q.answerType !== 'number'" class="qs__form qs__form--text">
+        <v-textarea
+          v-model="drafts[q.id]"
+          label="Your answer"
+          rows="3"
+          auto-grow
+          maxlength="4000"
+          counter="4000"
+          persistent-counter
+          autocomplete="off"
+          density="comfortable"
+          class="qs__textarea"
+        />
+        <div class="qs__form-actions">
+          <v-btn v-if="!q.blocking" variant="text" height="44" :disabled="savingId !== null" @click="emit('skip', q.id)">Skip</v-btn>
+          <v-btn
+            :color="(drafts[q.id] ?? '').trim() ? 'primary' : undefined"
+            :variant="(drafts[q.id] ?? '').trim() ? 'flat' : 'tonal'"
+            height="44"
+            :loading="savingId === q.id"
+            :disabled="!(drafts[q.id] ?? '').trim() || (savingId !== null && savingId !== q.id)"
+            @click="submitText(q)"
+          >
+            Save
+          </v-btn>
+        </div>
+      </div>
+
       <form v-else class="qs__form" @submit.prevent="submitText(q)">
         <v-text-field
           v-model="drafts[q.id]"
-          :label="q.answerType === 'number' ? 'Number' : 'Your answer'"
+          label="Number"
           :inputmode="inputMode(q)"
           enterkeyhint="send"
           autocomplete="off"
@@ -109,6 +206,20 @@ function inputMode(q: QuestionView) {
       <v-progress-circular indeterminate size="14" width="2" />
       Updating the form answers with what you said
     </div>
+
+    <v-dialog v-model="chatOpen" :fullscreen="xs" max-width="560" class="qs-chat" aria-label="Ask Claude">
+      <QuestionsChatPanel
+        variant="dialog"
+        class="qs-chat__panel"
+        :question="chatQuestion"
+        :saving="chatQuestion && savingId === chatQuestion.id ? chatAnswer : null"
+        :box-text="chatQuestion ? drafts[chatQuestion.id] ?? '' : ''"
+        @answer="answerFromChat"
+        @use-draft="useDraft"
+        @detach="chatQuestion = null"
+        @close="chatOpen = false"
+      />
+    </v-dialog>
   </div>
 </template>
 
@@ -131,7 +242,24 @@ function inputMode(q: QuestionView) {
   }
 
   &__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 4px;
+  }
+
+  // A text button in the flag row; 44px tall so it is easy to tap on a phone.
+  &__ask {
+    min-height: 44px;
+    margin-right: -8px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__yes-no {
+    text-transform: none;
+    letter-spacing: normal;
   }
 
   &__flag {
@@ -192,6 +320,21 @@ function inputMode(q: QuestionView) {
     min-width: 0;
   }
 
+  &__form--text {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  &__textarea {
+    width: 100%;
+  }
+
+  &__form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
   &__refreshing {
     display: flex;
     align-items: center;
@@ -199,5 +342,17 @@ function inputMode(q: QuestionView) {
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
+}
+</style>
+
+<style lang="scss">
+// The dialog content is teleported out of the card, so these rules cannot be scoped.
+.v-dialog.qs-chat .question-chat.qs-chat__panel {
+  height: min(720px, calc(100dvh - 48px));
+}
+
+.v-dialog.qs-chat.v-dialog--fullscreen .question-chat.qs-chat__panel {
+  height: 100%;
+  height: 100dvh;
 }
 </style>

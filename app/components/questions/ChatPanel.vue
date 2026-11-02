@@ -1,0 +1,501 @@
+<script setup lang="ts">
+import { chatThreadKey, useQuestionChat, type ChatQuestion } from './chat-store'
+
+// Ask Claude about a question before answering it. Shown as a sticky column beside the question
+// list on wide screens and inside a dialog on narrower ones; both read the same conversations.
+// A suggested answer is only a button: nothing is saved until Devin taps it. A draft only goes
+// into the card's answer box for him to edit and save.
+
+const props = defineProps<{
+  /** The question the chat is about. Null for a general question. */
+  question: ChatQuestion | null
+  /** The answer value being saved for that question right now. */
+  saving?: string | null
+  /** What is in that question's answer box now, so "Use this draft" can ask before replacing it. */
+  boxText?: string
+  variant: 'panel' | 'dialog'
+}>()
+
+const emit = defineEmits<{
+  answer: [value: string]
+  useDraft: [text: string]
+  detach: []
+  close: []
+}>()
+
+const chat = useQuestionChat()
+const text = ref('')
+const log = ref<HTMLElement | null>(null)
+const input = ref<{ focus: () => void } | null>(null)
+
+const key = computed(() => chatThreadKey(props.question?.id))
+const messages = computed(() => chat.threads.value[key.value] ?? [])
+const busy = computed(() => !!chat.sending.value[key.value])
+const job = computed(() => props.question?.job ?? props.question?.waitingApplications?.[0] ?? null)
+const writesAnswer = computed(() => {
+  const q = props.question
+  if (!q) return false
+  if (q.legacy) return true
+  if (q.answerType === 'yes_no' || q.answerType === 'number') return false
+  return !(q.answerType === 'choice' && q.choices?.length)
+})
+
+const starters = computed(() => {
+  if (!props.question) return []
+  if (writesAnswer.value) return ['What does this mean?', 'Help me answer this']
+  return ['What does this mean?', 'What would count as a yes?']
+})
+
+const placeholder = computed(() => props.question ? 'Ask about this question' : 'Ask about any term')
+
+function submit(value = text.value) {
+  const v = value.trim()
+  if (!v || busy.value) return
+  text.value = ''
+  chat.send(props.question?.id ?? null, v)
+}
+
+function onEnter(e: KeyboardEvent) {
+  if (e.isComposing) return
+  e.preventDefault()
+  submit()
+}
+
+/** The suggestion is already the saved answer. */
+function isSaved(value: string) {
+  return props.question?.status === 'answered' && (props.question.answer ?? '').trim().toLowerCase() === value.toLowerCase()
+}
+
+function canSuggest(value: string) {
+  return props.question?.status === 'pending' || isSaved(value)
+}
+
+const canUseDraft = computed(() => !!props.question && props.question.status !== 'skipped')
+
+/** The draft message waiting on "Replace what you typed?". */
+const confirmingDraft = ref<string | null>(null)
+
+function useDraft(id: string, draft: string) {
+  const typed = (props.boxText ?? '').trim()
+  if (typed && typed !== draft.trim() && confirmingDraft.value !== id) {
+    confirmingDraft.value = id
+    return
+  }
+  confirmingDraft.value = null
+  emit('useDraft', draft)
+}
+
+watch(key, () => {
+  confirmingDraft.value = null
+})
+
+function scrollToEnd() {
+  nextTick(() => {
+    const el = log.value
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
+
+watch(() => [messages.value.length, busy.value, key.value], scrollToEnd)
+
+onMounted(() => {
+  chat.restore()
+  scrollToEnd()
+})
+
+defineExpose({ focus: () => input.value?.focus() })
+</script>
+
+<template>
+  <section class="question-chat" :class="`question-chat--${variant}`" aria-label="Ask Claude">
+    <header class="question-chat__head">
+      <v-icon icon="mdi-chat-question-outline" size="20" class="question-chat__head-icon" />
+      <h2 class="question-chat__title">Ask Claude</h2>
+      <v-spacer />
+      <v-btn
+        variant="text"
+        size="small"
+        class="question-chat__head-btn"
+        prepend-icon="mdi-broom"
+        :disabled="!messages.length || busy"
+        @click="chat.clear(question?.id ?? null)"
+      >
+        Clear
+      </v-btn>
+      <v-btn
+        v-if="variant === 'dialog'"
+        variant="text"
+        size="small"
+        class="question-chat__head-btn"
+        icon="mdi-close"
+        aria-label="Close the chat"
+        @click="emit('close')"
+      />
+    </header>
+
+    <div class="question-chat__about">
+      <template v-if="question">
+        <div class="question-chat__about-label text-caption text-medium-emphasis">About this question</div>
+        <p class="question-chat__about-question text-body-2 font-weight-medium">{{ question.question }}</p>
+        <div v-if="job" class="text-caption text-medium-emphasis question-chat__about-job">
+          {{ job.title }} at {{ job.company }}
+        </div>
+        <v-btn
+          variant="text"
+          size="small"
+          class="question-chat__general"
+          prepend-icon="mdi-swap-horizontal"
+          @click="emit('detach')"
+        >
+          Ask a general question instead
+        </v-btn>
+      </template>
+      <template v-else>
+        <div class="question-chat__about-label text-caption text-medium-emphasis">General question</div>
+        <p class="text-body-2 text-medium-emphasis question-chat__hint">
+          Ask about a term or a requirement you do not recognize, for example "what does HUD 202D mean?" To ask about one question, use Ask about this on its card.
+        </p>
+      </template>
+    </div>
+
+    <div ref="log" class="question-chat__log" role="log" aria-live="polite" aria-label="Conversation">
+      <div v-if="!messages.length && !busy" class="question-chat__empty">
+        <p class="text-body-2 text-medium-emphasis">
+          {{ question
+            ? 'Claude explains what the employer is asking and what would count, using only your knowledge base as facts about you. It never answers for you.'
+            : 'Claude explains in plain words. It uses your knowledge base as the only facts about you.' }}
+        </p>
+        <div v-if="starters.length" class="question-chat__starters">
+          <v-btn
+            v-for="s in starters"
+            :key="s"
+            variant="tonal"
+            class="question-chat__starter"
+            @click="submit(s)"
+          >
+            {{ s }}
+          </v-btn>
+        </div>
+      </div>
+
+      <div
+        v-for="m in messages"
+        :key="m.id"
+        class="question-chat__msg"
+        :class="`question-chat__msg--${m.role}`"
+      >
+        <template v-if="m.role === 'notice'">
+          <v-icon icon="mdi-alert-circle-outline" size="18" class="question-chat__notice-icon" />
+          <span class="question-chat__text">{{ m.content }}</span>
+        </template>
+        <template v-else>
+          <div class="question-chat__text">{{ m.content }}</div>
+
+          <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
+            <div class="question-chat__draft-label text-caption text-medium-emphasis">Draft answer</div>
+            <div class="question-chat__draft-text">{{ m.draft }}</div>
+            <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
+              <span class="text-body-2">Replace what you already typed in the answer box?</span>
+              <div class="question-chat__confirm-actions">
+                <v-btn color="primary" variant="flat" class="question-chat__action" @click="useDraft(m.id, m.draft!)">Replace</v-btn>
+                <v-btn variant="text" class="question-chat__action" @click="confirmingDraft = null">Keep mine</v-btn>
+              </div>
+            </div>
+            <div v-else-if="canUseDraft" class="question-chat__draft-actions">
+              <v-btn color="primary" variant="tonal" class="question-chat__action" prepend-icon="mdi-text-box-edit-outline" @click="useDraft(m.id, m.draft!)">
+                Use this draft
+              </v-btn>
+              <span class="text-caption text-medium-emphasis">Puts it in the answer box on the card. Nothing is saved until you press Save.</span>
+            </div>
+          </div>
+
+          <div v-if="m.role === 'assistant' && m.suggestedAnswer && canSuggest(m.suggestedAnswer)" class="question-chat__suggest">
+            <div v-if="isSaved(m.suggestedAnswer)" class="question-chat__saved text-body-2">
+              <v-icon icon="mdi-check-circle-outline" size="18" />
+              Answered: {{ m.suggestedAnswer }}
+            </div>
+            <template v-else>
+              <v-btn
+                color="primary"
+                variant="tonal"
+                class="question-chat__action"
+                prepend-icon="mdi-reply-outline"
+                :loading="saving === m.suggestedAnswer"
+                :disabled="!!saving && saving !== m.suggestedAnswer"
+                @click="emit('answer', m.suggestedAnswer!)"
+              >
+                Answer: {{ m.suggestedAnswer }}
+              </v-btn>
+              <span class="text-caption text-medium-emphasis">Saves this answer to your knowledge base.</span>
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <div v-if="busy" class="question-chat__msg question-chat__msg--assistant question-chat__thinking">
+        <v-progress-circular indeterminate size="16" width="2" color="primary" />
+        <span class="text-body-2 text-medium-emphasis">Claude is thinking</span>
+      </div>
+    </div>
+
+    <form class="question-chat__compose" @submit.prevent="submit()">
+      <v-textarea
+        ref="input"
+        v-model="text"
+        :placeholder="placeholder"
+        rows="1"
+        auto-grow
+        max-rows="5"
+        maxlength="4000"
+        hide-details
+        enterkeyhint="send"
+        aria-label="Message to Claude"
+        class="question-chat__input"
+        @keydown.enter.exact="onEnter"
+      />
+      <v-btn
+        type="submit"
+        color="primary"
+        :variant="text.trim() ? 'flat' : 'tonal'"
+        class="question-chat__send"
+        :disabled="!text.trim() || busy"
+        :loading="busy"
+        aria-label="Send"
+        icon="mdi-send"
+      />
+    </form>
+  </section>
+</template>
+
+<style scoped lang="scss">
+.question-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 12px;
+  overflow: hidden;
+
+  &--dialog {
+    border-radius: 0;
+    border: 0;
+
+    @media (min-width: 600px) {
+      border-radius: 12px;
+      border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    }
+  }
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 52px;
+    padding: 4px 8px 4px 16px;
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__head-icon {
+    color: rgb(var(--v-theme-primary));
+  }
+
+  &__title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+
+  &__head-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  &__about {
+    padding: 12px 16px;
+    background: rgb(var(--v-theme-background));
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__about-label {
+    margin-bottom: 2px;
+  }
+
+  &__about-question {
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  &__about-job {
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+  }
+
+  &__general {
+    margin: 4px 0 -4px -8px;
+    min-height: 44px;
+  }
+
+  &__hint {
+    line-height: 1.5;
+  }
+
+  &__log {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__empty {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__starters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  &__starter {
+    min-height: 44px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__msg {
+    max-width: 100%;
+    font-size: 0.875rem;
+    line-height: 1.55;
+
+    &--user {
+      align-self: flex-end;
+      max-width: 88%;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(var(--v-theme-primary), 0.14);
+    }
+
+    &--assistant {
+      align-self: stretch;
+    }
+
+    &--notice {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(var(--v-theme-warning), 0.1);
+      border: 1px solid rgba(var(--v-theme-warning), 0.3);
+    }
+  }
+
+  &__notice-icon {
+    color: rgb(var(--v-theme-warning));
+    margin-top: 2px;
+    flex: 0 0 auto;
+  }
+
+  &__text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  &__draft {
+    margin-top: 10px;
+    padding: 12px;
+    border-radius: 8px;
+    background: rgb(var(--v-theme-sunken));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__draft-label {
+    margin-bottom: 4px;
+  }
+
+  &__draft-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  &__draft-actions,
+  &__suggest {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin-top: 10px;
+  }
+
+  &__confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
+  }
+
+  &__confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  &__action {
+    min-height: 44px;
+    text-transform: none;
+    letter-spacing: normal;
+    max-width: 100%;
+  }
+
+  &__saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    color: rgb(var(--v-theme-success));
+    font-weight: 500;
+  }
+
+  &__thinking {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__compose {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    padding: 12px;
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  &__send {
+    flex: 0 0 auto;
+    width: 48px;
+    height: 48px;
+  }
+}
+</style>

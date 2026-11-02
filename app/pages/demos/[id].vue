@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { DemoDetail } from '#shared/types/pipeline'
-import { plainError } from '#shared/utils/plain-text'
 
 definePageMeta({ layout: 'default' })
 
@@ -19,20 +18,74 @@ const fileLoading = ref(false)
 
 const discardOpen = ref(false)
 const discarding = ref(false)
+const rebuilding = ref(false)
+const previewing = ref(false)
 
 useHead(() => ({ title: demo.value ? `${demo.value.title} | Demo` : 'Demo project' }))
 
-async function load() {
-  loading.value = true
+/** A build or a preview build is running on the server, so the page refreshes itself. */
+const active = computed(() => !!demo.value && (!!demo.value.progress || demo.value.preview.status === 'building'))
+/** A build the server is running right now reads as building even before the row says so. */
+const shownStatus = computed(() => demo.value?.progress ? 'building' as const : demo.value?.status ?? 'proposed')
+const showPreview = computed(() => !!demo.value && (['built', 'publishing', 'published'].includes(demo.value.status) || demo.value.preview.status === 'building'))
+
+async function load(quiet = false) {
+  if (!quiet) loading.value = true
   loadError.value = null
   try {
+    const wasBuilding = !!demo.value?.progress && demo.value.progress.phase === 'build'
+    const wasPreviewing = demo.value?.preview.status === 'building'
     demo.value = await $fetch<DemoDetail>(`/api/demos/${demoId.value}`)
+    if (wasBuilding && !demo.value.progress) {
+      if (demo.value.status === 'built') snackbar.success('Built. Tests pass.')
+      else snackbar.warning('The build stopped. The reason is at the top of the page.')
+    }
+    else if (wasPreviewing && demo.value.preview.status !== 'building' && !demo.value.progress) {
+      if (demo.value.preview.status === 'ready') snackbar.success(demo.value.preview.kind === 'web' ? 'Preview ready' : 'Tests listed')
+      else snackbar.error('The preview could not be built. The reason is in the Preview section.')
+    }
   }
   catch (e: any) {
-    loadError.value = e?.data?.statusMessage || e?.message || 'Could not load this demo'
+    if (!quiet) loadError.value = e?.data?.statusMessage || e?.message || 'Could not load this demo'
   }
   finally {
     loading.value = false
+    schedule()
+  }
+}
+
+let timer: ReturnType<typeof setTimeout> | null = null
+function schedule() {
+  if (timer) clearTimeout(timer)
+  timer = active.value ? setTimeout(() => load(true), 3000) : null
+}
+
+async function rebuild() {
+  rebuilding.value = true
+  try {
+    demo.value = await $fetch<DemoDetail>(`/api/demos/${demoId.value}/rebuild`, { method: 'POST' })
+    snackbar.info('Building. This page updates as it runs.')
+    schedule()
+  }
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not start the build')
+  }
+  finally {
+    rebuilding.value = false
+  }
+}
+
+async function buildPreview() {
+  previewing.value = true
+  try {
+    demo.value = await $fetch<DemoDetail>(`/api/demos/${demoId.value}/preview`, { method: 'POST' })
+    schedule()
+  }
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not start the preview')
+  }
+  finally {
+    previewing.value = false
   }
 }
 
@@ -66,7 +119,7 @@ async function discard() {
   }
 }
 
-const canDiscard = computed(() => demo.value && ['proposed', 'built', 'failed'].includes(demo.value.status))
+const canDiscard = computed(() => demo.value && !demo.value.progress && ['proposed', 'built', 'failed'].includes(demo.value.status))
 const sortedFiles = computed(() => [...(demo.value?.files ?? [])].sort((a, b) => a.path.localeCompare(b.path)))
 
 function formatBytes(n: number) {
@@ -79,7 +132,16 @@ function formatDate(s: string | null) {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (route.hash === '#preview') {
+    await nextTick()
+    document.getElementById('preview')?.scrollIntoView({ block: 'start' })
+  }
+})
+onBeforeUnmount(() => {
+  if (timer) clearTimeout(timer)
+})
 </script>
 
 <template>
@@ -111,7 +173,7 @@ onMounted(load)
 
         <v-card-text>
           <div class="demo-detail__chips mb-4">
-            <DemoStatusChip :status="demo.status" />
+            <DemoStatusChip :status="shownStatus" />
             <v-chip v-if="demo.isSandbox" size="small" variant="outlined" prepend-icon="mdi-test-tube">
               Sandbox application
             </v-chip>
@@ -160,28 +222,40 @@ onMounted(load)
           </dl>
 
           <v-alert v-if="demo.status === 'built'" type="info" variant="tonal" density="compact" class="mt-4 text-body-2" icon="mdi-lock-outline">
-            Not published. Approving the application pushes it to {{ demo.plannedRepoUrl }} and adds a card to your resume site, then submits.
+            <template v-if="demo.approveEffect?.demoBlocked">
+              Not published. {{ demo.approveEffect.demoBlocked }}, so approving its application stays off until it is set or this demo is discarded.
+            </template>
+            <template v-else-if="demo.approveEffect?.submit === 'manual'">
+              Not published. Approving the application pushes it to {{ demo.plannedRepoUrl }} and adds a card to your resume site, then marks the application for you to submit on the employer's site.
+            </template>
+            <template v-else>
+              Not published. Approving the application pushes it to {{ demo.plannedRepoUrl }} and adds a card to your resume site, then submits.
+            </template>
           </v-alert>
           <v-alert v-if="demo.status === 'published' && demo.repoUrl" type="success" variant="tonal" density="compact" class="mt-4 text-body-2 demo-detail__wrap">
             Published to {{ demo.repoUrl }}
           </v-alert>
-          <v-alert v-if="demo.error" type="error" variant="tonal" density="compact" class="mt-4 text-body-2 demo-detail__wrap">
-            {{ plainError(demo.error) }}
-          </v-alert>
+          <DemoBuildState :demo="demo" :busy="rebuilding" class="mt-4" @rebuild="rebuild" />
         </v-card-text>
 
         <v-card-actions class="px-4 pb-4 pt-0 demo-detail__actions">
-          <v-btn v-if="demo.repoUrl && demo.repoUrl.startsWith('http')" variant="tonal" color="primary" :href="demo.repoUrl" target="_blank" prepend-icon="mdi-open-in-new">
+          <v-btn v-if="demo.repoUrl && demo.repoUrl.startsWith('http')" variant="tonal" color="primary" height="44" :href="demo.repoUrl" target="_blank" prepend-icon="mdi-open-in-new">
             Repository
           </v-btn>
-          <v-btn v-if="demo.applicationId" variant="text" :to="`/applications/${demo.applicationId}`" prepend-icon="mdi-file-document-outline">
+          <v-btn v-if="demo.applicationId" variant="text" height="44" :to="`/applications/${demo.applicationId}`" prepend-icon="mdi-file-document-outline">
             Application
           </v-btn>
           <v-spacer />
-          <v-btn v-if="canDiscard" variant="text" color="error" prepend-icon="mdi-delete-outline" @click="discardOpen = true">
+          <v-btn v-if="canDiscard" variant="text" color="error" height="44" prepend-icon="mdi-delete-outline" @click="discardOpen = true">
             Discard
           </v-btn>
         </v-card-actions>
+      </v-card>
+
+      <v-card v-if="showPreview" variant="outlined" class="mb-5">
+        <v-card-text class="demo-detail__preview">
+          <DemoPreview :demo="demo" :busy="previewing" @build="buildPreview" />
+        </v-card-text>
       </v-card>
 
       <v-card v-if="demo.gap" variant="outlined" class="mb-5">
@@ -232,7 +306,7 @@ onMounted(load)
                     @click="openFile(f.path)"
                   >
                     <v-list-item-title class="demo-detail__file-name">
-                      {{ f.path }}
+                      <DemoPath :path="f.path" />
                     </v-list-item-title>
                     <template #append>
                       <span class="text-caption text-medium-emphasis ms-3 text-no-wrap">{{ formatBytes(f.bytes) }}</span>
@@ -249,7 +323,7 @@ onMounted(load)
                   </p>
                   <template v-else-if="fileContent">
                     <div class="demo-detail__viewer-head text-body-2 font-weight-medium">
-                      {{ fileContent.path }}
+                      <DemoPath :path="fileContent.path" />
                       <span v-if="fileContent.truncated" class="text-caption text-medium-emphasis"> (first 300 KB)</span>
                     </div>
                     <p v-if="fileContent.binary" class="text-body-2 text-medium-emphasis pa-4">
@@ -277,6 +351,12 @@ onMounted(load)
 
           <v-tabs-window-item value="log">
             <v-card-text class="pa-5">
+              <template v-if="demo.progress?.phase === 'build'">
+                <p class="text-body-2 text-medium-emphasis mb-3">
+                  Running now. The newest lines are below; the full log is saved when the build ends.
+                </p>
+                <pre class="demo-detail__code demo-detail__code--boxed mb-4">{{ demo.progress.recent.join('\n') || 'Starting...' }}</pre>
+              </template>
               <pre v-if="demo.buildLog" class="demo-detail__code demo-detail__code--boxed">{{ demo.buildLog }}</pre>
               <p v-else class="text-body-2 text-medium-emphasis">
                 No build log.
@@ -357,6 +437,14 @@ onMounted(load)
     }
   }
 
+  &__preview {
+    padding: 20px 24px;
+
+    @media (max-width: 599.98px) {
+      padding: 16px;
+    }
+  }
+
   &__fact-wide {
     grid-column: 1 / -1;
   }
@@ -390,7 +478,6 @@ onMounted(load)
 
   &__file-name {
     font-size: 0.875rem;
-    overflow-wrap: anywhere;
     white-space: normal;
   }
 
@@ -401,7 +488,6 @@ onMounted(load)
   &__viewer-head {
     padding: 12px 16px;
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    overflow-wrap: anywhere;
   }
 
   &__code {

@@ -47,6 +47,9 @@ else
   sed -i '' -e '/^NUXT_PORT=/d' -e '/^NUXT_DATABASE_PATH=/d' .env
   printf '\nNUXT_DATABASE_PATH=./data/job-hunter.db\n' >>.env
 fi
+# A worktree never runs the pipeline on its own schedule: its copy would call Claude and open real
+# employer forms every 3 hours. Manual runs (Settings, /api/pipeline/run) still work.
+grep -q '^NUXT_SCHEDULER_ENABLED=' .env || printf 'NUXT_SCHEDULER_ENABLED=false\n' >>.env
 
 # Port: 3000 belongs to the main checkout. Skip ports another checkout has claimed or something is listening on.
 PORT="$(env_value .env NUXT_PORT)"

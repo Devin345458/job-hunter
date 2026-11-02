@@ -28,6 +28,7 @@ export default defineTask({
     description: 'Learn from decisions, search, enrich, score, prepare applications, build demos',
   },
   async run({ payload }) {
+    if (scheduleSkipped(payload as Record<string, unknown> | undefined)) return { result: { skipped: 'the schedule is off on this server (NUXT_SCHEDULER_ENABLED=false)' } }
     const outcome = await withRun('pipeline:daily', triggerOf(payload), async (log) => {
       const steps: Record<string, string> = {}
       const problems: Record<string, string[]> = {}
