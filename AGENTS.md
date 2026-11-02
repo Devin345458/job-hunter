@@ -43,6 +43,7 @@
   - `NUXT_DAILY_AI_BUDGET_USD` (default 10)
   - `NUXT_GITHUB_TOKEN` (push access for demo repos and the resume site; used only on approve)
   - `NUXT_GITHUB_READ_TOKENS` (comma separated read-only fine-grained tokens for GitHub evidence, one per owner, with Contents, Metadata, and Pull requests read access) or `NUXT_GITHUB_READ_TOKEN` (one token). With neither set, GitHub evidence reads with `NUXT_GITHUB_TOKEN`.
+  - `NUXT_REPO_UID` (default 10002; the unprivileged user git runs as for the GitHub evidence cache in the container)
   - `NUXT_JSEARCH_API_KEY`
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`

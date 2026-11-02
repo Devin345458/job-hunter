@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
-import { repoCommits, repoSuggestions } from '../../db/schema'
+import { pipelineRuns, repoCommits, repoSuggestions } from '../../db/schema'
 import type { RepoEvidence, RepoSuggestionView } from '#shared/types/repos'
 
 // Reads stored GitHub suggestions for the question views, and queues a suggestion run when a new
@@ -58,8 +58,13 @@ async function flushQueue() {
   queued = new Set()
   if (!ids.length) return
   try {
-    const indexed = useDb().select({ n: sql<number>`count(*)` }).from(repoCommits).get()?.n ?? 0
+    const db = useDb()
+    const indexed = db.select({ n: sql<number>`count(*)` }).from(repoCommits).get()?.n ?? 0
     if (!indexed) return
+    // Questions asked inside the daily run get its last step, repos:suggest. Starting one now would
+    // make that step find a run in progress and record it as skipped.
+    const daily = db.select({ id: pipelineRuns.id }).from(pipelineRuns).where(and(eq(pipelineRuns.task, 'pipeline:daily'), eq(pipelineRuns.status, 'running'))).limit(1).get()
+    if (daily) return
     const res: any = await runTask('repos:suggest', { payload: { trigger: 'chained', questionIds: ids } })
     if (res?.result?.status === 'skipped') {
       for (const id of ids) queued.add(id)
