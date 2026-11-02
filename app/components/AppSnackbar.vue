@@ -64,9 +64,10 @@ function onAction() {
     backdrop-filter: blur(12px);
   }
 
-  // Phone: under the app bar (56px plus the notch), across the width with a small gutter.
+  // Phone: just under the app bar, across the width with a small gutter. Vuetify already pads
+  // the snackbar's overlay by the app bar's height (--v-layout-top), so the margin is the gap only.
   &--phone {
-    margin: calc(56px + env(safe-area-inset-top, 0px) + 6px) 8px 0 !important;
+    margin: 6px 8px 0 !important;
 
     :deep(.v-snackbar__wrapper) {
       min-height: 52px;

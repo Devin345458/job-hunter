@@ -289,8 +289,8 @@ const TO_BASE: Record<string, string> = {
   'hasn\'t': 'haven\'t', 'wasn\'t': 'weren\'t', 'focuses': 'focus',
 }
 const MODALS = new Set(['would', 'could', 'can', 'will', 'should', 'may', 'might', 'must', 'cannot', 'can\'t', 'won\'t', 'wouldn\'t'])
-/** Verbs that share a subject after a comma or "and": "You have AWS, has led teams, and is ...". */
-const COORDINATED = /(,\s+(?:and\s+)?|\s+and\s+)(has|is|was|does|lacks|meets|exceeds|shows|brings|holds|owns|leads|knows|works|seeks|needs|offers|matches|fits|demonstrates|understands|uses|wants|targets|appears|seems|falls|aligns|covers)\b/g
+/** Verbs that share a subject after a comma, "and", or "but": "You have AWS, has led teams, but is ...". */
+const COORDINATED = /(,\s+(?:and\s+|but\s+)?|\s+(?:and|but)\s+)(has|is|was|does|lacks|meets|exceeds|shows|brings|holds|owns|leads|knows|works|seeks|needs|offers|matches|fits|demonstrates|understands|uses|wants|targets|appears|seems|falls|aligns|covers)\b/g
 
 /** "has" gives "have", "meets" gives "meet"; null when the word is not a verb this can conjugate. */
 function baseVerb(word: string): string | null {
@@ -304,31 +304,44 @@ function baseVerb(word: string): string | null {
   return null
 }
 
-/** One sentence: possessives anywhere, the subject at the start or after a conjunction. */
+/**
+ * "The candidate" as a subject: at the start of a sentence, after "However," or a semicolon or
+ * colon, or after a conjunction, then up to two adverbs ("only partially") and the verb.
+ */
+const SUBJECT = /(^|[;:]\s+|\b(?:However|Still|Overall|Instead|Otherwise|Additionally|Also|Moreover|Further|Furthermore|Meanwhile),?\s+|\b(?:and|but|while|whereas|although|though|because|since|so)\s+)((?:the|this)\s+)?candidate\b(?!['’])((?:\s+(?:also|already|still|only|[a-z]+ly)\b){0,2})\s+([A-Za-z']+)/gi
+/** Where a clause with its own subject starts; a verb after it does not belong to "you". */
+const CLAUSE_END = /\b(?:while|whereas|although|though|because|since|which|who|where|when|if|unless)\b|[;:(]/i
+
+/** One sentence: possessives anywhere; each subject, with the verbs that share it in its own clause. */
 function secondPersonSentence(s: string): string {
-  let out = s.replace(/\b(the|this)\s+candidate['’]s\b/gi, m => (m[0] === 'T' ? 'Your' : 'your'))
-  let converted = false
-  out = out.replace(
-    /(^|\b(?:and|but|while|whereas|although|though|because|since|so)\s+)((?:the|this)\s+)?candidate\b(?!['’])(\s+(?:also|already|still|only|[a-z]+ly)\b)?\s+([A-Za-z']+)/gi,
-    (m, pre: string, det: string | undefined, adverb: string | undefined, verb: string) => {
-      // A bare "Candidate is" only at the start of a sentence.
-      if (!det && pre !== '') return m
-      const base = baseVerb(verb)
-      if (!base) return m
-      converted = true
-      const you = pre === '' ? 'You' : 'you'
-      return `${pre}${you}${adverb ?? ''} ${base}`
-    },
-  )
-  if (converted) out = out.replace(COORDINATED, (_, sep: string, verb: string) => `${sep}${baseVerb(verb) ?? verb}`)
-  return out
+  const text = s.replace(/\b(the|this)\s+candidate['’]s\b/gi, m => (m[0] === 'T' ? 'Your' : 'your'))
+  let out = ''
+  let last = 0
+  SUBJECT.lastIndex = 0
+  for (let m = SUBJECT.exec(text); m; m = SUBJECT.exec(text)) {
+    const [all, pre = '', det, adverbs = '', verb = ''] = m
+    // A bare "Candidate is" only at the start of a sentence.
+    if (!det && pre !== '') continue
+    const base = baseVerb(verb)
+    if (!base) continue
+    const end = m.index + all.length
+    const after = text.slice(end)
+    const stop = CLAUSE_END.exec(after)
+    const clause = after.slice(0, stop ? stop.index : after.length)
+      .replace(COORDINATED, (_, sep: string, v: string) => `${sep}${baseVerb(v) ?? v}`)
+    out += `${text.slice(last, m.index)}${pre}${pre === '' ? 'You' : 'you'}${adverbs} ${base}${clause}`
+    last = end + (stop ? stop.index : after.length)
+    SUBJECT.lastIndex = last
+  }
+  return out + text.slice(last)
 }
 
 /**
  * Match reasoning and summaries stored by older runs speak about "the candidate"; newer ones say
  * "you". This rewrites only what it can do correctly: "the candidate's" as "your" anywhere, and
- * "The candidate has" as "You have" at a sentence start or after a conjunction, when the next
- * word is a verb it can conjugate. Anything else is left as written.
+ * "The candidate has" as "You have" at a sentence start, after "However," or a semicolon, or
+ * after a conjunction, when the next word is a verb it can conjugate. Anything else, such as
+ * "a domain the candidate has worked in", is left as written.
  */
 export function secondPerson(text: string | null | undefined): string {
   if (!text) return ''
