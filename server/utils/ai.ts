@@ -16,9 +16,44 @@ export function useAI() {
 }
 
 export class AiBudgetExceeded extends Error {
-  constructor(spent: number, budget: number) {
-    super(`Daily AI budget reached: $${spent.toFixed(2)} of $${budget.toFixed(2)} spent today`)
+  constructor(spent: number, budget: number, message?: string) {
+    super(message ?? `Daily AI budget reached: $${spent.toFixed(2)} of $${budget.toFixed(2)} spent today`)
   }
+}
+
+/**
+ * The Anthropic account behind NUXT_ANTHROPIC_API_KEY has no credit left. A subclass of
+ * AiBudgetExceeded, so every caller stops its run the same way it does for the daily budget
+ * instead of marking each job or application as failed.
+ */
+export class AiCreditExhausted extends AiBudgetExceeded {
+  constructor() {
+    super(0, 0, 'The Anthropic account behind NUXT_ANTHROPIC_API_KEY is out of credit. Add credit in the Anthropic Console under Plans & Billing.')
+  }
+}
+
+/** True for the 400 Anthropic returns when the account balance is too low. There is no typed error for it. */
+function isCreditError(e: any) {
+  return e instanceof Anthropic.BadRequestError && /credit balance is too low/i.test(String(e?.error?.error?.message ?? e?.message ?? ''))
+}
+
+let creditExhaustedUntil = 0
+
+/**
+ * The account-level problem the dashboard should show, read from ai_calls so it survives
+ * restarts: the most recent credit error, unless a call succeeded after it.
+ */
+export function aiAccountProblem(): { kind: 'credit'; message: string; since: string } | null {
+  const db = useDb()
+  const lastCredit = db.select({ createdAt: aiCalls.createdAt }).from(aiCalls)
+    .where(sql`${aiCalls.error} like '%credit balance%' or ${aiCalls.error} like '%out of credit%'`)
+    .orderBy(sql`${aiCalls.id} desc`).limit(1).get()
+  if (!lastCredit) return null
+  const okAfter = db.select({ id: aiCalls.id }).from(aiCalls)
+    .where(sql`${aiCalls.error} is null and ${aiCalls.createdAt} > ${lastCredit.createdAt}`)
+    .limit(1).get()
+  if (okAfter) return null
+  return { kind: 'credit', since: lastCredit.createdAt, message: 'Claude is out of credit, so nothing can be scored, prepared, or built until credit is added to the Anthropic account (Console, Plans & Billing).' }
 }
 
 export class AiRefusal extends Error {}
@@ -134,6 +169,8 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
   preferredModel?: string,
 ): Promise<T> {
   assertAiBudget()
+  // After a credit error, fail fast for ten minutes instead of sending requests that will be refused.
+  if (Date.now() < creditExhaustedUntil) throw new AiCreditExhausted()
   const first = preferredModel && !(preferredModel === primaryModel() && Date.now() < primaryUnavailableUntil) ? preferredModel : activeModel()
   const models = [...new Set([first, fallbackModel()])]
   let lastError: any
@@ -155,6 +192,11 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
     catch (e: any) {
       lastError = e
       if (e instanceof AiRefusal || e instanceof AiOutputTruncated) throw e // already logged with usage
+      if (isCreditError(e)) {
+        creditExhaustedUntil = Date.now() + 10 * 60 * 1000
+        logCall(opts.purpose, model, null, opts.ref, 'out of credit: Your credit balance is too low to access the Anthropic API')
+        throw new AiCreditExhausted()
+      }
       if (!isAccessError(e) || model === fallbackModel()) {
         logCall(opts.purpose, model, null, opts.ref, e?.message || String(e))
         throw e

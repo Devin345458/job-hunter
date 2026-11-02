@@ -12,6 +12,8 @@ export interface RunsResponse {
   runs: PipelineRunView[]
   aiSpentToday: number
   aiBudget: number
+  /** Set when the Anthropic account cannot serve requests (out of credit). */
+  aiProblem?: { kind: 'credit'; message: string; since: string } | null
 }
 
 /**

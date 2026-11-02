@@ -229,6 +229,14 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
     return { applicationId: app.id, status }
   }
   catch (e: any) {
+    // Out of daily budget or out of Anthropic credit: nothing is wrong with this application.
+    // Leave it in preparing without spending an attempt; the next run picks it up again as a
+    // cut-off preparation, and it stays out of the review queue meanwhile.
+    if (e instanceof AiBudgetExceeded) {
+      setApplicationStatus(app.id, 'preparing', `Waiting for Claude: ${String(e.message).split('\n')[0]} The next run continues it.`)
+      log(`app ${app.id}: stopped, ${e.message}`)
+      throw e
+    }
     // A failed preparation ends in needs_manual with the reason, so the dashboard can act on it.
     // The daily run retries it up to MAX_PREPARE_ATTEMPTS times; the prepare endpoint retries on demand.
     const message = String(e?.statusMessage || e?.message || e).split('\n')[0]!
@@ -238,7 +246,6 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
       formError: `${PREPARE_FAILED} attempt=${attempt}: ${message}\n${String(e?.stack || '').slice(0, 3500)}`,
     })
     log(`app ${app.id}: failed (attempt ${attempt}): ${message}`)
-    if (e instanceof AiBudgetExceeded) throw e
     return { applicationId: app.id, status: 'needs_manual', error: message }
   }
   finally {

@@ -12,7 +12,9 @@ const health = usePipelineHealth()
 const open = ref(props.variant === 'panel')
 
 const run = computed(() => health.lastRun.value)
+const aiProblem = computed(() => health.runs.value?.aiProblem ?? null)
 const runTone = computed(() => {
+  if (aiProblem.value) return 'error'
   const s = run.value?.status
   return s === 'succeeded' ? 'success' : s === 'failed' ? 'error' : s === 'running' ? 'info' : 'secondary'
 })
@@ -34,6 +36,7 @@ const pending = computed(() => health.stats.value?.questions.pending ?? 0)
 const blocking = computed(() => health.stats.value?.questions.blocking ?? 0)
 
 const inlineSummary = computed(() => {
+  if (aiProblem.value) return 'Claude is out of credit: nothing new can be prepared'
   const parts = [run.value ? `${runLabel.value} ${clockTime(run.value.startedAt)}` : 'No runs yet']
   parts.push(`$${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} AI`)
   if (pending.value) parts.push(`${pending.value} question${pending.value === 1 ? '' : 's'}`)
@@ -59,6 +62,9 @@ const inlineSummary = computed(() => {
     <v-expand-transition>
       <div v-show="open" id="pipeline-health" class="hl__body">
         <div v-if="health.error.value" class="hl__err" role="alert">{{ health.error.value }}</div>
+        <div v-if="aiProblem" class="hl__err" role="alert">
+          {{ aiProblem.message }} Last refused {{ clockTime(aiProblem.since) }}.
+        </div>
 
         <div class="hl__row">
           <span class="hl__dot" :class="`bg-${runTone}`" />

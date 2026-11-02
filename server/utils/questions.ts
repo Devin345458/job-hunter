@@ -151,15 +151,82 @@ export function findKnowledgeEntry(category: string, key: string, entries: Knowl
  * The knowledge base entry that already answers "does Devin know or has he done <subject>",
  * positive or negative. A covered subject is never asked about.
  */
+/** Basics a senior web developer's knowledge base implies without listing them. */
+const IMPLIED_BY: Record<string, string[]> = {
+  html: ['javascript', 'css/sass/less', 'css', 'vue'],
+  css: ['css/sass/less', 'sass'],
+  json: ['javascript'],
+  sql: ['mysql'],
+  git: ['github actions'],
+  docker: ['kubernetes'],
+  'rest api': ['laravel', 'express', 'node'],
+  'rest apis': ['laravel', 'express', 'node'],
+}
+
 export function knowledgeCovers(subject: string): KnowledgeEntry | null {
   const want = ruleTerm(subject)
   if (!want) return null
-  for (const e of loadKnowledge()) {
+  const entries = loadKnowledge()
+  for (const e of entries) {
     if (e.category !== 'skill' && e.category !== 'experience') continue
     const key = e.key.replace(/^has done:\s*/i, '')
     if (ruleTerm(key) === want || key.split(/[/,]/).some(p => ruleTerm(p) === want)) return e
   }
+  const implied = IMPLIED_BY[want]
+  if (implied) {
+    const hit = entries.find(e => e.category === 'skill' && implied.includes(ruleTerm(e.key)))
+    if (hit) return hit
+  }
   return null
+}
+
+/** Single words that name a trait or a whole field, not a skill someone can say yes or no to. */
+const GENERIC_WORDS = new Set(['learning', 'coding', 'programming', 'development', 'software', 'engineering', 'collaboration', 'teamwork', 'ownership', 'leadership', 'mentoring', 'problem solving', 'curiosity', 'creativity', 'debugging', 'architecture', 'design', 'quality', 'security', 'data', 'ai', 'ml', 'cloud', 'web', 'mobile', 'backend', 'frontend', 'full stack', 'fullstack'])
+
+const HUMAN_LANGUAGE = /\b(english|spanish|french|german|portuguese|communication|written|verbal)\b/i
+
+/**
+ * The skill a requirement line names, or null when it is not a skill worth asking about.
+ * "2+ years of experience with LangChain" becomes "LangChain", "Knowledge of Temporal is a
+ * must" becomes "Temporal", "Next.js: 2+ years commercial experience" becomes "Next.js", and
+ * "Advanced English communication" becomes null.
+ */
+export function cleanSkillSubject(raw: string): string | null {
+  let t = raw.replace(/\s+/g, ' ').trim()
+  const colon = t.indexOf(':')
+  if (colon > 0 && /\d|year|experience/i.test(t.slice(colon))) t = t.slice(0, colon)
+  t = t.replace(/\b\d+\s*\+?\s*(years?|yrs?)\b( of)?( (commercial|professional|hands-on|production))?( experience)?( (with|in|using))?/gi, ' ').trim()
+  t = t.replace(/^(at least|one of|either|with|using|in)\s+/i, '')
+  t = t.replace(/^(solid|strong|deep|good|working|advanced|basic|proven|hands-on|excellent|exceptional|expert)\s+/i, '')
+  t = t.replace(/^(understanding|knowledge|expertise|experience|proficiency|familiarity|fluency)\s+(of|in|with)\s+/i, '')
+  t = t.replace(/\s+(is|are)\s+(a\s+)?(must|required|preferred|plus|nice to have)\b.*$/i, '')
+  t = t.replace(/\b(commercial|professional)?\s*experience\b/gi, ' ')
+  t = t.replace(/\(.*?\)/g, ' ').replace(/[.,;:]+$/, '').replace(/\s+/g, ' ').trim()
+  t = t.replace(/\s+(skills?|tools?|knowledge|concepts?|fundamentals|principles)$/i, '').trim()
+  if (t.length < 2 || t.length > 32) return null
+  if (GENERIC_WORDS.has(t.toLowerCase())) return null
+  if (HUMAN_LANGUAGE.test(t)) return null
+  // Compound requirements ("RAG or OpenAI", "Golang and/or Python", lists) cannot be answered
+  // with one yes or no; the single skills inside them get asked on their own.
+  if (/\s(or|and)\s|\/|,|&/i.test(t)) return null
+  // Activities rather than skills ("using data to inform decisions").
+  if (/^(using|working|building|making|being|having|ability|able)\b/i.test(t)) return null
+  // Fragments of a sentence ("the other", "any of these").
+  if (/^(the|a|an|this|that|these|those|other|any|some|each|all)\b/i.test(t)) return null
+  if (t.split(' ').length > 3) return null
+  return DISPLAY_ALIASES[t.toLowerCase()] ?? t
+}
+
+const DISPLAY_ALIASES: Record<string, string> = { golang: 'Go', nodejs: 'Node.js', reactjs: 'React', 'react.js': 'React', vuejs: 'Vue', 'vue.js': 'Vue', k8s: 'Kubernetes' }
+
+/** Plain wording for a "knows" question: tools by name, practices as "worked with". */
+export function knowsQuestionText(subject: string): string {
+  // "System integration" and "Infrastructure-as-code" are practices: a capitalized first word
+  // followed only by lowercase words. Everything else (MobX, Next.js, AI-assisted coding) is a tool.
+  const practice = /^[A-Z][a-z]+([ -][a-z]+)+$/.test(subject) || /^[a-z]/.test(subject)
+  return practice
+    ? `Have you worked with ${subject.charAt(0).toLowerCase()}${subject.slice(1)} in a real project?`
+    : `Have you used ${subject} in a real project?`
 }
 
 /** Where an answer is written: the question's knowledge_key, or one derived from its kind and subject. */
@@ -439,10 +506,11 @@ export interface AskOptions {
 }
 
 /** "Do you know Go?" Returns null when the knowledge base already says, yes or no. */
-export function askKnows(subject: string, opts: AskOptions = {}): QuestionRow | null {
-  if (knowledgeCovers(subject)) return null
+export function askKnows(rawSubject: string, opts: AskOptions = {}): QuestionRow | null {
+  const subject = cleanSkillSubject(rawSubject)
+  if (!subject || knowledgeCovers(subject)) return null
   return askQuestion({
-    question: `Do you know ${subject}?`,
+    question: knowsQuestionText(subject),
     context: opts.context,
     kind: 'knows',
     subject,
@@ -506,8 +574,52 @@ const MAX_NEW_DAILY_QUESTIONS = 5
  * cover (a must-have in one job, or any requirement in two or more). At most five new per day.
  * Sandbox jobs never create questions.
  */
+/**
+ * Keeps "knows" questions plain and unique. Runs before each day's new questions and is safe to
+ * repeat. Every pending, non-blocking "knows" question gets its skill name cleaned
+ * ("2+ years of experience with LangChain" becomes LangChain, "Golang" becomes Go), then:
+ * - skipped when it is not a skill worth asking (English, communication) or the knowledge base
+ *   already covers it (HTML is implied by JavaScript and CSS);
+ * - skipped when an answered question or an older pending one already asks the same thing;
+ * - otherwise reworded in plain language.
+ * Questions an application waits on are never touched. Skipped questions can be reopened.
+ */
+export function tidyKnowsQuestions(): { reworded: number; skipped: number } {
+  const db = useDb()
+  const rows = db.select().from(questions).where(and(eq(questions.kind, 'knows'), inArray(questions.status, ['pending', 'answered']))).all()
+  const cleanOf = (q: QuestionRow) => cleanSkillSubject(q.subject || q.question.replace(/^(Do you know|Have you (used|worked with))\s+/, '').replace(/( in a real project)?\?$/, ''))
+  const taken = new Set<string>()
+  const overlaps = (subject: string) => taken.has(ruleTerm(subject)) || subject.split(/\s+/).some(w => w.length > 1 && taken.has(ruleTerm(w)))
+  for (const q of rows.filter(r => r.status === 'answered' || r.blocking)) {
+    const c = cleanOf(q)
+    if (c) taken.add(ruleTerm(c))
+    if (q.subject) taken.add(ruleTerm(q.subject))
+  }
+  let reworded = 0
+  let skipped = 0
+  for (const q of rows.filter(r => r.status === 'pending' && !r.blocking).sort((a, b) => a.id - b.id)) {
+    const subject = cleanOf(q)
+    const term = subject ? ruleTerm(subject) : null
+    if (!subject || !term || knowledgeCovers(subject) || overlaps(subject)) {
+      db.update(questions).set({ status: 'skipped' }).where(eq(questions.id, q.id)).run()
+      skipped++
+      continue
+    }
+    taken.add(term)
+    const text = q.question.startsWith('Do you know ') || q.question.startsWith('Have you used ') || q.question.startsWith('Have you worked with ')
+      ? knowsQuestionText(subject)
+      : q.question
+    if (text !== q.question || subject !== q.subject) {
+      db.update(questions).set({ question: text, subject, dedupeKey: dedupeKeyOf('knows', subject), knowledgeKey: `skill:${subject}` }).where(eq(questions.id, q.id)).run()
+      reworded++
+    }
+  }
+  return { reworded, skipped }
+}
+
 export function askDailyQuestions(): QuestionRow[] {
   const db = useDb()
+  tidyKnowsQuestions()
   const before = new Set(db.select({ id: questions.id }).from(questions).all().map(r => r.id))
   const created: QuestionRow[] = []
   const floor = askCompFloor()
@@ -520,8 +632,8 @@ export function askDailyQuestions(): QuestionRow[] {
   for (const j of open) {
     for (const r of parseJson<Requirement[]>(j.requirementsJson, [])) {
       if (r.status !== 'unknown' || !['language', 'framework', 'skill'].includes(r.kind)) continue
-      const subject = r.text.trim()
-      if (!subject || subject.length > 40) continue
+      const subject = cleanSkillSubject(r.text)
+      if (!subject) continue
       const key = ruleTerm(subject)
       const w = wanted.get(key) ?? { subject, jobs: new Set<number>(), mustHave: false, firstJob: j.id }
       w.jobs.add(j.id)
@@ -532,8 +644,10 @@ export function askDailyQuestions(): QuestionRow[] {
   const candidates = [...wanted.values()]
     .filter(w => w.mustHave || w.jobs.size >= 2)
     .sort((a, b) => b.jobs.size - a.jobs.size || Number(b.mustHave) - Number(a.mustHave))
+  const asked = new Set(db.select({ subject: questions.subject }).from(questions).where(eq(questions.kind, 'knows')).all().map(r => r.subject).filter(Boolean).map(x => ruleTerm(x!)))
   for (const c of candidates) {
     if (created.length >= MAX_NEW_DAILY_QUESTIONS) break
+    if (asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))) continue
     const row = askKnows(c.subject, {
       jobId: c.firstJob,
       context: `${c.jobs.size === 1 ? 'An open job asks' : `${c.jobs.size} open jobs ask`} for ${c.subject}. Your answer goes into your knowledge base. A No means it is never claimed.`,

@@ -16,5 +16,5 @@ export default defineEventHandler((event) => {
     error: r.error,
     host: r.host,
   }))
-  return { runs, aiSpentToday: aiSpentToday(), aiBudget: aiBudget() }
+  return { runs, aiSpentToday: aiSpentToday(), aiBudget: aiBudget(), aiProblem: aiAccountProblem() }
 })
