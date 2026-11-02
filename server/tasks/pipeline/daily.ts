@@ -7,6 +7,8 @@ import { runOutcome, runProblems } from '#shared/utils/run-outcome'
 export const DAILY_STEPS = [
   'repos:index',
   'learn:daily',
+  // Best effort: off or unreachable memory records a plain note and the chain carries on.
+  'memory:leads',
   'jobs:search',
   'jobs:enrich',
   'jobs:match',

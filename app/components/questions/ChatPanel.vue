@@ -33,6 +33,8 @@ const input = ref<{ focus: () => void } | null>(null)
 const key = computed(() => chatThreadKey(props.question?.id))
 const messages = computed(() => chat.threads.value[key.value] ?? [])
 const busy = computed(() => !!chat.sending.value[key.value])
+/** The first reply in this conversation that had memory excerpts in its prompt; it alone carries the note. */
+const firstMemoryReply = computed(() => messages.value.find(m => m.role === 'assistant' && m.memory === 'used')?.id ?? null)
 const job = computed(() => props.question?.job ?? props.question?.waitingApplications?.[0] ?? null)
 const writesAnswer = computed(() => {
   const q = props.question
@@ -175,6 +177,7 @@ defineExpose({ focus: () => input.value?.focus() })
         <div v-if="job" class="text-caption text-medium-emphasis question-chat__about-job">
           {{ job.title }} at {{ job.company }}
         </div>
+        <QuestionsMemoryLeads v-if="question.status === 'pending'" variant="chat" :question-id="question.id" :takes-example="exampleQuestion" />
         <v-btn
           variant="text"
           size="small"
@@ -225,6 +228,10 @@ defineExpose({ focus: () => input.value?.focus() })
         </template>
         <template v-else>
           <div class="question-chat__text">{{ m.content }}</div>
+          <div v-if="m.id === firstMemoryReply" class="question-chat__memory text-caption text-medium-emphasis">
+            <v-icon icon="mdi-history" size="14" />
+            Excerpts from your past Claude sessions were in this reply. They are leads, not proof of work you did.
+          </div>
 
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
             <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
@@ -450,6 +457,13 @@ defineExpose({ focus: () => input.value?.focus() })
   &__text {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+
+  &__memory {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
   }
 
   &__draft {

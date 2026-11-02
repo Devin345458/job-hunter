@@ -163,6 +163,12 @@ export default defineNuxtConfig({
     // 'false' turns off the cron schedule (Orca worktrees set it), so a laptop copy never runs the
     // pipeline on its own; manual runs still work. Production leaves it unset.
     schedulerEnabled: 'true',
+    // Devin's claude-self-reflect memory server (MCP over streamable HTTP, reached over Tailscale in
+    // production). Empty turns the feature off: no leads on question cards, no memory in the chat.
+    memoryMcpUrl: '',
+    // Host header sent to it when the URL's host is not local: the daemon rejects any Host other
+    // than localhost or 127.0.0.1 (DNS rebinding protection).
+    memoryMcpHostHeader: '127.0.0.1:7391',
     // Token with push access to the demo and resume repos (used only on approve)
     githubToken: '',
     // Read-only tokens for GitHub evidence (server/utils/repos): Contents, Metadata, and Pull
