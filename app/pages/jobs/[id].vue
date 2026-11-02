@@ -49,7 +49,7 @@ const salaryDisplay = computed(() => {
   const symbol = c === 'USD' ? '$' : c
   const fmt = (val: number) => (val >= 1000 ? `${symbol}${Math.round(val / 1000)}K` : `${symbol}${val}`)
 
-  if (salaryMin && salaryMax) return `${fmt(salaryMin)} - ${fmt(salaryMax)}`
+  if (salaryMin && salaryMax) return `${fmt(salaryMin)} to ${fmt(salaryMax)}`
   if (salaryMin) return `${fmt(salaryMin)}+`
   if (salaryMax) return `Up to ${fmt(salaryMax)}`
   return ''
@@ -123,13 +123,13 @@ onMounted(() => {
 
 <template>
   <div class="fade-in">
-    <!-- Back button -->
+    <!-- A link, not history.back(): opened from a shared URL, back would leave the app. -->
     <v-btn
       variant="text"
       prepend-icon="mdi-arrow-left"
       class="mb-4"
       size="small"
-      @click="router.back()"
+      to="/jobs"
     >
       Back to Jobs
     </v-btn>
@@ -301,7 +301,18 @@ onMounted(() => {
             </v-card-text>
           </v-card>
 
-          <!-- On phones the score follows the header instead of sitting below the whole description -->
+          <!-- On phones the actions and the score follow the header instead of sitting below the whole description -->
+          <JobsJobActions
+            class="mb-6 d-md-none"
+            :application-id="applicationId"
+            :generating="generatingResume"
+            :applied="job.status === 'applied'"
+            :resume-error="resumeError"
+            @generate="onGenerateResume"
+            @mark-ready="onMarkReady"
+            @dismiss-error="resumeError = null"
+          />
+
           <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-6 d-md-none" />
 
           <JobsCompensationBreakdown :compensation="job.compensation" :enriched-at="job.enrichedAt" class="mb-6" />
@@ -342,58 +353,16 @@ onMounted(() => {
           <!-- Match Score -->
           <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4 d-none d-md-block" />
 
-          <!-- Actions -->
-          <v-card variant="outlined" class="mb-4">
-            <v-card-item>
-              <v-card-title class="text-subtitle-1 font-weight-medium">
-                Actions
-              </v-card-title>
-            </v-card-item>
-            <v-card-text class="d-flex flex-column ga-3">
-              <div>
-                <v-btn
-                  color="primary"
-                  block
-                  prepend-icon="mdi-file-document-edit-outline"
-                  :loading="generatingResume"
-                  :disabled="!!applicationId"
-                  @click="onGenerateResume"
-                >
-                  {{ applicationId ? 'Resume Generated' : 'Generate Tailored Resume' }}
-                </v-btn>
-                <div class="text-caption text-medium-emphasis mt-1 px-1">
-                  Uses AI to customize your resume for this specific role based on your knowledge base.
-                </div>
-              </div>
-
-              <v-btn
-                color="success"
-                variant="tonal"
-                block
-                prepend-icon="mdi-check-circle-outline"
-                :disabled="job.status === 'applied'"
-                @click="onMarkReady"
-              >
-                {{ job.status === 'applied' ? 'Already Applied' : 'Mark Ready to Apply' }}
-              </v-btn>
-
-              <!-- Resume Generation Error -->
-              <v-alert
-                v-if="resumeError"
-                type="error"
-                variant="tonal"
-                density="compact"
-                closable
-                class="mt-1"
-                @click:close="resumeError = null"
-              >
-                <div class="text-caption">{{ resumeError }}</div>
-                <div class="text-caption text-medium-emphasis mt-1">
-                  This usually means the AI response couldn't be parsed. Try again or check that your Anthropic API key is configured in Settings.
-                </div>
-              </v-alert>
-            </v-card-text>
-          </v-card>
+          <JobsJobActions
+            class="mb-4 d-none d-md-block"
+            :application-id="applicationId"
+            :generating="generatingResume"
+            :applied="job.status === 'applied'"
+            :resume-error="resumeError"
+            @generate="onGenerateResume"
+            @mark-ready="onMarkReady"
+            @dismiss-error="resumeError = null"
+          />
 
           <!-- Resume Preview -->
           <v-card variant="outlined">
@@ -435,7 +404,7 @@ onMounted(() => {
                   No resume yet
                 </p>
                 <p class="text-caption text-medium-emphasis">
-                  Click "Generate Tailored Resume" above to create a customized resume for this position.
+                  Use "Generate Tailored Resume" to create a customized resume for this position.
                 </p>
               </div>
             </v-card-text>
