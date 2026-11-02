@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import type { Requirement, ScoreBreakdown } from '#shared/types/pipeline'
+import type { Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { knowledgeSource } from '~/composables/review/format'
 import { secondPerson } from '#shared/utils/plain-text'
 
 // Skills fit: matched and missing skills first, then each posting requirement with what the
-// knowledge base says about it.
+// knowledge base says about it. Every Missing chip and every requirement that is not Have is a
+// button: tapping it opens the skill panel (SkillsClaimDialog, hosted by the card) to say you have it.
 const props = defineProps<{
   score: ScoreBreakdown | null
   requirements: Requirement[]
 }>()
 
+const emit = defineEmits<{
+  claim: [text: string, source: SkillClaimSource]
+}>()
+
 const STATUS: Record<Requirement['status'], { label: string; icon: string; color: string }> = {
   have: { label: 'Have', icon: 'mdi-check', color: 'success' },
   partial: { label: 'Partly', icon: 'mdi-circle-half-full', color: 'warning' },
-  lack: { label: 'Lack', icon: 'mdi-close', color: 'error' },
-  unknown: { label: 'Unknown', icon: 'mdi-help', color: 'secondary' },
+  lack: { label: 'Missing', icon: 'mdi-close', color: 'error' },
+  unknown: { label: 'Not in profile', icon: 'mdi-help', color: 'secondary' },
+}
+
+/** "Python proficiency (knowledge base explicitly states ...)" is named Python proficiency on screen readers. */
+function chipName(s: string) {
+  return s.replace(/\s*\([^()]*\)\s*$/, '').trim() || s
 }
 
 const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mustHave) - Number(a.mustHave)))
@@ -35,21 +45,47 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
       <div class="skills__set">
         <div class="skills__set-label">Missing <span class="tabular">{{ score.skills.missing.length }}</span></div>
         <div class="skills__chips">
-          <v-chip v-for="s in score.skills.missing" :key="s" size="small" color="error" variant="tonal" prepend-icon="mdi-minus">{{ s }}</v-chip>
+          <v-chip
+            v-for="s in score.skills.missing"
+            :key="s"
+            tag="button"
+            type="button"
+            size="small"
+            color="error"
+            variant="tonal"
+            prepend-icon="mdi-minus"
+            append-icon="mdi-chevron-right"
+            class="skills__claim-chip"
+            :aria-label="`${chipName(s)}: say whether you have it`"
+            @click="emit('claim', s, 'missing')"
+          >
+            {{ s }}
+          </v-chip>
           <span v-if="!score.skills.missing.length" class="skills__none">Nothing missing</span>
         </div>
+        <p v-if="score.skills.missing.length" class="skills__hint">Tap one you have to say so.</p>
       </div>
     </div>
 
     <ul v-if="sorted.length" class="skills__reqs" aria-label="Posting requirements">
       <li v-for="(r, i) in sorted" :key="i" class="skills__req">
-        <v-icon :icon="STATUS[r.status].icon" :color="STATUS[r.status].color" size="16" class="skills__req-icon" />
-        <div class="skills__req-body">
-          <span class="skills__req-text">{{ r.text }}</span>
-          <span class="skills__req-meta">
-            {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeSource(r.evidence)}` : '' }}
+        <component
+          :is="r.status === 'have' ? 'div' : 'button'"
+          :type="r.status === 'have' ? undefined : 'button'"
+          class="skills__req-row"
+          :class="{ 'skills__req-row--tap': r.status !== 'have' }"
+          :aria-label="r.status === 'have' ? undefined : `${r.text}. ${STATUS[r.status].label}. Say whether you have it`"
+          @click="r.status !== 'have' && emit('claim', r.text, 'requirement')"
+        >
+          <v-icon :icon="STATUS[r.status].icon" :color="STATUS[r.status].color" size="16" class="skills__req-icon" />
+          <span class="skills__req-body">
+            <span class="skills__req-text">{{ r.text }}</span>
+            <span class="skills__req-meta">
+              {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeSource(r.evidence)}` : '' }}
+            </span>
           </span>
-        </div>
+          <v-icon v-if="r.status !== 'have'" icon="mdi-chevron-right" size="18" class="skills__req-go" />
+        </component>
       </li>
     </ul>
   </div>
@@ -93,6 +129,31 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
     }
   }
 
+  // A Missing chip is a button that opens the skill panel. The global phone rule gives it 44px;
+  // the chevron says it opens something.
+  &__claim-chip {
+    cursor: pointer;
+    text-align: left;
+
+    :deep(.v-chip__append) {
+      margin-inline-start: 4px;
+      opacity: 0.7;
+    }
+  }
+
+  // The chip rule above (min-height 24px) outranks the global 44px phone target, so it is restated here.
+  @media (max-width: 959.98px) {
+    &__chips &__claim-chip {
+      min-height: 44px;
+    }
+  }
+
+  &__hint {
+    margin: 6px 0 0;
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
   &__none {
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
@@ -105,10 +166,45 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
   }
 
   &__req {
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__req-row {
     display: flex;
     gap: 10px;
+    width: 100%;
     padding: 8px 0;
-    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    background: none;
+    border: 0;
+  }
+
+  // A requirement that is not Have opens the skill panel: a full-width row, 44px or taller.
+  &__req-row--tap {
+    min-height: 44px;
+    margin: 0 -8px;
+    padding: 8px;
+    width: calc(100% + 16px);
+    border-radius: 8px;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(var(--v-theme-on-surface), 0.05);
+    }
+
+    &:focus-visible {
+      outline: 2px solid rgb(var(--v-theme-primary));
+      outline-offset: -2px;
+    }
+  }
+
+  &__req-go {
+    margin-left: auto;
+    align-self: center;
+    flex-shrink: 0;
+    opacity: 0.6;
   }
 
   &__req-icon {
@@ -121,6 +217,7 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
     flex-direction: column;
     gap: 1px;
     min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   &__req-text {

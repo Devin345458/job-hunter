@@ -142,6 +142,8 @@ function keyEnd(text: string, start: number): number {
  */
 export function plainKnowledgeRefs(text: string | null | undefined): string {
   if (!text) return ''
+  // An answered experience question is stored under "Has done: <subject>"; it reads as "your <subject> entry".
+  text = text.replace(/(?<![\w./-])(experience)\/has done:\s*/gi, '$1/')
   let out = ''
   let last = 0
   KNOWLEDGE_REF.lastIndex = 0

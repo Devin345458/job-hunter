@@ -186,8 +186,10 @@ export interface MatchStats extends Record<string, unknown> {
  * jobs:match. Scores enriched jobs that have no skills score yet, or whose posting was enriched
  * again after the last score (one Claude call each), then rescores every open job in code so
  * new preferences and learned rules apply everywhere. Pass jobIds to score specific jobs.
+ * fresh asks Claude again even when the stored skills score is newer than the posting: the skill
+ * panel uses it after an answer changes the knowledge base.
  */
-export async function scoreJobs(opts: { jobIds?: number[]; limit?: number; log?: (msg: string) => void } = {}): Promise<MatchStats> {
+export async function scoreJobs(opts: { jobIds?: number[]; limit?: number; fresh?: boolean; log?: (msg: string) => void } = {}): Promise<MatchStats> {
   const db = useDb()
   const log = opts.log ?? console.log
   const stats: MatchStats = { pending: 0, scored: 0, reusedSkills: 0, failed: 0, noText: 0, budgetStopped: false, questionsAsked: [], rescored: 0, costUsd: 0, errors: [] }
@@ -215,7 +217,7 @@ export async function scoreJobs(opts: { jobIds?: number[]; limit?: number; log?:
     if (stats.budgetStopped) return
     const text = job.postingText || htmlToText(job.description)
     const previous = parseJson<ScoreBreakdown | null>(job.scoreBreakdown, null)
-    const reuse = !!previous && job.skillsScore != null && !!job.scoredAt && !!job.enrichedAt && job.scoredAt >= job.enrichedAt
+    const reuse = !opts.fresh && !!previous && job.skillsScore != null && !!job.scoredAt && !!job.enrichedAt && job.scoredAt >= job.enrichedAt
     if (!text && !reuse) {
       stats.noText++
       return

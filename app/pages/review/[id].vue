@@ -174,6 +174,7 @@ async function answer(questionId: number, value: string | null, skip = false) {
         @answer="(qid, a) => answer(qid, a)"
         @skip="qid => answer(qid, null, true)"
         @prepare="prepareAgain"
+        @refresh="queue.fetchOne(item.applicationId)"
       />
       <ReviewRejectDialog
         v-model="rejectOpen"
