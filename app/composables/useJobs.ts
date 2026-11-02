@@ -3,12 +3,26 @@ import type { jobs } from '~~/server/db/schema'
 
 export type Job = InferSelectModel<typeof jobs>
 
+/** A job's newest application, as GET /api/jobs and GET /api/jobs/:id return it (server/utils/job-list.ts). */
+export interface JobApplicationRef {
+  id: number
+  status: string
+  prepareFailed: boolean
+}
+
 /** The columns GET /api/jobs returns for each card (server/api/jobs/index.get.ts). The detail page loads the rest. */
 export type JobListItem = Pick<Job,
   | 'id' | 'source' | 'title' | 'company' | 'location' | 'remoteType' | 'salaryMin' | 'salaryMax' | 'salaryCurrency'
-  | 'totalCompEstimate' | 'matchScore' | 'status' | 'tags' | 'applyUrl' | 'atsType' | 'isSandbox' | 'foundAt'>
+  | 'totalCompEstimate' | 'matchScore' | 'status' | 'tags' | 'applyUrl' | 'atsType' | 'isSandbox' | 'foundAt'> & {
+  application?: JobApplicationRef | null
+  /** How many postings of this company and title the card stands for (1 for most). */
+  postingCount?: number
+  /** Every posting the card stands for, this one first. Empty when it stands for one. */
+  postings?: Array<{ id: number; location: string | null }>
+}
 
-export type JobStatus = 'new' | 'reviewed' | 'applied' | 'rejected' | 'expired'
+/** A job's own status, plus in_review: a filter for jobs whose application is under way. */
+export type JobStatus = 'new' | 'reviewed' | 'applied' | 'rejected' | 'expired' | 'in_review'
 export type RemoteType = 'remote' | 'hybrid' | 'onsite'
 
 export interface JobFilters {
@@ -28,6 +42,8 @@ export type JobSort = 'score' | 'date'
 export interface JobsResponse {
   jobs: JobListItem[]
   total: number
+  /** Postings behind the cards; more than total when one card stands for several postings. */
+  totalPostings?: number
   page: number
   limit: number
 }
@@ -55,6 +71,7 @@ const LIST_TIMEOUT_MS = 20000
 export function useJobs() {
   const jobs = ref<JobListItem[]>([])
   const total = ref(0)
+  const totalPostings = ref(0)
   const page = ref(1)
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -112,6 +129,7 @@ export function useJobs() {
 
       jobs.value = options.append ? [...jobs.value, ...data.jobs] : data.jobs
       total.value = data.total
+      totalPostings.value = data.totalPostings ?? data.total
       page.value = data.page
       return data
     }
@@ -204,6 +222,7 @@ export function useJobs() {
   return {
     jobs,
     total,
+    totalPostings,
     page,
     loading,
     error,

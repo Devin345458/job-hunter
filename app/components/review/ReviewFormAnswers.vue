@@ -16,7 +16,24 @@ const props = defineProps<{
   formError: string | null
   /** Where the question a field waits on sits on this page ("in Answer first, above"). */
   questionHint?: (questionId: number) => string
+  /** The application's status, so the screenshot caption says whether it was submitted. Without it the caption says "Not submitted." */
+  status?: string | null
+  /** When the submit happened, for a submitted application. */
+  submittedAt?: string | null
 }>()
+
+const SENT = ['submitted', 'response_received', 'interviewing', 'offer', 'rejected']
+/** The screenshot caption's last sentence, following the application's status. */
+const submitState = computed(() => {
+  const s = props.status
+  if (!s) return 'Not submitted.'
+  if (SENT.includes(s)) return props.submittedAt ? `Submitted ${clockTime(props.submittedAt)}.` : 'Submitted.'
+  if (['approved', 'publishing', 'submitting'].includes(s)) return 'Approved and being submitted now.'
+  if (s === 'submit_failed') return 'The submit failed.'
+  if (s === 'needs_manual') return 'Not submitted by the pipeline. It is yours to submit by hand.'
+  if (s === 'declined') return 'Not submitted. You rejected it.'
+  return 'Not submitted.'
+})
 
 const CONF: Record<FormAnswer['confidence'], { label: string; color: string }> = {
   high: { label: 'Sure', color: 'success' },
@@ -140,7 +157,7 @@ function isLong(a: FormAnswer) {
           <img :src="screenshotUrl" alt="Screenshot of the filled employer form" loading="lazy">
         </button>
         <figcaption>
-          Filled {{ clockTime(filledAt) }}{{ snapshot ? ` on ${hostOf(snapshot.finalUrl || snapshot.url)}` : '' }}. Not submitted.
+          Filled {{ clockTime(filledAt) }}{{ snapshot ? ` on ${hostOf(snapshot.finalUrl || snapshot.url)}` : '' }}. {{ submitState }}
         </figcaption>
       </figure>
     </div>

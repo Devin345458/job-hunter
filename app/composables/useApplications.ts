@@ -20,6 +20,8 @@ export interface ApplicationsResponse {
   total: number
   page: number
   limit: number
+  /** True when approve submits to real employers automatically (NUXT_REAL_SUBMIT_ENABLED). */
+  realSubmitEnabled?: boolean
 }
 
 export function useApplications() {

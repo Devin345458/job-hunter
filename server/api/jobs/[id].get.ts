@@ -1,10 +1,12 @@
-import { and, desc, eq, or } from 'drizzle-orm'
-import { jobs, questions, scoreHistory } from '~~/server/db/schema'
+import { and, desc, eq, ne, or, sql } from 'drizzle-orm'
+import { applications, jobs, questions, scoreHistory } from '~~/server/db/schema'
 import type { CompensationBreakdown, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import { HEALTH_SUBJECT, isFullyPaidHealth } from '~~/server/utils/compensation'
+import { jobGroupKey, latestApplication, toJobApplication } from '~~/server/utils/job-list'
 
-// One job, with its JSON columns parsed for the detail page, its score history, and the
-// questions Devin can answer to complete its score.
+// One job, with its JSON columns parsed for the detail page, its score history, the questions
+// Devin can answer to complete its score, its application if one exists, and the other postings
+// of the same role at the same company (the jobs list shows them as one card).
 export default defineEventHandler(async (event) => {
   const db = useDb()
   const id = Number(getRouterParam(event, 'id'))
@@ -37,6 +39,26 @@ export default defineEventHandler(async (event) => {
 
   const meta = parseJson<Record<string, unknown>>(job.atsMeta, {})
 
+  const app = db.select({ id: applications.id, status: applications.status, formError: applications.formError })
+    .from(applications).where(eq(applications.jobId, id)).orderBy(desc(applications.id)).limit(1).get()
+
+  const groupKey = jobGroupKey()
+  const otherPostings = db.select({
+    id: jobs.id,
+    location: jobs.location,
+    status: jobs.status,
+    matchScore: jobs.matchScore,
+    foundAt: jobs.foundAt,
+    appId: latestApplication('id'),
+    appStatus: latestApplication('status'),
+    appFormError: latestApplication('form_error'),
+  })
+    .from(jobs)
+    .where(and(ne(jobs.id, id), sql`${groupKey} = lower(trim(${job.company})) || char(31) || lower(trim(${job.title}))`))
+    .orderBy(jobs.id)
+    .all()
+    .map(({ appId, appStatus, appFormError, ...p }) => ({ ...p, application: toJobApplication(appId, appStatus, appFormError) }))
+
   return {
     ...job,
     compensation,
@@ -46,5 +68,7 @@ export default defineEventHandler(async (event) => {
     enrichNotes: Array.isArray(meta.enrichNotes) ? meta.enrichNotes as string[] : [],
     scoreHistory: history,
     openQuestions,
+    application: app ? toJobApplication(app.id, app.status, app.formError) : null,
+    otherPostings,
   }
 })

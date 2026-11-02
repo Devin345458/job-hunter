@@ -75,3 +75,63 @@ export const ATS_LABELS: Record<string, string> = {
   other: 'Employer site',
   unknown: 'Unknown',
 }
+
+// ── Where a job stands ───────────────────────────────────────
+
+export interface JobStateMeta {
+  label: string
+  color: string
+}
+
+const JOB_STATUS: Record<string, JobStateMeta> = {
+  new: { label: 'New', color: 'info' },
+  reviewed: { label: 'Reviewed', color: 'primary' },
+  applied: { label: 'Applied', color: 'success' },
+  rejected: { label: 'Rejected', color: 'secondary' },
+  expired: { label: 'Expired', color: 'grey' },
+}
+
+// The application's status says more than the job's: a job stays "new" while its application
+// waits on the review queue. Labels match the Applications page where they overlap.
+const APP_STATUS: Record<string, JobStateMeta> = {
+  preparing: { label: 'Preparing', color: 'info' },
+  needs_input: { label: 'Needs your answer', color: 'warning' },
+  proposed: { label: 'In review', color: 'primary' },
+  approved: { label: 'Submitting', color: 'primary' },
+  publishing: { label: 'Submitting', color: 'primary' },
+  submitting: { label: 'Submitting', color: 'primary' },
+  submitted: { label: 'Applied', color: 'success' },
+  submit_failed: { label: 'Submit failed', color: 'error' },
+  needs_manual: { label: 'Submit by hand', color: 'warning' },
+  declined: { label: 'Rejected', color: 'secondary' },
+  response_received: { label: 'Employer replied', color: 'success' },
+  interviewing: { label: 'Interviewing', color: 'success' },
+  offer: { label: 'Offer', color: 'success' },
+  rejected: { label: 'Employer said no', color: 'error' },
+  draft: { label: 'Draft', color: 'secondary' },
+  ready: { label: 'Ready', color: 'secondary' },
+}
+
+/** What a job card and the job page say about where the job stands: its application's state when it has one, else its own status. */
+export function jobStateMeta(status: string | null | undefined, application: { status: string; prepareFailed?: boolean } | null | undefined): JobStateMeta {
+  if (application) {
+    if (application.status === 'needs_manual' && application.prepareFailed) return { label: 'Preparation failed', color: 'error' }
+    const meta = APP_STATUS[application.status]
+    if (meta) return meta
+  }
+  const s = status ?? ''
+  return JOB_STATUS[s] ?? { label: s ? s.charAt(0).toUpperCase() + s.slice(1) : 'New', color: 'grey' }
+}
+
+/** A grouped card's locations, each once: "New York, NY" for two postings in the same city. */
+export function postingLocations(postings: Array<{ location: string | null }>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const p of postings) {
+    const loc = (p.location ?? '').trim()
+    if (!loc || seen.has(loc.toLowerCase())) continue
+    seen.add(loc.toLowerCase())
+    out.push(loc)
+  }
+  return out
+}

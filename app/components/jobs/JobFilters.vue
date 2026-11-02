@@ -18,8 +18,11 @@ const emit = defineEmits<{
   'update:filters': [filters: JobFilterValues]
 }>()
 
+// New means nothing has happened with the job yet. A job with an application under way files
+// under In review, so the filter matches the state its card shows.
 const statusOptions: { title: string; value: JobStatus }[] = [
   { title: 'New', value: 'new' },
+  { title: 'In review', value: 'in_review' },
   { title: 'Reviewed', value: 'reviewed' },
   { title: 'Applied', value: 'applied' },
   { title: 'Rejected', value: 'rejected' },

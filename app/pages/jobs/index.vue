@@ -13,7 +13,7 @@ definePageMeta({
 const PAGE_SIZE = 24
 
 const router = useRouter()
-const { jobs, total, page, loading, error, fetchJobs, triggerSearch } = useJobs()
+const { jobs, total, totalPostings, page, loading, error, fetchJobs, triggerSearch } = useJobs()
 const snackbar = useSnackbar()
 
 // ── Back to Jobs keeps the list ──
@@ -26,6 +26,7 @@ interface JobsListSnapshot {
   sort: JobSort
   jobs: JobListItem[]
   total: number
+  totalPostings: number
   page: number
   scrollY: number
 }
@@ -43,10 +44,18 @@ const sort = ref<JobSort>(restored?.sort ?? 'score')
 if (restored) {
   jobs.value = restored.jobs
   total.value = restored.total
+  totalPostings.value = restored.totalPostings ?? restored.total
   page.value = restored.page
 }
 const loadingMore = ref(false)
 const hasMore = computed(() => jobs.value.length < total.value)
+/** "Showing 24 of 378 jobs, from 405 postings." when some cards stand for several postings of one role. */
+const countText = computed(() => {
+  const shown = `Showing ${jobs.value.length} of ${total.value} job${total.value !== 1 ? 's' : ''}`
+  return totalPostings.value > total.value
+    ? `${shown}, from ${totalPostings.value} postings. A role posted more than once shows as one card.`
+    : shown
+})
 
 async function load(options: { append?: boolean } = {}) {
   try {
@@ -139,6 +148,7 @@ onBeforeRouteLeave((to) => {
     sort: sort.value,
     jobs: jobs.value,
     total: total.value,
+    totalPostings: totalPostings.value,
     page: page.value,
     scrollY: window.scrollY,
   }
@@ -192,9 +202,10 @@ onBeforeRouteLeave((to) => {
 
     <div class="jobs-page__status">
       <div class="jobs-page__status-row">
-        <div class="text-caption text-medium-emphasis tabular" aria-live="polite">
+        <!-- Not tabular: under tabular figures the font gives the comma and period a digit-wide slot. -->
+        <div class="text-caption text-medium-emphasis" aria-live="polite">
           <template v-if="jobs.length">
-            Showing {{ jobs.length }} of {{ total }} job{{ total !== 1 ? 's' : '' }}
+            {{ countText }}
           </template>
         </div>
         <v-btn-toggle

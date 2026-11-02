@@ -203,11 +203,13 @@ function badgeFor(item: NavItem): number {
           :active="isActiveRoute(item)"
           :aria-label="item.title"
         >
+          <!-- Not floating: a floating badge sat above the icon and straddled the nav's top edge. -->
           <v-badge
             :model-value="badgeFor(item) > 0"
             :content="badgeFor(item)"
             color="primary"
-            floating
+            offset-y="3"
+            class="shell__badge"
           >
             <v-icon :icon="item.icon" />
           </v-badge>
