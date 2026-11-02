@@ -3,7 +3,8 @@ import { ACCOUNT_REQUIRED_ATS, type AtsType } from '#shared/types/pipeline'
 // ATS detection from a URL, and the URL of the application form for each ATS we handle.
 
 const HOST_RULES: Array<{ ats: AtsType; test: (u: URL) => boolean }> = [
-  { ats: 'sandbox', test: u => /^\/sandbox\/apply\//.test(u.pathname) },
+  // The sandbox posting page (/sandbox/jobs/<token>) and its form (/sandbox/apply/<token>).
+  { ats: 'sandbox', test: u => /^\/sandbox\/(apply|jobs)\//.test(u.pathname) },
   { ats: 'greenhouse', test: u => /(^|\.)greenhouse\.io$/.test(u.hostname) },
   { ats: 'lever', test: u => /(^|\.)lever\.co$/.test(u.hostname) },
   { ats: 'ashby', test: u => /(^|\.)ashbyhq\.com$/.test(u.hostname) },
@@ -53,6 +54,7 @@ export const ATS_LABELS: Record<AtsType, string> = {
 
 /**
  * The URL that shows the application form itself, when the listing URL points at the posting:
+ * - Sandbox: /sandbox/jobs/<token> becomes /sandbox/apply/<token>
  * - Lever: jobs.lever.co/<co>/<id> becomes jobs.lever.co/<co>/<id>/apply
  * - Ashby: jobs.ashbyhq.com/<org>/<id> becomes jobs.ashbyhq.com/<org>/<id>/application
  * - Workable: apply.workable.com/<co>/j/<code>/ becomes .../apply/
@@ -61,6 +63,11 @@ export const ATS_LABELS: Record<AtsType, string> = {
 export function formUrlFor(url: string, ats: AtsType): string {
   try {
     const u = new URL(url)
+    if (ats === 'sandbox') {
+      // Sandbox jobs enriched before 2026-11-01 point at the posting page; the form is one link away.
+      const m = u.pathname.match(/^\/sandbox\/jobs\/([^/]+)\/?$/)
+      if (m) u.pathname = `/sandbox/apply/${m[1]}`
+    }
     if (ats === 'lever' && u.hostname === 'jobs.lever.co') {
       const parts = u.pathname.split('/').filter(Boolean)
       if (parts.length === 2) u.pathname = `/${parts[0]}/${parts[1]}/apply`
