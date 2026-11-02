@@ -103,8 +103,16 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
   - [x] Sandbox submit: both sandbox applications (11, 12) had found no form fields because their jobs still pointed at the sandbox posting page (enriched before the guard). Fixed in 4a0b7ad. Re-filled on production (20 fields, 16 filled each, no open questions), then approved application 11 in the deployed dashboard at 16:12 UTC: status submitted, sandbox confirmation "Reference number 2", 18 fields and the 37 KB resume PDF stored. Real submits stay off.
   - [ ] Browser click-through at both widths: walked on f942433, one major open (CompanyCam demo block hidden). Ticks when the rewalk-fixes merge is checked on production.
 - [ ] Pass 3: same four checks.
+  - [x] Scheduler: the first slot of the new every-3-hours schedule fired at 12:00 Central (pipeline_runs 147, trigger `schedule`) in the deployed container 2282da270ab3, the one /api/health reported, with every step chained.
+  - [x] Pipeline on today's listings: run 147 found 298 (1 new), enriched 40, scored 40 with 0 failures, asked 2 skill questions, and prepared 5 new real applications with forms filled and not submitted (Vanta twice for two different teams and Temporal on Ashby, Veeva on Lever, Calendly on Greenhouse; 11 to 18 fields filled each, each stopped at a captcha), and built one demo (Temporal). Login sweep after the deploy: 48 routes, 0 unexpected.
+  - [ ] Sandbox submit on the final build (application 17 reached reference 3 during the second walk on f942433; repeat after the last merge).
+  - [ ] Browser walk on the final build.
 
 ## Found during the run
+
+- 2026-11-02: agent worktrees run the production build, so each local server also ran the cron schedule (now every 3 hours): Claude calls through the TeamClaude proxy and dry-run fills on real employer forms from laptop copies. Two such servers were left running from removed worktrees; stopped. NUXT_SCHEDULER_ENABLED=false now turns the schedule off, and the worktree setup writes it (f2429b8).
+- 2026-11-02: the same role posted for several locations (Samsara six times, Discover and Lemon.io three times) could each become its own application. One application per role now (ee7ca43).
+- 2026-11-02: the pipeline prepared a product manager role (Temporal, Senior Staff Technical Product Manager) at a match score over 70. The title filter only removes sales, support, hardware, healthcare, and trades titles; a reject for the right reason teaches the scores.
 
 - 2026-11-02: the text answer box on Questions was single line with a 500 character limit, so a long, multi-line answer (Devin's AI experience answer, about 1,450 characters with bullets) could not be entered. The server accepts 4,000. Moving to a growing text area in `question-chat`. Separately, a single-line employer field (CompanyCam's is an <input>) drops line breaks when filled; the filler now joins lines readably (f478ca9).
 - 2026-11-02: the five-a-day cap on skill questions hid low-quality questions from jobs that score poorly. Removed the cap, ask only from jobs scoring 50 or more, right after scoring, ordered by value (155c539). The pipeline now runs every 3 hours from 6 AM to 9 PM Central; it had run once a day with about 250 postings unread.
