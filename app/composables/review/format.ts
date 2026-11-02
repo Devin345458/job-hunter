@@ -133,6 +133,16 @@ export function knowledgeRef(ref: string | null | undefined): string {
   return ref.replace(/^(?:profile|skill|skills|experience|preference|preferences|fact|facts|education|project|projects|certification|other)\s*[/:]\s*/i, '').trim()
 }
 
+/**
+ * A knowledge base pointer in words: a bare key ("skill/PHP") reads as its name ("PHP"); a
+ * sentence that cites keys ("initials of profile/Full Name (...)") reads with each in plain words.
+ */
+export function knowledgeSource(detail: string | null | undefined): string {
+  const d = (detail ?? '').trim()
+  const bare = knowledgeRef(d)
+  return bare !== d && !/[/:]/.test(bare) ? bare : plainKnowledgeRefs(d)
+}
+
 const SOURCE_LABEL: Record<AnswerSource, string> = {
   knowledge: 'Knowledge base',
   resume: 'Resume',
@@ -152,10 +162,7 @@ export function answerSourceText(a: Pick<FormAnswer, 'source' | 'sourceDetail' |
     if (!detail) return label
     const found = /^HOW FOUND(?: line)?:?\s*(.*)$/i.exec(detail)
     if (found) return `${label}: how you found the job${found[1] ? ` (${found[1]})` : ''}`
-    // A bare key ("profile/Full Name") reads as its name; a sentence that cites keys
-    // ("initials of profile/Full Name (...)") reads with each key in plain words.
-    const bare = knowledgeRef(detail)
-    return `${label}: ${bare !== detail && !/[/:]/.test(bare) ? bare : plainKnowledgeRefs(detail)}`
+    return `${label}: ${knowledgeSource(detail)}`
   }
   if (a.source === 'skipped' || a.source === 'eeo_decline') return plainKnowledgeRefs(plainQuestionRefs(detail)) || label
   return detail ? `${label}: ${plainKnowledgeRefs(plainQuestionRefs(detail))}` : label

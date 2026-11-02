@@ -40,6 +40,10 @@ const scoreRange = ref<[number, number]>([props.initial?.minScore ?? 0, props.in
 /** Phone only: the filters below the search field fold away so the jobs start near the top. */
 const expanded = ref(false)
 
+// A chip's close button is an 18px target the chip clips, so the phone shows the chips without
+// it; the field's clear icon (44px) clears them all, and the menu removes one.
+const isDesktop = useState<boolean>('shell-is-desktop')
+
 /** Filters other than the search text that differ from their defaults, for the phone toggle. */
 const activeCount = computed(() =>
   (status.value.length ? 1 : 0)
@@ -141,7 +145,7 @@ onBeforeUnmount(cancelTimers)
           clearable
           hide-details
           chips
-          closable-chips
+          :closable-chips="isDesktop"
         />
 
         <v-select
