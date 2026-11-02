@@ -15,6 +15,7 @@ const TASKS: TaskDef[] = [
   { id: 'pipeline:daily', label: 'Full run', detail: `Every step below, in order. This is what runs ${PIPELINE_SCHEDULE_TEXT}.`, usesAi: true },
   { id: 'repos:index', label: 'Index GitHub commits', detail: 'Reads your own commits in the repos switched on under GitHub evidence. Nothing is sent to Claude.', usesAi: false },
   { id: 'learn:daily', label: 'Learn from decisions', detail: 'Turns approve and reject reasons into scoring rules.', usesAi: false },
+  { id: 'memory:leads', label: 'Leads from your Claude sessions', detail: 'Searches your laptop\'s memory for leads on open questions. Skipped when it is not reachable.', usesAi: false },
   { id: 'jobs:search', label: 'Search listings', detail: 'Pulls new postings from every active search.', usesAi: false },
   { id: 'jobs:enrich', label: 'Read postings', detail: 'Fetches full postings, apply links, pay, and benefits.', usesAi: true },
   { id: 'jobs:match', label: 'Score matches', detail: 'Scores skills and pay against your floor.', usesAi: true },
@@ -170,6 +171,7 @@ onMounted(() => {
                 <NuxtLink :to="`/demos/${d.id}`" class="pp__demo-link">{{ d.name }}</NuxtLink>{{ d.state ? ` (${d.state})` : '' }}{{ i < runDemos(r.stats).length - 1 ? ', ' : '' }}
               </template>
             </div>
+            <div v-if="typeof r.stats?.note === 'string'">{{ r.stats.note }}</div>
             <div v-if="r.error" class="pp__run-error">{{ plainError(r.error) }}</div>
           </div>
         </v-expand-transition>

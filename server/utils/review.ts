@@ -158,22 +158,62 @@ export function referencedQuestionIds(app: AppRow): number[] {
     .filter((id): id is number => typeof id === 'number')
 }
 
+function hasValue(v: FormAnswer['value']): boolean {
+  if (v === null || v === undefined) return false
+  if (typeof v === 'string') return v.trim().length > 0
+  if (Array.isArray(v)) return v.length > 0
+  return true
+}
+
 /**
- * Pending questions for an application: the ones it asked (application_id) plus the ones its
- * answers reference. askQuestion() dedupes by subject, so one question row can serve several
- * applications while its application_id names only the first.
+ * Questions a required, still empty form field waits on, whatever their status. A required
+ * field is never left with nothing to answer: an answer that did not fit the field, or a skipped
+ * question, still shows under Answer first until the field is filled.
  */
-function openQuestionsFor(app: AppRow, job: JobRow, pending: QuestionRow[]): QuestionRow[] {
+export function requiredWaitQuestionIds(app: AppRow): number[] {
+  const snapshot = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
+  const required = new Set((snapshot?.fields ?? []).filter(f => f.required).map(f => f.id))
+  return parseJson<FormAnswer[]>(app.answersJson, [])
+    .filter(a => typeof a.needsQuestionId === 'number' && required.has(a.fieldId) && !hasValue(a.value))
+    .map(a => a.needsQuestionId as number)
+}
+
+/** The questions to load for a set of applications: pending ones they asked or reference, plus any a required empty field waits on. */
+function questionFilter(appIds: number[], refIds: number[], waitIds: number[]) {
+  const pending = and(
+    eq(questions.status, 'pending'),
+    refIds.length ? or(inArray(questions.applicationId, appIds), inArray(questions.id, refIds)) : inArray(questions.applicationId, appIds),
+  )
+  return waitIds.length ? or(pending, inArray(questions.id, waitIds)) : pending
+}
+
+/**
+ * Open questions for an application: the pending ones it asked (application_id) plus the pending
+ * ones its answers reference, and any question a required empty field still waits on whatever its
+ * status. askQuestion() dedupes by subject, so one question row can serve several applications
+ * while its application_id names only the first.
+ */
+function openQuestionsFor(app: AppRow, job: JobRow, loaded: QuestionRow[]): QuestionRow[] {
   const refs = new Set(referencedQuestionIds(app))
+  const waits = new Set(requiredWaitQuestionIds(app))
   // Blocking is per application: a question blocks this one only when one of its own required
   // form fields waits on it. A question this application asked that no field references keeps
   // the row's flag. Another employer's required field never blocks this application.
   const snapshot = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
   const required = new Set((snapshot?.fields ?? []).filter(f => f.required).map(f => f.id))
   const answers = parseJson<FormAnswer[]>(app.answersJson, [])
-  return pending
-    .filter(q => q.applicationId === app.id || refs.has(q.id))
+  return loaded
+    .filter(q => q.status === 'pending' ? q.applicationId === app.id || refs.has(q.id) : waits.has(q.id))
     .map((q) => {
+      if (q.status !== 'pending') {
+        // Answered or skipped, yet a required field is still empty: ask it again here.
+        const own = answers.find(a => a.needsQuestionId === q.id && required.has(a.fieldId))
+        const label = cleanFieldLabel(own?.label ?? q.subject ?? q.question)
+        const why = q.status === 'answered' && q.answer
+          ? `Your answer "${q.answer}" did not fill "${label}" on ${job.company}'s form. Answer again with one of its options.`
+          : `${job.company} asks "${label}" on its application form. The field is required, so the application waits on your answer.`
+        return { ...q, blocking: true, context: why }
+      }
       const fields = answers.filter(a => a.needsQuestionId === q.id)
       const blocking = fields.length > 0
         ? fields.some(a => required.has(a.fieldId))
@@ -200,10 +240,8 @@ export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
   const appIds = rows.map(r => r.app.id)
   const demos = db.select().from(demoProjects).where(inArray(demoProjects.applicationId, appIds)).orderBy(desc(demoProjects.id)).all()
   const refIds = rows.flatMap(r => referencedQuestionIds(r.app))
-  const qs = db.select().from(questions).where(and(
-    eq(questions.status, 'pending'),
-    refIds.length ? or(inArray(questions.applicationId, appIds), inArray(questions.id, refIds)) : inArray(questions.applicationId, appIds),
-  )).all()
+  const waitIds = rows.flatMap(r => requiredWaitQuestionIds(r.app))
+  const qs = db.select().from(questions).where(questionFilter(appIds, refIds, waitIds)).all()
   const negativeSkills = negativeSkillTerms()
   return rows
     .map(({ app, job }) => toReviewItem(
@@ -228,11 +266,7 @@ export function getReviewItem(applicationId: number): ReviewItem | null {
     .where(eq(demoProjects.applicationId, applicationId))
     .orderBy(desc(demoProjects.id)).all()
     .find(d => d.status !== 'discarded') ?? null
-  const refIds = referencedQuestionIds(row.app)
-  const qs = db.select().from(questions).where(and(
-    eq(questions.status, 'pending'),
-    refIds.length ? or(eq(questions.applicationId, applicationId), inArray(questions.id, refIds)) : eq(questions.applicationId, applicationId),
-  )).all()
+  const qs = db.select().from(questions).where(questionFilter([applicationId], referencedQuestionIds(row.app), requiredWaitQuestionIds(row.app))).all()
   return toReviewItem(row.app, row.job, demo, openQuestionsFor(row.app, row.job, qs))
 }
 

@@ -680,13 +680,20 @@ export async function answerQuestion(id: number, rawAnswer: string, example?: st
   const entry = writeAnswerKnowledge(q, normalized, savedExample)
   // The same answer again (an example added or changed) changes no form answer and no score:
   // forms read the answer itself, and scores read whether he has it. Its answered date stays too.
+  // One exception: a form field that still waits on this question (the card shows it again under
+  // Answer first) is re-derived, or answering it again would do nothing.
   if (q.status === 'answered' && q.answer === normalized) {
     db.update(questions).set({ knowledgeKey: `${entry.category}:${entry.key}` }).where(eq(questions.id, id)).run()
+    const stillWaiting = waitingApplicationIds(q).filter(appId => {
+      const app = db.select({ answersJson: applications.answersJson }).from(applications).where(eq(applications.id, appId)).get()
+      return parseJson<FormAnswer[]>(app?.answersJson, []).some(a => a.needsQuestionId === id)
+    })
+    const again = await refreshWaitingApplications(stillWaiting)
     return {
       question: questionItem(id),
       knowledge: { category: entry.category, key: entry.key, value: entry.value },
-      refreshedApplicationIds: [],
-      refreshUnavailable: false,
+      refreshedApplicationIds: again.refreshed,
+      refreshUnavailable: again.unavailable,
       rescored: 0,
     }
   }

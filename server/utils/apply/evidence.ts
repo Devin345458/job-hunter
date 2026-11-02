@@ -118,15 +118,20 @@ export function groundCheck(line: ClaimLine, c: Check, g: Grounding): string | n
     if (!src || /^none$/i.test(src)) return `No source states: "${cl.claim}"`
     let text: string | null = null
     let entryKey: string | null = null
+    let wholeValue: string | null = null
     if (/^posting$/i.test(src)) text = g.posting
     else {
       const e = g.entries.find(x => norm(`${x.category}/${x.key}`) === norm(src) || norm(x.key) === norm(src))
-      if (e) { text = `${e.key}\n${e.value}`; entryKey = `${e.category}/${e.key}` }
+      if (e) { text = `${e.key}\n${e.value}`; entryKey = `${e.category}/${e.key}`; wholeValue = norm(e.value) }
     }
     if (!text) return `Cites a source that does not exist: "${src}"`
     if (/^posting$/i.test(src) && /\bdevin\b|^(i|my|he|his)\b/i.test(cl.claim.trim())) return `A fact about Devin cannot come from the posting: "${cl.claim}"`
     const q = norm(cl.quote ?? '')
-    if (q.length < 8 || !norm(text).includes(q)) return `The quote for "${cl.claim}" is not in ${src}`
+    // A short quote is too easy to find by chance, unless it is the cited entry's whole value:
+    // "Years of Experience" holds only "6+", and rejecting that dropped a true "six years" line
+    // from half the letters (and, in Render's, left the next sentence opening on "Before that").
+    const isWholeValue = q.length > 0 && q === wholeValue
+    if ((q.length < 8 && !isWholeValue) || !norm(text).includes(q)) return `The quote for "${cl.claim}" is not in ${src}`
     const claimNorm = norm(cl.claim)
     for (const emp of g.employers) {
       // Allowed when the verified quote itself names the employer: Devin's own example ("At Applied
@@ -216,6 +221,56 @@ export async function verifyClaims(
 }
 
 /** Human-readable record of an evidence check, stored in tailoring_notes. */
+// ── Sentences left pointing at a dropped one ─────────────────
+
+/** An opener that refers back to the sentence before it. Stripping it leaves a whole sentence: "Before that, I worked as CTO" reads "I worked as CTO". */
+const BACK_ADVERB = /^(?:before that|before this|prior to that|after that|since then|also|in addition|additionally|similarly|likewise|furthermore|moreover|beyond that|on top of that|as well)(?:\s*,\s*|\s+(?=I\b))/i
+/** A subject that only means something after the sentence before it ("That role", "It", "These"). Not strippable: the sentence goes. "This role" names the job applied for and stays. */
+const BACK_SUBJECT = /^(?:it|they|these|those|there|that\s+(?:role|job|position|team|company|experience|work|project|time)|this\s+(?:experience|work|background))\b/i
+
+const UPPER_START = /^[a-z]/
+
+/**
+ * The kept sentences of each paragraph, joined, after the evidence check. A dropped sentence can
+ * leave the next one opening on a reference to it: Render's letter lost its first sentence to the
+ * check and then opened "Before that, I worked as CTO ...". Here a sentence that follows a dropped
+ * one loses a back-referring opener ("Before that,", "Also,", "In addition,"), and a paragraph
+ * whose new first sentence starts on a back-referring subject ("That role", "It") loses that
+ * sentence too. Words are only removed, never added, so the check's verdict on the rest holds.
+ * The outcomes are updated in place so the evidence report says what changed.
+ */
+export function joinKeptParagraphs(paragraphs: string[][], outcomes: ClaimOutcome[], idOf: (paragraph: number, sentence: number) => string): string[] {
+  const byId = new Map(outcomes.map(o => [o.id, o]))
+  const why = 'opened on a reference to a sentence the evidence check removed'
+  let previousDropped = false
+  const out: string[] = []
+  paragraphs.forEach((sentences, i) => {
+    const kept: string[] = []
+    sentences.forEach((_, j) => {
+      const o = byId.get(idOf(i, j))
+      if (o?.final && previousDropped) {
+        const m = BACK_ADVERB.exec(o.final)
+        if (m) {
+          const rest = o.final.slice(m[0].length)
+          const fixed = UPPER_START.test(rest) ? rest.charAt(0).toUpperCase() + rest.slice(1) : rest
+          o.problem = o.problem ? `${withoutEndPeriod(o.problem)}; ${why}` : why
+          if (o.status === 'supported') o.status = 'rewritten'
+          o.final = fixed
+        }
+        else if (kept.length === 0 && BACK_SUBJECT.test(o.final)) {
+          o.problem = o.problem ? `${withoutEndPeriod(o.problem)}; ${why}` : why
+          o.status = 'dropped'
+          o.final = null
+        }
+      }
+      if (o?.final) kept.push(o.final)
+      previousDropped = !o?.final
+    })
+    if (kept.length) out.push(kept.join(' '))
+  })
+  return out
+}
+
 export function evidenceReport(title: string, outcomes: ClaimOutcome[]): string {
   const supported = outcomes.filter(o => o.status === 'supported').length
   const rewritten = outcomes.filter(o => o.status === 'rewritten')

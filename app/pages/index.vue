@@ -213,13 +213,17 @@ async function answer(questionId: number, value: string | null, skip = false) {
 // ── Phone: the full list lives in a sheet ──
 const sheetOpen = ref(false)
 
-// ── Keyboard: j and k step through the queue on a keyboard ──
+// ── Keyboard: J and K step through the queue. Approve never has a key. ──
 function onKey(e: KeyboardEvent) {
-  if (rejectOpen.value || e.metaKey || e.ctrlKey || e.altKey) return
+  if (rejectOpen.value || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
   const t = e.target as HTMLElement | null
   if (t && (t.closest('input, textarea, select, [contenteditable="true"]'))) return
-  if (e.key === 'j') step(1)
-  else if (e.key === 'k') step(-1)
+  // A dialog or menu is open (the skill panel, the screenshot): the keys belong to it. A notice
+  // (snackbar) or tooltip is an overlay too, but it never takes the keys.
+  if (document.querySelector('.v-dialog.v-overlay--active, .v-menu.v-overlay--active')) return
+  const key = e.key.toLowerCase()
+  if (key === 'j') step(1)
+  else if (key === 'k') step(-1)
 }
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
@@ -268,7 +272,7 @@ const leftLabel = computed(() => {
         </header>
         <ReviewHealth />
         <ReviewQueueList :groups="groups" :selected-id="selectedId" class="rv__list" @select="id => select(id)" />
-        <p class="rv__keys">Keys: j next, k previous</p>
+        <p class="rv__keys">Keys: J next, K previous</p>
       </aside>
       <section class="rv__detail" aria-live="polite">
         <ReviewCard
@@ -286,7 +290,13 @@ const leftLabel = computed(() => {
           @skip="id => answer(id, null, true)"
           @prepare="prepareAgain"
           @refresh="selected && queue.fetchOne(selected.applicationId)"
-        />
+        >
+          <template #nav>
+            <span v-if="position" class="rv__cardpos">{{ position.label }} <span class="tabular">{{ position.count }}</span></span>
+            <v-btn variant="text" size="small" height="32" prepend-icon="mdi-chevron-left" aria-label="Previous card (K)" title="Previous card (K)" @click="step(-1)">Previous</v-btn>
+            <v-btn variant="text" size="small" height="32" append-icon="mdi-chevron-right" aria-label="Next card (J)" title="Next card (J)" @click="step(1)">Next</v-btn>
+          </template>
+        </ReviewCard>
         <div v-else class="rv__state rv__state--pane">
           <v-icon icon="mdi-check-all" size="28" color="success" />
           <h2 class="rv__state-title">All decided</h2>
@@ -436,6 +446,12 @@ const leftLabel = computed(() => {
     padding: 6px 16px;
     background: rgb(var(--v-theme-background));
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__cardpos {
+    margin-right: 4px;
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__pos {

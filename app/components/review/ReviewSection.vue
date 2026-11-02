@@ -17,10 +17,18 @@ const props = withDefaults(defineProps<{
 
 const open = ref(props.defaultOpen)
 const id = useId()
+const el = ref<HTMLElement | null>(null)
+
+/** Opens the section and scrolls its heading to the top of the nearest scrolling box. */
+function show() {
+  open.value = true
+  nextTick(() => el.value?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+}
+defineExpose({ show })
 </script>
 
 <template>
-  <section class="rsec" :class="{ 'rsec--open': open }">
+  <section ref="el" class="rsec" :class="{ 'rsec--open': open }">
     <button
       type="button"
       class="rsec__head"

@@ -9,9 +9,10 @@ import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { ADDRESS_CONTEXT, answeredValue, askOrReuse, askQuestion, canonicalQuestion, type AskInput, type AskOutcome, type QuestionRow } from '../questions'
 import { nowSql, parseJson, setApplicationStatus } from '../review'
 import { ATS_LABELS } from './ats'
-import { knowledgeForPrompt, knowledgeText, verifyClaims } from './evidence'
+import { joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims } from './evidence'
 import { bestOption } from './fill'
 import { normalizeLabel, scrubDashes, splitSentences, truncate, unsupportedNumbers } from './text'
+import { cleanFieldLabel } from '#shared/utils/plain-text'
 
 type JobRow = InferSelectModel<typeof jobs>
 
@@ -509,8 +510,9 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
       const lines = toVerify.flatMap(v => v.sentences.map((s, i) => ({ id: `${v.field.id}.S${i + 1}`, text: s })))
       const outcomes = await verifyClaims(lines, { entries: ctx.entries, posting, purpose: 'form_answers_verify', ref })
       for (const v of toVerify) {
-        const kept = v.sentences.map((_, i) => outcomes.find(o => o.id === `${v.field.id}.S${i + 1}`)?.final).filter(Boolean)
-        const dropped = v.sentences.length - kept.length
+        // A sentence left opening on a reference to a dropped one ("Also, ...") is repaired, as in the cover letter.
+        const kept = joinKeptParagraphs([v.sentences], outcomes, (_, i) => `${v.field.id}.S${i + 1}`)
+        const dropped = v.sentences.length - v.sentences.filter((_, i) => outcomes.find(o => o.id === `${v.field.id}.S${i + 1}`)?.final).length
         if (kept.length === 0) {
           results.delete(v.field.id)
           if (v.field.required) formFieldAsk(v.field, null)
@@ -531,6 +533,13 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
 }
 
 // ── Blockers and refresh ─────────────────────────────────────
+
+function hasValue(v: FormAnswer['value']): boolean {
+  if (v === null || v === undefined) return false
+  if (typeof v === 'string') return v.trim().length > 0
+  if (Array.isArray(v)) return v.length > 0
+  return true
+}
 
 /** Question ids the answers wait on that are still pending and blocking. */
 export function openBlockingQuestionIds(answers: FormAnswer[], snapshot?: FormSnapshot | null): number[] {
@@ -588,8 +597,13 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     }
     // A personal fact the knowledge base now answers fills the field whatever the question's
     // state: the address answer is split into parts, and each field takes the part it asks for.
+    // Except when Devin answered the field's own question: that question exists only because the
+    // fact could not fill the field ("Location Preference" reads as his home city, which matches
+    // none of Upstart's options), so his answer wins. Taking the fact again left the field waiting
+    // on an answered question forever, with nothing to answer on the card.
     const matched = matchFact(field)
-    if (matched && (q.status === 'answered' || a.needsQuestionId)) {
+    const ownAnswer = q.kind === 'form_field' && q.status === 'answered'
+    if (matched && !ownAnswer && (q.status === 'answered' || a.needsQuestionId)) {
       const { res } = resolveField(matched, field, facts, snapshot.fields)
       if (res.kind === 'value') {
         const value = valueFromFact(field, res)
@@ -637,11 +651,36 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     }
   }
 
+  // A required field whose question was skipped or is gone is asked again (askQuestion inserts a
+  // new pending row when no pending or answered one exists), so the card always has a question
+  // for it under Answer first.
+  const job = db.select({ company: jobs.company }).from(jobs).where(eq(jobs.id, app.jobId)).get()
+  for (let i = 0; i < next.length; i++) {
+    const a = next[i]!
+    const field = snapshot.fields.find(f => f.id === a.fieldId)
+    if (!field?.required || !a.needsQuestionId || hasValue(a.value)) continue
+    const status = [...qById.values()].find(q => q.id === a.needsQuestionId)?.status
+    if (status === 'pending' || status === 'answered') continue
+    const label = cleanFieldLabel(field.label)
+    const asked = askQuestion({
+      ...formFieldQuestion(field, null),
+      applicationId,
+      jobId: app.jobId,
+      context: `${job?.company || 'The employer'} asks "${label}" on its application form. The field is required, so the application waits on your answer.`,
+      blocking: true,
+    })
+    qById.set(asked.id, asked)
+    updated++
+    next[i] = { ...a, needsQuestionId: asked.id, sourceDetail: `question #${asked.id}: ${truncate(label, 80)}` }
+  }
+
   const blocking = openBlockingQuestionIds(next, snapshot)
   const statusOf = (id: number) => [...qById.values()].find(q => q.id === id)?.status
+  // A required field still waiting on a question that is not pending (answered but the answer
+  // did not fit, skipped, or gone) keeps the application waiting: it never goes to review blank.
   const unresolvedRequired = next.filter((a) => {
     const f = snapshot.fields.find(x => x.id === a.fieldId)
-    return f?.required && a.needsQuestionId && !blocking.includes(a.needsQuestionId) && statusOf(a.needsQuestionId) === 'answered'
+    return f?.required && a.needsQuestionId && !hasValue(a.value) && !blocking.includes(a.needsQuestionId) && statusOf(a.needsQuestionId) !== 'pending'
   })
   let status = app.status
   const extra: Record<string, unknown> = { answersJson: JSON.stringify(next) }

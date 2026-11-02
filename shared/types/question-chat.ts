@@ -2,6 +2,8 @@
 // The client sends only the question id and the conversation; the server builds every bit of
 // context (question, job, posting, knowledge base) itself.
 
+import type { ChatMemoryUse } from './memory'
+
 export type QuestionChatRole = 'user' | 'assistant'
 
 export interface QuestionChatTurn {
@@ -34,6 +36,11 @@ export type QuestionChatResponse =
        * the chat. "Use this draft" puts it in the card's answer box; it is never saved on its own.
        */
       draft: string | null
+      /**
+       * How the reply used Devin's past Claude sessions (shared/types/memory.ts). 'unreachable'
+       * makes the panel say once per conversation that his laptop's memory is not reachable.
+       */
+      memory?: ChatMemoryUse
     }
   | {
       ok: false

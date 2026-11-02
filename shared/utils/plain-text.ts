@@ -167,6 +167,16 @@ export function capitalize(text: string): string {
   return first === first.toLowerCase() ? text.charAt(0).toUpperCase() + text.slice(1) : text
 }
 
+/**
+ * One plain figure where the score reasoning gives two: "which works out to about 9/12 (33 of 45)"
+ * becomes "which works out to about 9 of 12". The second figure is the must-have points the
+ * Match score panel already shows.
+ */
+export function plainScoreFigures(text: string): string {
+  return text
+    .replace(/\b(\d+)\s*\/\s*(\d+)\s*\(\s*\d+\s*(?:of|out of|\/)\s*\d+(?:\s*points?)?\s*\)/gi, '$1 of $2')
+}
+
 /** "9 gap(s)" becomes "9 gaps", "1 question(s)" becomes "1 question", "field(s)" becomes "fields". */
 export function fixPlurals(text: string): string {
   return text

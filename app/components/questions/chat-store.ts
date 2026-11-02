@@ -1,5 +1,6 @@
 import type { QuestionListItem } from '#shared/types/learning'
 import type { QuestionChatResponse, QuestionChatTurn } from '#shared/types/question-chat'
+import type { ChatMemoryUse } from '#shared/types/memory'
 
 // Conversations for the chat panel on /questions, one per question plus one for free questions.
 // They live in this browser tab only (sessionStorage), so switching questions keeps each thread;
@@ -31,7 +32,14 @@ export interface ChatMessage {
   content: string
   suggestedAnswer?: string | null
   draft?: string | null
+  /** How the reply used Devin's past Claude sessions. */
+  memory?: ChatMemoryUse
+  /** memory_unreachable: the once-per-conversation line saying his laptop's memory is not reachable. */
+  kind?: 'memory_unreachable'
 }
+
+/** Said once per conversation when the memory server cannot be reached; the chat carries on without it. */
+export const MEMORY_UNREACHABLE = 'Your laptop\'s memory is not reachable right now.'
 
 const THREADS_KEY = 'job-hunter:question-chat:threads:v1'
 const SELECTED_KEY = 'job-hunter:question-chat:selected:v1'
@@ -95,7 +103,12 @@ export function useQuestionChat() {
         method: 'POST',
         body: { questionId, messages },
       })
-      if (res.ok) push(key, { id: newId(), role: 'assistant', content: res.reply, suggestedAnswer: res.suggestedAnswer, draft: res.draft })
+      if (res.ok) {
+        if (res.memory === 'unreachable' && !(threads.value[key] ?? []).some(m => m.kind === 'memory_unreachable')) {
+          push(key, { id: newId(), role: 'notice', kind: 'memory_unreachable', content: MEMORY_UNREACHABLE })
+        }
+        push(key, { id: newId(), role: 'assistant', content: res.reply, suggestedAnswer: res.suggestedAnswer, draft: res.draft, memory: res.memory ?? null })
+      }
       else push(key, { id: newId(), role: 'notice', content: res.message })
     }
     catch (e: any) {

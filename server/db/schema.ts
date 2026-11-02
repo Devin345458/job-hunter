@@ -110,6 +110,9 @@ export const questions = sqliteTable('questions', {
   answerType: text('answer_type'), // yes_no, text, number, choice
   choicesJson: text('choices_json'), // string[]
   dedupeKey: text('dedupe_key'), // normalized subject, so the same thing is never asked twice
+  // Leads from Devin's past Claude sessions (migration 0003): QuestionMemoryLeads in shared/types/memory.ts.
+  // The only place memory excerpts are stored; never copied into answers or the knowledge base.
+  memoryLeadsJson: text('memory_leads_json'),
 }, (table) => [
   index('questions_status_idx').on(table.status),
   index('questions_dedupe_key_idx').on(table.dedupeKey),

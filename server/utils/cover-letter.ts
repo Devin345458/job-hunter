@@ -5,7 +5,7 @@ import type { TailoredResume } from '#shared/types/pipeline'
 import { aiStructured } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { profileValue } from './knowledge'
-import { evidenceReport, knowledgeForPrompt, verifyClaims, type ClaimOutcome } from './apply/evidence'
+import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, verifyClaims, type ClaimOutcome } from './apply/evidence'
 import { scrubDashes, splitSentences } from './apply/text'
 import { postingTextOf } from './tailor'
 
@@ -62,11 +62,8 @@ ${posting}`,
   const paragraphs = draft.paragraphs.map(p => splitSentences(scrubDashes(p.trim()))).filter(p => p.length > 0)
   const lines = paragraphs.flatMap((sentences, i) => sentences.map((s, j) => ({ id: `P${i + 1}.S${j + 1}`, text: s })))
   const evidence = await verifyClaims(lines, { entries, posting, purpose: 'cover_letter_verify', ref })
-  const finalOf = (id: string) => evidence.find(o => o.id === id)?.final ?? null
-
-  const body = paragraphs
-    .map((sentences, i) => sentences.map((_, j) => finalOf(`P${i + 1}.S${j + 1}`)).filter(Boolean).join(' '))
-    .filter(p => p.trim().length > 0)
+  // A sentence left opening on a reference to a dropped one ("Before that, ...") is repaired here.
+  const body = joinKeptParagraphs(paragraphs, evidence, (i, j) => `P${i + 1}.S${j + 1}`)
 
   const name = profileValue(entries, 'Full Name', 'name') || 'Devin Hollister-Graham'
   const text = [`Dear Hiring Team at ${job.company},`, ...body, `Sincerely,\n${name}`].join('\n\n')

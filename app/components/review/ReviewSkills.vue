@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import type { Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { knowledgeSource } from '~/composables/review/format'
-import { secondPerson } from '#shared/utils/plain-text'
+import { plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
+import { skillSets } from '#shared/utils/skill-sets'
 
 // Skills fit: matched and missing skills first, then each posting requirement with what the
-// knowledge base says about it. Every Missing chip and every requirement that is not Have is a
+// knowledge base says about it. The chips come from the requirements (skillSets), so they never
+// contradict the checklist. Every Missing chip and every requirement that is not Have is a
 // button: tapping it opens the skill panel (SkillsClaimDialog, hosted by the card) to say you have it.
 const props = defineProps<{
   score: ScoreBreakdown | null
   requirements: Requirement[]
+  /** Desktop shows the Missing chips under the score instead, so this section keeps Matched and the checklist. */
+  hideMissing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,26 +32,27 @@ function chipName(s: string) {
 }
 
 const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mustHave) - Number(a.mustHave)))
+const sets = computed(() => skillSets(props.requirements, props.score))
 </script>
 
 <template>
   <div class="skills">
-    <p v-if="score?.skills.reasoning" class="skills__reason">{{ secondPerson(score.skills.reasoning) }}</p>
+    <p v-if="score?.skills.reasoning" class="skills__reason">{{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}</p>
 
-    <div v-if="score" class="skills__sets">
+    <div v-if="score || sets.matched.length || sets.missing.length" class="skills__sets">
       <div class="skills__set">
-        <div class="skills__set-label">Matched <span class="tabular">{{ score.skills.matched.length }}</span></div>
+        <div class="skills__set-label">Matched <span class="tabular">{{ sets.matched.length }}</span></div>
         <div class="skills__chips">
-          <v-chip v-for="s in score.skills.matched" :key="s" size="small" color="success" variant="tonal" prepend-icon="mdi-check">{{ s }}</v-chip>
-          <span v-if="!score.skills.matched.length" class="skills__none">None</span>
+          <v-chip v-for="c in sets.matched" :key="c.text" size="small" color="success" variant="tonal" :prepend-icon="c.status === 'partial' ? 'mdi-circle-half-full' : 'mdi-check'" :title="c.text !== c.label ? c.text : undefined">{{ c.label }}</v-chip>
+          <span v-if="!sets.matched.length" class="skills__none">None</span>
         </div>
       </div>
-      <div class="skills__set">
-        <div class="skills__set-label">Missing <span class="tabular">{{ score.skills.missing.length }}</span></div>
+      <div v-if="!hideMissing" class="skills__set">
+        <div class="skills__set-label">Missing <span class="tabular">{{ sets.missing.length }}</span></div>
         <div class="skills__chips">
           <v-chip
-            v-for="s in score.skills.missing"
-            :key="s"
+            v-for="c in sets.missing"
+            :key="c.text"
             tag="button"
             type="button"
             size="small"
@@ -56,14 +61,15 @@ const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mu
             prepend-icon="mdi-minus"
             append-icon="mdi-chevron-right"
             class="skills__claim-chip"
-            :aria-label="`${chipName(s)}: say whether you have it`"
-            @click="emit('claim', s, 'missing')"
+            :title="c.text !== c.label ? c.text : undefined"
+            :aria-label="`${chipName(c.label)}: say whether you have it`"
+            @click="emit('claim', c.text, c.source)"
           >
-            {{ s }}
+            {{ c.label }}
           </v-chip>
-          <span v-if="!score.skills.missing.length" class="skills__none">Nothing missing</span>
+          <span v-if="!sets.missing.length" class="skills__none">Nothing missing</span>
         </div>
-        <p v-if="score.skills.missing.length" class="skills__hint">Tap one you have to say so.</p>
+        <p v-if="sets.missing.length" class="skills__hint">Tap one you have to say so.</p>
       </div>
     </div>
 

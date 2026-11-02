@@ -11,6 +11,7 @@ export type RunOutcome = 'running' | 'succeeded' | 'partial' | 'failed' | 'skipp
 export const TASK_LABELS: Record<string, string> = {
   'pipeline:daily': 'Full run',
   'learn:daily': 'Learn from decisions',
+  'memory:leads': 'Leads from your Claude sessions',
   'jobs:search': 'Search listings',
   'jobs:enrich': 'Read postings',
   'jobs:match': 'Score matches',
