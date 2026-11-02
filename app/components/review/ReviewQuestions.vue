@@ -151,10 +151,11 @@ watch(() => props.questions.map(q => q.id), (ids) => {
   }
 })
 
-function useDraft(text: string) {
+function useDraft(text: string, level: string | null = null) {
   const q = chatQuestion.value
   if (!q) return
   if (takesExample(q)) {
+    if (level && isExampleLevel(level)) levels[q.id] = level
     examples[q.id] = text
     exampleOpen[q.id] = true
   }

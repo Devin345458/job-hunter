@@ -47,7 +47,7 @@ const chatQuestionId = ref<number | null>(null)
 const chatOpen = ref(false)
 const chatPanel = ref<{ focus: () => void } | null>(null)
 /** Drafts sent to a card's answer box by "Use this draft", keyed by question id. */
-const prefills = ref<Record<number, { text: string; nonce: number }>>({})
+const prefills = ref<Record<number, { text: string; nonce: number; level?: string | null }>>({})
 /** What each card's open answer box holds, so "Use this draft" asks before replacing typed text. */
 const boxTexts = ref<Record<number, string>>({})
 /** The chat's "Answer: Yes" on a skill or experience question, keyed by question id: the card picks it and opens the example box. */
@@ -94,10 +94,10 @@ function answerFromChat(value: string) {
   answer(q, value)
 }
 
-function useDraft(text: string) {
+function useDraft(text: string, level: string | null = null) {
   const q = chatQuestion.value
   if (!q) return
-  prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now() } }
+  prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now(), level } }
   chatOpen.value = false
   if (q.status === 'answered') {
     showAnswered.value = true
@@ -105,7 +105,7 @@ function useDraft(text: string) {
   }
   scrollToCard(q.id)
   snackbar.info(q.takesExample && !q.legacy
-    ? 'The draft is in the example box. Edit it, then press Save.'
+    ? `${level ? `${level} is picked and the` : 'The'} draft is in the example box. Edit it, then press Save.`
     : 'The draft is in the answer box. Edit it, then press Save.')
 }
 

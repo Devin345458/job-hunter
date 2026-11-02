@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { chatThreadKey, takesExample, useQuestionChat, type ChatQuestion } from './chat-store'
+import { chatThreadKey, EXAMPLE_LEVELS, takesExample, useQuestionChat, type ChatQuestion } from './chat-store'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
@@ -20,7 +20,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   answer: [value: string]
-  useDraft: [text: string]
+  useDraft: [text: string, level: string | null]
   detach: []
   close: []
 }>()
@@ -95,14 +95,29 @@ const canUseDraft = computed(() => !!props.question && props.question.status !==
 /** The draft message waiting on "Replace what you typed?". */
 const confirmingDraft = ref<string | null>(null)
 
-function useDraft(id: string, draft: string) {
+/**
+ * On a pending skill or experience question a draft example means a yes: "Use this draft" picks the
+ * level Claude suggested (Some experience when it said so, else Yes) and fills the example box in one tap.
+ */
+function draftLevel(m: { suggestedAnswer?: string | null }): string | null {
+  if (!exampleQuestion.value || props.question?.status !== 'pending') return null
+  const s = m.suggestedAnswer ?? ''
+  return (EXAMPLE_LEVELS as readonly string[]).includes(s) ? s : 'Yes'
+}
+
+/** A suggested Yes or Some experience is folded into "Use this draft" when the same message has a draft. */
+function foldedIntoDraft(m: { draft?: string | null; suggestedAnswer?: string | null }): boolean {
+  return !!m.draft && canUseDraft.value && !!m.suggestedAnswer && opensExample(m.suggestedAnswer)
+}
+
+function useDraft(id: string, draft: string, level: string | null = null) {
   const typed = (props.boxText ?? '').trim()
   if (typed && typed !== draft.trim() && confirmingDraft.value !== id) {
     confirmingDraft.value = id
     return
   }
   confirmingDraft.value = null
-  emit('useDraft', draft)
+  emit('useDraft', draft, level)
 }
 
 watch(key, () => {
@@ -217,19 +232,22 @@ defineExpose({ focus: () => input.value?.focus() })
             <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
               <span class="text-body-2">Replace what you already typed in the {{ boxName }}?</span>
               <div class="question-chat__confirm-actions">
-                <v-btn color="primary" variant="flat" class="question-chat__action" @click="useDraft(m.id, m.draft!)">Replace</v-btn>
+                <v-btn color="primary" variant="flat" class="question-chat__action" @click="useDraft(m.id, m.draft!, draftLevel(m))">Replace</v-btn>
                 <v-btn variant="text" class="question-chat__action" @click="confirmingDraft = null">Keep mine</v-btn>
               </div>
             </div>
             <div v-else-if="canUseDraft" class="question-chat__draft-actions">
-              <v-btn color="primary" variant="tonal" class="question-chat__action" prepend-icon="mdi-text-box-edit-outline" @click="useDraft(m.id, m.draft!)">
+              <v-btn color="primary" variant="tonal" class="question-chat__action" prepend-icon="mdi-text-box-edit-outline" @click="useDraft(m.id, m.draft!, draftLevel(m))">
                 Use this draft
               </v-btn>
-              <span class="text-caption text-medium-emphasis">Puts it in the {{ boxName }} on the card. Nothing is saved until you press Save.</span>
+              <span class="text-caption text-medium-emphasis">
+                {{ draftLevel(m) ? `Picks ${draftLevel(m)} and puts the draft in the example box.` : `Puts it in the ${boxName} on the card.` }}
+                Nothing is saved until you press Save.
+              </span>
             </div>
           </div>
 
-          <div v-if="m.role === 'assistant' && m.suggestedAnswer && canSuggest(m.suggestedAnswer)" class="question-chat__suggest">
+          <div v-if="m.role === 'assistant' && m.suggestedAnswer && canSuggest(m.suggestedAnswer) && !foldedIntoDraft(m)" class="question-chat__suggest">
             <div v-if="isSaved(m.suggestedAnswer)" class="question-chat__saved text-body-2">
               <v-icon icon="mdi-check-circle-outline" size="18" />
               Answered: {{ m.suggestedAnswer }}

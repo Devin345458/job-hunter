@@ -18,7 +18,7 @@ const props = defineProps<{
   /** This question is the one loaded in the chat panel. */
   asking?: boolean
   /** A draft from the chat's "Use this draft". Each new nonce puts its text in the answer box (or the example box); nothing is saved until Save. */
-  prefill?: { text: string; nonce: number } | null
+  prefill?: { text: string; nonce: number; level?: string | null } | null
   /** The chat's suggested Yes or Some experience on a skill or experience question. Each new nonce picks it and opens the example box. */
   pick?: { level: string; nonce: number } | null
 }>()
@@ -204,6 +204,9 @@ watch(() => props.prefill?.nonce, () => {
       if (!answeredWithLevel.value) return
       exampleOnly.value = true
     }
+    // From a pending question's draft: the level comes with it, so one tap picks Yes and fills the box.
+    const lv = props.prefill?.level
+    if (props.mode === 'pending' && lv && isExampleLevel(lv)) level.value = lv
     exampleText.value = text
     exampleOpen.value = true
     return
