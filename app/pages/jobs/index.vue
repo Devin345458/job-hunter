@@ -1,47 +1,80 @@
 <script setup lang="ts">
-import type { JobStatus, RemoteType } from '~/composables/useJobs'
-
-interface JobFilterValues {
-  search: string
-  status: JobStatus[]
-  remoteType: RemoteType | null
-  minScore: number
-  maxScore: number
-}
+import type { JobFilters } from '~/composables/useJobs'
+import type { JobFilterValues } from '~/components/jobs/JobFilters.vue'
+import { SupersededRequest } from '~/composables/useJobs'
 
 definePageMeta({
   layout: 'default',
 })
 
+/** Divides evenly into the two and three column grids. */
+const PAGE_SIZE = 24
+
 const router = useRouter()
-const { jobs, loading, error, fetchJobs, triggerSearch } = useJobs()
+const { jobs, total, page, loading, error, fetchJobs, triggerSearch } = useJobs()
 const snackbar = useSnackbar()
 
-const searching = ref(false)
+const filters = ref<JobFilters>({})
+const loadingMore = ref(false)
+const hasMore = computed(() => jobs.value.length < total.value)
 
-async function onFiltersUpdate(filters: JobFilterValues) {
-  await fetchJobs({
-    search: filters.search || undefined,
-    status: filters.status.length ? filters.status : undefined,
-    remoteType: filters.remoteType || undefined,
-    minScore: filters.minScore > 0 ? filters.minScore : undefined,
-  })
+async function load(options: { append?: boolean } = {}) {
+  try {
+    await fetchJobs({
+      ...filters.value,
+      page: options.append ? page.value + 1 : 1,
+      limit: PAGE_SIZE,
+    }, options)
+  }
+  catch (e) {
+    // A newer request replaced this one, or the error is already in `error` and shown above the list.
+    if (!(e instanceof SupersededRequest)) console.error('[jobs] list request failed', e)
+  }
 }
 
-async function onTriggerSearch() {
+function onFiltersUpdate(values: JobFilterValues) {
+  filters.value = {
+    search: values.search || undefined,
+    status: values.status.length ? values.status : undefined,
+    remoteType: values.remoteType || undefined,
+    minScore: values.minScore > 0 ? values.minScore : undefined,
+    maxScore: values.maxScore < 100 ? values.maxScore : undefined,
+  }
+  load()
+}
+
+async function loadMore() {
+  loadingMore.value = true
+  try {
+    await load({ append: true })
+  }
+  finally {
+    loadingMore.value = false
+  }
+}
+
+// ── Search now ───────────────────────────────────────────────
+const confirmSearch = ref(false)
+const searching = ref(false)
+
+async function runSearch() {
+  confirmSearch.value = false
   searching.value = true
   try {
     const result = await triggerSearch()
-    await fetchJobs()
+    await load()
+    const found = `${result.found} listing${result.found === 1 ? '' : 's'} checked`
+    const settingsAction = { text: 'View run', handler: () => router.push('/settings') }
     if (result.jobsFound > 0) {
-      snackbar.success(`Found ${result.jobsFound} new jobs`)
+      snackbar.success(`Search finished: ${result.jobsFound} new job${result.jobsFound === 1 ? '' : 's'}, ${found}.`, settingsAction)
     }
     else {
-      snackbar.info('Search complete. No new jobs found matching your criteria.')
+      snackbar.info(`Search finished: no new jobs, ${found}.`, settingsAction)
     }
   }
-  catch {
-    snackbar.error('Search failed. Check your API keys in Settings.', {
+  catch (e: any) {
+    const message = e?.data?.statusMessage || e?.statusMessage || e?.message || 'The job search failed.'
+    snackbar.error(message, {
       text: 'Go to Settings',
       handler: () => router.push('/settings'),
     })
@@ -51,31 +84,34 @@ async function onTriggerSearch() {
   }
 }
 
-function onJobClick(job: { id: number }) {
-  router.push(`/jobs/${job.id}`)
-}
-
 onMounted(() => {
-  fetchJobs()
+  load()
 })
 </script>
 
 <template>
-  <div class="fade-in">
-    <!-- Page Header -->
-    <div class="page-header mb-8">
-      <h1 class="text-h4 page-header__title">Job Feed</h1>
-      <p class="text-body-2 page-header__subtitle">
-        Browse jobs matched to your profile. Use filters to narrow results, or click a job to see match details and generate a tailored resume.
-      </p>
+  <div class="jobs-page fade-in">
+    <div class="page-header page-header--split">
+      <div>
+        <h1 class="text-h4 page-header__title">Job Feed</h1>
+        <p class="text-body-2 page-header__subtitle">
+          Browse jobs matched to your profile. Use filters to narrow results, or open a job to see match details and generate a tailored resume.
+        </p>
+      </div>
+      <v-btn
+        color="primary"
+        prepend-icon="mdi-magnify"
+        :loading="searching"
+        @click="confirmSearch = true"
+      >
+        Search now
+      </v-btn>
     </div>
 
-    <!-- Filter Bar -->
     <div class="mb-6">
       <JobsJobFilters @update:filters="onFiltersUpdate" />
     </div>
 
-    <!-- Error Alert -->
     <v-alert
       v-if="error"
       type="error"
@@ -91,21 +127,27 @@ onMounted(() => {
           size="small"
           color="error"
           prepend-icon="mdi-refresh"
-          @click="fetchJobs()"
+          @click="load()"
         >
           Try Again
         </v-btn>
       </div>
     </v-alert>
 
-    <!-- Loading -->
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
-
-    <!-- Job Grid -->
-    <template v-if="jobs.length">
-      <div class="text-caption text-medium-emphasis mb-3">
-        {{ jobs.length }} job{{ jobs.length !== 1 ? 's' : '' }} found
+    <div class="jobs-page__status">
+      <div v-if="jobs.length" class="text-caption text-medium-emphasis tabular" aria-live="polite">
+        Showing {{ jobs.length }} of {{ total }} job{{ total !== 1 ? 's' : '' }}
       </div>
+      <v-progress-linear
+        v-if="loading && !loadingMore"
+        indeterminate
+        color="primary"
+        class="jobs-page__progress"
+        aria-label="Loading jobs"
+      />
+    </div>
+
+    <template v-if="jobs.length">
       <v-row class="stagger-in">
         <v-col
           v-for="job in jobs"
@@ -114,12 +156,23 @@ onMounted(() => {
           sm="6"
           lg="4"
         >
-          <JobsJobCard :job="job" @click="onJobClick" />
+          <JobsJobCard :job="job" />
         </v-col>
       </v-row>
+
+      <div v-if="hasMore" class="jobs-page__more">
+        <v-btn
+          variant="outlined"
+          prepend-icon="mdi-chevron-down"
+          :loading="loadingMore"
+          :disabled="loading && !loadingMore"
+          @click="loadMore"
+        >
+          Load {{ Math.min(PAGE_SIZE, total - jobs.length) }} more
+        </v-btn>
+      </div>
     </template>
 
-    <!-- Empty State -->
     <v-card
       v-else-if="!loading"
       variant="outlined"
@@ -128,9 +181,9 @@ onMounted(() => {
       <v-icon icon="mdi-briefcase-search-outline" size="64" class="mb-4" style="opacity: 0.3;" />
       <h3 class="text-h6 mb-2">No Jobs Found</h3>
       <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 400px; margin: 0 auto;">
-        Jobs appear here after running a search. You can configure your search criteria in Settings, then either wait for the daily automated search or trigger one manually.
+        Jobs appear here after a search runs. Set what to search for in Settings, then wait for the daily run or start one with Search now.
       </p>
-      <div class="d-flex justify-center ga-3 mt-4">
+      <div class="d-flex flex-wrap justify-center ga-3 mt-4">
         <v-btn
           variant="tonal"
           color="primary"
@@ -143,29 +196,55 @@ onMounted(() => {
           variant="outlined"
           prepend-icon="mdi-magnify"
           :loading="searching"
-          @click="onTriggerSearch"
+          @click="confirmSearch = true"
         >
-          Run Search Now
+          Search now
         </v-btn>
       </div>
     </v-card>
 
-    <!-- FAB: Trigger Search -->
-    <v-btn
-      v-if="jobs.length"
-      icon
-      color="primary"
-      size="large"
-      position="fixed"
-      location="bottom end"
-      class="ma-6"
-      :loading="searching"
-      @click="onTriggerSearch"
-    >
-      <v-icon icon="mdi-magnify" />
-      <v-tooltip activator="parent" location="start">
-        Run Manual Search
-      </v-tooltip>
-    </v-btn>
+    <!-- One click used to start a live search with no warning. -->
+    <v-dialog v-model="confirmSearch" max-width="460">
+      <v-card>
+        <v-card-title class="text-h6 pt-5 px-6">
+          Search for new jobs now?
+        </v-card-title>
+        <v-card-text class="px-6">
+          <p class="text-body-2 mb-3">
+            This runs every active search configuration against the job boards right away, instead of waiting for the 6:00 daily run. It can take a minute.
+          </p>
+          <p class="text-body-2 text-medium-emphasis mb-0">
+            New postings appear at the top of this list. The run is logged in Settings under Recent runs.
+          </p>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-5">
+          <v-spacer />
+          <v-btn variant="text" @click="confirmSearch = false">
+            Cancel
+          </v-btn>
+          <v-btn color="primary" variant="flat" prepend-icon="mdi-magnify" @click="runSearch">
+            Search now
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </div>
 </template>
+
+<style scoped lang="scss">
+.jobs-page {
+  &__status {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 18px;
+    margin-bottom: 12px;
+  }
+
+  &__more {
+    display: flex;
+    justify-content: center;
+    margin-top: 24px;
+  }
+}
+</style>
