@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import type { ApplicationWithJob } from '~/composables/useApplications'
 import { timeAgo } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
 
 // One application as a list row: company and role, the status tag with the one-line detail of
 // what is happening, the match score, and when it last moved. The whole row is the link.
 const props = defineProps<{ application: ApplicationWithJob }>()
 
 const when = computed(() => timeAgo(props.application.submittedAt || props.application.updatedAt || props.application.createdAt))
+// The tag already says "Preparation failed", so the detail starts with the reason.
+const detail = computed(() => plainError(props.application.statusDetail).replace(/^Preparation failed:\s*/, ''))
 </script>
 
 <template>
@@ -18,8 +21,8 @@ const when = computed(() => timeAgo(props.application.submittedAt || props.appli
       </div>
       <div class="arow__title">{{ application.job?.title || 'Unknown role' }}</div>
       <div class="arow__status">
-        <ApplicationsStatusTag :status="application.status" />
-        <span v-if="application.statusDetail" class="arow__detail">{{ application.statusDetail }}</span>
+        <ApplicationsStatusTag :status="application.status" :form-error="application.formError" />
+        <span v-if="detail" class="arow__detail">{{ detail }}</span>
       </div>
     </div>
     <div class="arow__side">
@@ -85,6 +88,7 @@ const when = computed(() => timeAgo(props.application.submittedAt || props.appli
 
   &__detail {
     min-width: 0;
+    overflow-wrap: anywhere;
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     white-space: nowrap;

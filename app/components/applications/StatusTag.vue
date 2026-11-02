@@ -4,7 +4,11 @@ import { REVIEW_STATUS, type StatusMeta } from '~/composables/review/format'
 
 // Status tag for every ApplicationStatus: the review vocabulary for pipeline states, plus the
 // states only this page shows (preparing, and the original manual-tracking states).
-const props = defineProps<{ status: ApplicationStatus | string }>()
+const props = defineProps<{
+  status: ApplicationStatus | string
+  /** The application's form_error: a needs_manual row whose preparation failed is tagged as that. */
+  formError?: string | null
+}>()
 
 const EXTRA: Record<string, Omit<StatusMeta, 'group'>> = {
   preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock' },
@@ -16,7 +20,10 @@ const EXTRA: Record<string, Omit<StatusMeta, 'group'>> = {
   offer: { label: 'Offer', color: 'success', icon: 'mdi-trophy-outline' },
 }
 
-const meta = computed(() => REVIEW_STATUS[props.status as ApplicationStatus] ?? EXTRA[props.status] ?? { label: String(props.status).replace(/_/g, ' '), color: 'secondary', icon: 'mdi-circle-small' })
+const meta = computed(() => {
+  if (props.status === 'needs_manual' && /^prepare_failed/.test(props.formError ?? '')) return { label: 'Preparation failed', color: 'error', icon: 'mdi-alert-octagon-outline' }
+  return REVIEW_STATUS[props.status as ApplicationStatus] ?? EXTRA[props.status] ?? { label: String(props.status).replace(/_/g, ' '), color: 'secondary', icon: 'mdi-circle-small' }
+})
 </script>
 
 <template>

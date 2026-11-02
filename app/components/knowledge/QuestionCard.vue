@@ -69,6 +69,11 @@ const shownAnswer = computed(() => {
 
 const numberValid = computed(() => /^\$?\s*\d[\d,]*(\.\d+)?\s*k?$/i.test(draft.value.trim()))
 
+/** The saved answer, marked while changing it. A pending question has no answer, so nothing is marked. */
+function isCurrent(opt: string) {
+  return props.mode === 'answered' && editing.value && (props.question.answer ?? '').trim().toLowerCase() === opt.toLowerCase()
+}
+
 function startEdit() {
   draft.value = props.question.legacy || props.question.answerType === 'text' ? (props.question.answer ?? '') : ''
   editing.value = true
@@ -95,10 +100,10 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
   <v-card variant="outlined" class="question-card" :class="{ 'question-card--waiting': mode === 'pending' && waiting > 0 }">
     <v-card-text class="pa-4 pa-sm-5">
       <div class="d-flex flex-wrap align-center ga-2 mb-2">
-        <v-chip size="x-small" variant="tonal" color="secondary" label>{{ kindLabel }}</v-chip>
+        <v-chip size="small" variant="tonal" color="secondary" label>{{ kindLabel }}</v-chip>
         <v-chip
           v-if="mode === 'pending' && waiting > 0"
-          size="x-small"
+          size="small"
           variant="tonal"
           color="warning"
           prepend-icon="mdi-timer-sand"
@@ -136,8 +141,10 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
           <v-btn
             v-for="opt in yesNoOptions"
             :key="opt"
-            :color="opt === 'Yes' ? 'primary' : undefined"
-            variant="tonal"
+            :color="isCurrent(opt) ? 'primary' : undefined"
+            :variant="isCurrent(opt) ? 'outlined' : 'tonal'"
+            :prepend-icon="isCurrent(opt) ? 'mdi-check' : undefined"
+            :aria-pressed="isCurrent(opt)"
             :loading="saving === opt"
             :disabled="busy && saving !== opt"
             class="question-card__tap"
@@ -151,7 +158,10 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
           <v-btn
             v-for="opt in question.choices!"
             :key="opt"
-            variant="tonal"
+            :color="isCurrent(opt) ? 'primary' : undefined"
+            :variant="isCurrent(opt) ? 'outlined' : 'tonal'"
+            :prepend-icon="isCurrent(opt) ? 'mdi-check' : undefined"
+            :aria-pressed="isCurrent(opt)"
             :loading="saving === opt"
             :disabled="busy && saving !== opt"
             class="question-card__tap"
@@ -174,7 +184,7 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
             class="question-card__field"
             :disabled="busy"
           />
-          <v-btn color="primary" type="submit" height="48" :loading="busy" :disabled="!numberValid">Save</v-btn>
+          <v-btn :color="numberValid ? 'primary' : undefined" :variant="numberValid ? 'flat' : 'tonal'" type="submit" height="48" :loading="busy" :disabled="!numberValid">Save</v-btn>
         </form>
 
         <form v-else-if="inputType === 'text'" class="d-flex flex-wrap align-start ga-2" @submit.prevent="send(draft)">
@@ -188,13 +198,14 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
             hide-details
             :disabled="busy"
           />
-          <v-btn color="primary" type="submit" height="48" :loading="busy" :disabled="!draft.trim()">Save</v-btn>
+          <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'" type="submit" height="48" :loading="busy" :disabled="!draft.trim()">Save</v-btn>
         </form>
 
         <template v-else>
           <v-btn
             v-if="mode === 'pending' && !editing"
             variant="tonal"
+            height="44"
             prepend-icon="mdi-pencil-outline"
             @click="startEdit"
           >
@@ -212,15 +223,15 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
               :disabled="busy"
             />
             <div class="d-flex justify-end ga-2">
-              <v-btn variant="text" :disabled="busy" @click="cancelEdit">Cancel</v-btn>
-              <v-btn color="primary" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">Save answer</v-btn>
+              <v-btn variant="text" height="44" :disabled="busy" @click="cancelEdit">Cancel</v-btn>
+              <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'"  height="44" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">Save answer</v-btn>
             </div>
           </div>
         </template>
       </div>
     </v-card-text>
 
-    <v-card-actions v-if="mode === 'pending' || mode === 'skipped' || (mode === 'answered' && !(editing && inputType === 'long'))" class="px-4 pb-3 pt-0">
+    <v-card-actions v-if="mode === 'pending' || mode === 'skipped' || (mode === 'answered' && !(editing && inputType === 'long'))" class="px-4 pb-3 pt-0 question-card__actions">
       <v-spacer />
       <v-btn v-if="mode === 'pending'" variant="text" size="small" prepend-icon="mdi-skip-next" :disabled="busy" @click="emit('skip')">
         Skip
@@ -266,6 +277,11 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
     }
   }
 
+  // Skip, Ask me again, Change answer, and Cancel are small text buttons; keep them 44px tall to tap.
+  &__actions :deep(.v-btn) {
+    min-height: 44px;
+  }
+
   &__tap {
     min-width: 88px;
     min-height: 44px;
@@ -289,6 +305,13 @@ watch(() => [props.question.status, props.question.answer, props.question.answer
 // On a phone the tap targets share the row and grow to fill it, sized by their labels so
 // "Some experience" never clips.
 @media (max-width: 599px) {
+  // The job link sits in the chip row; give it a full-height tap area on a phone.
+  .question-card__job {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
   .question-card__taps .question-card__tap {
     flex: 1 1 auto;
     min-width: 64px;

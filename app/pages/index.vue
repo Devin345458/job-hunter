@@ -141,6 +141,32 @@ async function confirmReject(code: RejectReasonCode, text: string | null) {
   }
 }
 
+// ── Prepare again (a card whose preparation failed) ──
+const preparingId = ref<number | null>(null)
+
+async function prepareAgain() {
+  const item = selected.value
+  if (!item || preparingId.value) return
+  preparingId.value = item.applicationId
+  const snapshot = [...ordered.value]
+  try {
+    await $fetch(`/api/applications/${item.applicationId}/prepare`, { method: 'POST' })
+    snackbar.notify(`Preparing again: ${item.job.title} at ${item.job.company}. It comes back to the queue when it is ready.`, 'info', { timeout: 8000 })
+    // Preparing is not a queue state, so the card leaves the list; move on to the next one.
+    const i = snapshot.findIndex(x => x.applicationId === item.applicationId)
+    const next = [...snapshot.slice(i + 1), ...snapshot.slice(0, Math.max(0, i))].find(x => x.applicationId !== item.applicationId)
+    await queue.fetchOne(item.applicationId)
+    health.refresh()
+    if (selectedId.value === item.applicationId) select(next?.applicationId ?? defaultId())
+  }
+  catch (e: any) {
+    snackbar.notify(e?.data?.statusMessage || e?.message || 'Could not start preparing it again', 'error', { timeout: -1 })
+  }
+  finally {
+    preparingId.value = null
+  }
+}
+
 // ── Questions ──
 const savingQuestionId = ref<number | null>(null)
 
@@ -232,11 +258,13 @@ const leftLabel = computed(() => {
           :approving="approvingId === selected.applicationId"
           :refreshing="queue.refreshing.value.has(selected.applicationId)"
           :saving-question-id="savingQuestionId"
+          :preparing="preparingId === selected.applicationId"
           fill
           @approve="approve"
           @reject="openReject"
           @answer="(id, a) => answer(id, a)"
           @skip="id => answer(id, null, true)"
+          @prepare="prepareAgain"
         />
         <div v-else class="rv__state rv__state--pane">
           <v-icon icon="mdi-check-all" size="28" color="success" />
@@ -268,10 +296,12 @@ const leftLabel = computed(() => {
         :approving="approvingId === selected.applicationId"
         :refreshing="queue.refreshing.value.has(selected.applicationId)"
         :saving-question-id="savingQuestionId"
+        :preparing="preparingId === selected.applicationId"
         @approve="approve"
         @reject="openReject"
         @answer="(id, a) => answer(id, a)"
         @skip="id => answer(id, null, true)"
+        @prepare="prepareAgain"
       />
       <div v-else class="rv__state rv__state--pane">
         <v-icon icon="mdi-check-all" size="28" color="success" />

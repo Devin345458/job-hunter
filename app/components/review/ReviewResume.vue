@@ -159,6 +159,9 @@ defineProps<{
   }
 
   &__link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
     font-size: 0.8125rem;
     color: rgb(var(--v-theme-primary));
     word-break: break-all;

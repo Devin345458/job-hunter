@@ -32,6 +32,12 @@ export async function withRun<T extends Record<string, unknown>>(
   log(`started (${trigger})`)
   try {
     const stats = await fn(log)
+    // A run that stopped early at the AI budget says why: the daily budget, or an account
+    // problem (out of credit) that no amount of waiting for midnight fixes.
+    const s = stats as Record<string, unknown> | null
+    if (s && (s.budgetStop === true || s.budgetStopped === true) && !('stopReason' in s)) {
+      (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? 'budget'
+    }
     db.update(pipelineRuns).set({ status: 'succeeded', finishedAt: now(), statsJson: JSON.stringify(stats) }).where(eq(pipelineRuns.id, row.id)).run()
     log(`succeeded ${JSON.stringify(stats)}`)
     return { runId: row.id, status: 'succeeded', stats, error: null }

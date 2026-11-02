@@ -9,11 +9,16 @@ export interface StatsResponse {
 }
 
 export interface RunsResponse {
+  /** Recent runs, newest first, without scheduler heartbeats. */
   runs: PipelineRunView[]
+  /** The latest pipeline:daily run, however far back it is in the list. */
+  lastDaily?: PipelineRunView | null
+  /** The latest scheduler heartbeat (fires every 15 minutes). */
+  lastHeartbeat?: PipelineRunView | null
   aiSpentToday: number
   aiBudget: number
-  /** Set when the Anthropic account cannot serve requests (out of credit). */
-  aiProblem?: { kind: 'credit'; message: string; since: string } | null
+  /** Set when the Anthropic account cannot serve requests (out of credit, or the key was rejected). The message is a plain sentence. */
+  aiProblem?: { kind: 'credit' | 'key'; message: string; since: string } | null
 }
 
 /**
@@ -48,8 +53,8 @@ export function usePipelineHealth() {
 
   /** The most recent run of the daily chain, or of anything when the chain never ran. */
   const lastRun = computed<PipelineRunView | null>(() => {
-    const list = runs.value?.runs ?? []
-    return list.find(r => r.task === 'pipeline:daily') ?? list[0] ?? null
+    const list = (runs.value?.runs ?? []).filter(r => r.task !== 'system:heartbeat')
+    return runs.value?.lastDaily ?? list.find(r => r.task === 'pipeline:daily') ?? list[0] ?? null
   })
 
   return { stats, runs, loading, error, refresh, lastRun }

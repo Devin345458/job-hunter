@@ -1,15 +1,17 @@
 <script lang="ts">
-// Filter strip for the applications list: one chip per stage with its count.
-// "Needs you" comes first because it is the only stage that waits on Devin.
-export type StageKey = 'all' | 'needs_you' | 'decide' | 'working' | 'sent' | 'closed'
+import { GROUP_LABEL, statusesIn } from '~/composables/review/format'
+
+// Filter strip for the applications list: one chip per stage with its count. "To decide" and
+// "Needs you" use the review queue's groups, so both pages count the same applications.
+export type StageKey = 'all' | 'decide' | 'needs_you' | 'working' | 'sent' | 'closed'
 
 export const STAGES: Array<{ key: StageKey; label: string; statuses: string[] }> = [
   { key: 'all', label: 'All', statuses: [] },
-  { key: 'needs_you', label: 'Needs you', statuses: ['needs_input', 'needs_manual', 'submit_failed'] },
-  { key: 'decide', label: 'Ready to decide', statuses: ['proposed'] },
-  { key: 'working', label: 'In progress', statuses: ['preparing', 'approved', 'publishing', 'submitting'] },
-  { key: 'sent', label: 'Submitted', statuses: ['submitted', 'response_received', 'interviewing', 'offer'] },
-  { key: 'closed', label: 'Closed', statuses: ['declined', 'rejected', 'draft', 'ready'] },
+  { key: 'decide', label: GROUP_LABEL.decide, statuses: statusesIn('decide') },
+  { key: 'needs_you', label: GROUP_LABEL.attention, statuses: statusesIn('attention') },
+  { key: 'working', label: 'In progress', statuses: ['preparing', ...statusesIn('sending')] },
+  { key: 'sent', label: GROUP_LABEL.sent, statuses: [...statusesIn('sent'), 'response_received', 'interviewing', 'offer'] },
+  { key: 'closed', label: GROUP_LABEL.closed, statuses: ['declined', 'rejected', 'draft', 'ready'] },
 ]
 </script>
 

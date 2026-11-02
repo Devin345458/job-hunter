@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { clockTime } from '~/composables/review/format'
+import { OUTCOME, clockTime, outcomeOf } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
+import { taskLabel } from '#shared/utils/run-outcome'
 
 // Pipeline health, kept small: did the last run work, how much of today's AI budget is gone,
 // and how many questions are waiting. Detail lives in Settings and on the Questions page.
@@ -12,20 +14,18 @@ const health = usePipelineHealth()
 const open = ref(props.variant === 'panel')
 
 const run = computed(() => health.lastRun.value)
+// The server sends a plain sentence for every kind of account problem (out of credit, key rejected).
 const aiProblem = computed(() => health.runs.value?.aiProblem ?? null)
-const runTone = computed(() => {
-  if (aiProblem.value) return 'error'
-  const s = run.value?.status
-  return s === 'succeeded' ? 'success' : s === 'failed' ? 'error' : s === 'running' ? 'info' : 'secondary'
-})
+const outcome = computed(() => (run.value ? outcomeOf(run.value) : null))
+const runTone = computed(() => (outcome.value ? OUTCOME[outcome.value].color : 'secondary'))
 const runLabel = computed(() => {
   const r = run.value
-  if (!r) return 'No pipeline runs yet'
-  const what = r.task === 'pipeline:daily' ? 'Daily run' : r.task
-  const verb = { succeeded: 'succeeded', failed: 'failed', running: 'running', skipped: 'skipped' }[r.status] ?? r.status
-  return `${what} ${verb}`
+  if (!r || !outcome.value) return 'No pipeline runs yet'
+  const what = r.task === 'pipeline:daily' ? 'Daily run' : taskLabel(r.task)
+  return `${what} ${OUTCOME[outcome.value].label}`
 })
-const runError = computed(() => run.value?.status === 'failed' ? (run.value.error ?? '').split('\n')[0]!.slice(0, 160) : null)
+const problems = computed(() => (outcome.value === 'partial' ? run.value?.problems ?? [] : []))
+const runError = computed(() => (outcome.value === 'failed' ? plainError(run.value?.error) : null))
 
 const spent = computed(() => health.runs.value?.aiSpentToday ?? 0)
 const budget = computed(() => health.runs.value?.aiBudget ?? 0)
@@ -35,13 +35,17 @@ const spendTone = computed(() => (spentPct.value >= 90 ? 'error' : spentPct.valu
 const pending = computed(() => health.stats.value?.questions.pending ?? 0)
 const blocking = computed(() => health.stats.value?.questions.blocking ?? 0)
 
+// Closed, the line is a summary. Open, the body says everything, so the line becomes a plain
+// heading instead of repeating (and cutting off) the same text above the detail.
 const inlineSummary = computed(() => {
-  if (aiProblem.value) return 'Claude is out of credit: nothing new can be prepared'
+  if (open.value) return 'Pipeline health'
+  if (aiProblem.value) return aiProblem.value.message
   const parts = [run.value ? `${runLabel.value} ${clockTime(run.value.startedAt)}` : 'No runs yet']
   parts.push(`$${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} AI`)
   if (pending.value) parts.push(`${pending.value} question${pending.value === 1 ? '' : 's'}`)
   return parts.join(' · ')
 })
+const summaryTone = computed(() => (aiProblem.value ? 'error' : runTone.value))
 </script>
 
 <template>
@@ -54,8 +58,8 @@ const inlineSummary = computed(() => {
       aria-controls="pipeline-health"
       @click="open = !open"
     >
-      <span class="hl__dot" :class="`bg-${runTone}`" />
-      <span class="hl__toggle-text">{{ inlineSummary }}</span>
+      <span class="hl__dot" :class="`bg-${summaryTone}`" />
+      <span class="hl__toggle-text" :class="{ 'hl__toggle-text--open': open }">{{ inlineSummary }}</span>
       <v-icon :icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" />
     </button>
 
@@ -73,6 +77,10 @@ const inlineSummary = computed(() => {
             <div v-if="run" class="hl__muted">
               {{ clockTime(run.startedAt) }}{{ run.host ? ` on ${run.host}` : '' }}
             </div>
+            <ul v-if="problems.length" class="hl__problems">
+              <li v-for="p in problems.slice(0, 4)" :key="p">{{ p }}</li>
+              <li v-if="problems.length > 4">and {{ problems.length - 4 }} more in Settings</li>
+            </ul>
             <div v-if="runError" class="hl__error-line">{{ runError }}</div>
           </div>
           <NuxtLink to="/settings#pipeline" class="hl__link">Runs</NuxtLink>
@@ -140,6 +148,19 @@ const inlineSummary = computed(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+
+    &--open {
+      font-weight: 600;
+      color: rgb(var(--v-theme-on-surface));
+    }
+  }
+
+  &__problems {
+    margin: 4px 0 0;
+    padding-left: 16px;
+    font-size: 0.75rem;
+    color: rgb(var(--v-theme-warning));
+    overflow-wrap: anywhere;
   }
 
   &--inline &__body {
@@ -240,6 +261,7 @@ const inlineSummary = computed(() => {
   &__err {
     font-size: 0.75rem;
     color: rgb(var(--v-theme-error));
+    overflow-wrap: anywhere;
   }
 }
 </style>

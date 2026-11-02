@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SubmissionResult } from '#shared/types/pipeline'
 import { clockTime } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
 
 // What happened on submit: sent automatically (with the confirmation the employer showed and a
 // screenshot of it), handed back for a manual submit (with the reason), or failed (with the error).
@@ -18,7 +19,7 @@ const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kin
   <div class="sp">
     <div v-if="submitError" class="sp__error" role="alert">
       <v-icon icon="mdi-alert-octagon-outline" size="16" />
-      <span>{{ submitError.split('\n')[0] }}</span>
+      <span class="sp__error-text">{{ plainError(submitError) }}</span>
     </div>
 
     <template v-if="submission">
@@ -65,6 +66,10 @@ const shotUrl = computed(() => `/api/files/screenshot/${props.applicationId}?kin
     background: rgba(var(--v-theme-error), 0.08);
     border: 1px solid rgba(var(--v-theme-error), 0.3);
     overflow-wrap: anywhere;
+  }
+
+  &__error-text {
+    min-width: 0;
   }
 
   &__facts {

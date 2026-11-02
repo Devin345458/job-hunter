@@ -1,5 +1,6 @@
 import type { Frame } from 'playwright'
 import type { FormField, FormFieldType } from '#shared/types/pipeline'
+import { cleanFieldLabel } from '#shared/utils/plain-text'
 
 // Field extraction. The function below runs inside the employer's page (Playwright serializes
 // it), so it must not reference anything outside its own body. It only reads the DOM: no
@@ -58,6 +59,26 @@ export function extractFieldsInPage(): RawField[] {
     }
     return parts.join(' > ')
   }
+  // Status and helper nodes some ATS keep inside a label ("Analyzing resume...", "No location
+  // found", spinners, error and success messages). They are not part of the question.
+  const NOT_LABEL = '[role="status"], [role="alert"], [role="listbox"], [aria-live], [class*="status" i], [class*="helper" i], [class*="hint" i], [class*="loading" i], [class*="spinner" i], [class*="success" i], [class*="error" i], [class*="no-results" i], [class*="noresults" i], [class*="empty" i]'
+  // A label element's own visible text, without those nodes. Falls back to all of its text when
+  // that leaves nothing (a label hidden for screen readers only, for example).
+  const labelText = (el: Element | null): string => {
+    if (!el) return ''
+    const parts: string[] = []
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement
+      if (!parent) continue
+      const skip = parent.closest(NOT_LABEL)
+      if (skip && skip !== el && el.contains(skip)) continue
+      if (!parent.getClientRects().length || getComputedStyle(parent).visibility === 'hidden') continue
+      parts.push(node.textContent || '')
+    }
+    const own = parts.join(' ').replace(/\s+/g, ' ').trim()
+    return own || textOf(el)
+  }
   const labelElFor = (el: Element): Element | null => {
     const id = el.getAttribute('id')
     if (!id) return null
@@ -75,7 +96,7 @@ export function extractFieldsInPage(): RawField[] {
           if (exclude.some(x => c === x || c.contains(x))) continue
           if (!(c.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue
           const t = clean(textOf(c).split('\n')[0] || '')
-          if (t && !GENERIC.test(t) && t.length < 400) nearest = textOf(c)
+          if (t && !GENERIC.test(t) && t.length < 400) nearest = labelText(c)
         }
         if (nearest) return nearest
       }
@@ -83,7 +104,7 @@ export function extractFieldsInPage(): RawField[] {
     return ''
   }
   const labelOf = (el: Element): string => {
-    let t = textOf(labelElFor(el))
+    let t = labelText(labelElFor(el))
     if (!clean(t) || GENERIC.test(clean(t))) {
       const ids = el.getAttribute('aria-labelledby')
       if (ids) t = ids.split(/\s+/).map(i => textOf(document.getElementById(i))).join(' ')
@@ -288,7 +309,7 @@ export function toFormFields(raw: RawField[]): FormField[] {
   return raw.map((r, i) => ({
     id: `f${i + 1}`,
     selector: r.selector,
-    label: r.label.slice(0, 500),
+    label: cleanFieldLabel(r.label).slice(0, 500),
     type: r.type,
     required: r.required,
     ...(r.options.length ? { options: r.options } : {}),

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
 import type { QueueGroups } from '~/composables/useReviewQueue'
-import { clockTime, moneyRange, statusMeta } from '~/composables/review/format'
+import { GROUP_LABEL, clockTime, itemStatusMeta, moneyRange } from '~/composables/review/format'
 
 // The queue, grouped by what each application needs from Devin. Decide-first; the groups
 // below it only appear when they have something in them.
@@ -13,8 +13,8 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [id: number] }>()
 
 const sections = computed(() => [
-  { key: 'decide', label: 'To decide', items: props.groups.decide, empty: 'Nothing left to decide.' },
-  { key: 'attention', label: 'Needs you', items: props.groups.attention, empty: null },
+  { key: 'decide', label: GROUP_LABEL.decide, items: props.groups.decide, empty: 'Nothing left to decide.' },
+  { key: 'attention', label: GROUP_LABEL.attention, items: props.groups.attention, empty: null },
   { key: 'sending', label: 'Sending', items: props.groups.sending, empty: null },
   { key: 'sent', label: 'Sent recently', items: props.groups.sent, empty: null },
 ].filter(s => s.items.length > 0 || s.empty))
@@ -58,10 +58,10 @@ function blockingCount(item: ReviewItem) {
                 <v-icon icon="mdi-comment-question-outline" size="13" />
                 {{ blockingCount(item) }} to answer
               </span>
-              <span v-else-if="s.key !== 'decide'" class="ql__flag" :class="`ql__flag--${statusMeta(item.status).color}`">
+              <span v-else-if="s.key !== 'decide'" class="ql__flag" :class="`ql__flag--${itemStatusMeta(item).color}`">
                 <v-progress-circular v-if="s.key === 'sending'" indeterminate size="11" width="2" />
-                <v-icon v-else :icon="statusMeta(item.status).icon" size="13" />
-                {{ statusMeta(item.status).label }}{{ item.status === 'submitted' && item.submission ? ` ${clockTime(item.submission.submittedAt)}` : '' }}
+                <v-icon v-else :icon="itemStatusMeta(item).icon" size="13" />
+                {{ itemStatusMeta(item).label }}{{ item.status === 'submitted' && item.submission ? ` ${clockTime(item.submission.submittedAt)}` : '' }}
               </span>
             </span>
             <span v-if="item.isSandbox" class="ql__sandbox" title="Sandbox or fixture data">S</span>

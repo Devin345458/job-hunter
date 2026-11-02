@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { PipelineRunView } from '#shared/types/pipeline'
-import { clockTime, parseTime } from '~/composables/review/format'
+import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, statsText } from '~/composables/review/format'
+import { plainError } from '#shared/utils/plain-text'
+import { taskLabel } from '#shared/utils/run-outcome'
 
 // Settings > Pipeline: start any step by hand, watch it run, and read the recent run log.
 // Every trigger goes through POST /api/pipeline/run, which starts the task in the background.
@@ -72,17 +74,13 @@ function duration(r: PipelineRunView) {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
-const STATUS_COLOR: Record<PipelineRunView['status'], string> = { succeeded: 'success', failed: 'error', running: 'info', skipped: 'secondary' }
 const openRun = ref<number | null>(null)
 
-function statsLine(r: PipelineRunView) {
-  if (!r.stats) return ''
-  return Object.entries(r.stats)
-    .filter(([, v]) => typeof v === 'number' || typeof v === 'string')
-    .map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`)
-    .slice(0, 6)
-    .join(', ')
-}
+const color = (r: PipelineRunView) => OUTCOME[outcomeOf(r)].color
+
+const TRIGGER: Record<string, string> = { schedule: 'the schedule', manual: 'you', chained: 'the daily run' }
+
+const heartbeat = computed(() => health.runs.value?.lastHeartbeat ?? null)
 
 onMounted(() => {
   health.refresh(30).then(() => {
@@ -114,8 +112,8 @@ onMounted(() => {
           <div class="pp__task-detail">{{ t.detail }}</div>
           <div class="pp__task-last">
             <template v-if="latest(t.id)">
-              <span class="pp__dot" :class="`bg-${STATUS_COLOR[latest(t.id)!.status]}`" />
-              Last {{ latest(t.id)!.status }} {{ clockTime(latest(t.id)!.startedAt) }}
+              <span class="pp__dot" :class="`bg-${color(latest(t.id)!)}`" />
+              Last run {{ clockTime(latest(t.id)!.startedAt) }}: {{ outcomeText(latest(t.id)!) }}
             </template>
             <template v-else>Not run yet</template>
           </div>
@@ -141,22 +139,29 @@ onMounted(() => {
       <v-btn variant="text" height="44" prepend-icon="mdi-refresh" :loading="health.loading.value" @click="health.refresh(30)">Refresh</v-btn>
     </div>
     <p v-if="health.error.value" class="pp__err" role="alert">{{ health.error.value }}</p>
+    <p v-if="heartbeat" class="pp__heartbeat">
+      <span class="pp__dot" :class="`bg-${color(heartbeat)}`" />
+      {{ taskLabel(heartbeat.task) }}: last at {{ clockTime(heartbeat.startedAt) }}{{ heartbeat.host ? ` on host ${heartbeat.host}` : '' }}. It runs every 15 minutes to show the scheduler is alive.
+    </p>
     <p v-if="!runs.length" class="pp__empty">No runs recorded yet.</p>
     <ul v-else class="pp__runs">
       <li v-for="r in runs" :key="r.id" class="pp__run">
         <button type="button" class="pp__run-row" :aria-expanded="openRun === r.id" @click="openRun = openRun === r.id ? null : r.id">
-          <span class="pp__dot" :class="`bg-${STATUS_COLOR[r.status]}`" />
-          <span class="pp__run-task">{{ TASKS.find(t => t.id === r.task)?.label ?? r.task }}</span>
-          <span class="pp__run-status" :class="`text-${STATUS_COLOR[r.status]}`">{{ r.status }}</span>
+          <span class="pp__dot" :class="`bg-${color(r)}`" />
+          <span class="pp__run-task">{{ taskLabel(r.task) }}</span>
+          <span class="pp__run-status" :class="`text-${color(r)}`" :title="outcomeText(r)">{{ outcomeText(r) }}</span>
           <span class="pp__run-when">{{ clockTime(r.startedAt) }}</span>
           <span class="pp__run-dur tabular">{{ duration(r) }}</span>
           <v-icon :icon="openRun === r.id ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" class="pp__run-chev" />
         </button>
         <v-expand-transition>
           <div v-show="openRun === r.id" class="pp__run-detail">
-            <div>Task {{ r.task }}, started by {{ r.trigger }}{{ r.host ? ` on host ${r.host}` : '' }}.</div>
-            <div v-if="statsLine(r)">Result: {{ statsLine(r) }}</div>
-            <pre v-if="r.error" class="pp__run-error">{{ r.error }}</pre>
+            <div>Started by {{ TRIGGER[r.trigger] ?? r.trigger }}{{ r.host ? ` on host ${r.host}` : '' }}.</div>
+            <ul v-if="(r.problems?.length ?? 0) > 1" class="pp__problems">
+              <li v-for="p in r.problems" :key="p" class="text-warning">{{ p }}</li>
+            </ul>
+            <div v-if="statsText(r.stats)">Result: {{ statsText(r.stats) }}</div>
+            <div v-if="r.error" class="pp__run-error">{{ plainError(r.error) }}</div>
           </div>
         </v-expand-transition>
       </li>
@@ -296,7 +301,7 @@ onMounted(() => {
     width: 100%;
     min-height: 44px;
     display: grid;
-    grid-template-columns: 8px minmax(0, 1.4fr) 84px minmax(0, 1fr) 56px 18px;
+    grid-template-columns: 8px minmax(0, 1.2fr) minmax(0, 1.3fr) minmax(0, 0.9fr) 56px 18px;
     align-items: center;
     gap: 10px;
     padding: 8px 0;
@@ -314,6 +319,27 @@ onMounted(() => {
 
   &__run-status {
     font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__heartbeat {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0 0 8px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+
+    .pp__dot {
+      transform: translateY(-1px);
+    }
+  }
+
+  &__problems {
+    margin: 4px 0;
+    padding-left: 18px;
   }
 
   &__run-when,
@@ -345,7 +371,7 @@ onMounted(() => {
     border-radius: 6px;
     font-size: 0.75rem;
     line-height: 1.5;
-    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     color: rgb(var(--v-theme-error));
     background: rgb(var(--v-theme-sunken));
   }
@@ -354,13 +380,13 @@ onMounted(() => {
 @media (max-width: 599.98px) {
   .pp__run-row {
     grid-template-columns: 8px minmax(0, 1fr) auto 18px;
-    grid-template-areas: 'dot task status chev' '. when dur .';
+    grid-template-areas: 'dot task when chev' '. status dur .';
     row-gap: 2px;
 
     .pp__dot { grid-area: dot; }
     .pp__run-task { grid-area: task; }
-    .pp__run-status { grid-area: status; }
-    .pp__run-when { grid-area: when; }
+    .pp__run-status { grid-area: status; white-space: normal; }
+    .pp__run-when { grid-area: when; text-align: right; }
     .pp__run-dur { grid-area: dur; }
     .pp__run-chev { grid-area: chev; }
   }

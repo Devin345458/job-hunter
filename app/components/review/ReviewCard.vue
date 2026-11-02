@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
-import { answerText, hostOf, moneyRange, statusMeta, timeAgo } from '~/composables/review/format'
+import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
+import { fixPlurals } from '#shared/utils/plain-text'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
@@ -10,6 +11,8 @@ const props = defineProps<{
   approving: boolean
   refreshing: boolean
   savingQuestionId: number | null
+  /** A "Prepare again" request for this card is in flight. */
+  preparing?: boolean
   /** Fill the parent's height and scroll inside (desktop two-pane). Otherwise the page scrolls and the bar sticks to the viewport bottom. */
   fill?: boolean
 }>()
@@ -19,18 +22,39 @@ const emit = defineEmits<{
   reject: []
   answer: [questionId: number, answer: string]
   skip: [questionId: number]
+  prepare: []
 }>()
 
-const meta = computed(() => statusMeta(props.item.status))
+const meta = computed(() => itemStatusMeta(props.item))
 const isDecide = computed(() => meta.value.group === 'decide')
 const blockingQs = computed(() => props.item.openQuestions.filter(q => q.blocking))
 const optionalQs = computed(() => props.item.openQuestions.filter(q => !q.blocking))
 const isManual = computed(() => props.item.status === 'needs_manual')
+/** Preparation threw (Claude refused, a step crashed), so there is no resume or form to submit. */
+const prepareFailed = computed(() => /^prepare_failed/.test(props.item.form.error ?? ''))
 
-const remote = computed(() => {
-  const r = props.item.job.remoteType
-  return r ? r.charAt(0).toUpperCase() + r.slice(1) : null
+/** The info line, each fact once: "Remote US" already says remote, and an Ashby posting on an Ashby form is one fact. */
+const facts = computed(() => {
+  const j = props.item.job
+  const out: Array<{ icon: string; text: string }> = []
+  if (j.location) out.push({ icon: 'mdi-map-marker-outline', text: j.location })
+  const r = j.remoteType
+  if (r && !(j.location ?? '').toLowerCase().includes(r.toLowerCase())) out.push({ icon: 'mdi-home-city-outline', text: r.charAt(0).toUpperCase() + r.slice(1) })
+  const ats = j.atsType && !['unknown', 'other'].includes(j.atsType) ? j.atsType : null
+  if (ats && ats === j.source) out.push({ icon: 'mdi-radar', text: `${properName(j.source)} posting and form` })
+  else {
+    out.push({ icon: 'mdi-radar', text: j.source === 'manual' ? 'Added by hand' : `Found on ${properName(j.source)}` })
+    if (ats) out.push({ icon: 'mdi-form-select', text: `${properName(ats)} form` })
+  }
+  return out
 })
+
+/** Where each question a form field waits on sits on this card. */
+function questionHint(id: number) {
+  const q = props.item.openQuestions.find(x => x.id === id)
+  if (!q) return ''
+  return q.blocking ? 'under Answer first, above' : 'under Optional questions, below'
+}
 
 const skillsSummary = computed(() => {
   const s = props.item.score?.skills
@@ -47,7 +71,7 @@ const paySummary = computed(() => {
   else parts.push('no salary stated')
   if (c.bonus) parts.push('bonus')
   if (c.equity) parts.push('equity')
-  parts.push(`${c.benefits.length} benefit${c.benefits.length === 1 ? '' : 's'} quoted`)
+  parts.push(`${plural(c.benefits.length, 'benefit')} quoted`)
   return parts.join(', ')
 })
 
@@ -62,10 +86,10 @@ const demoTone = computed(() => props.item.demo?.status === 'failed' || props.it
 const answers = computed(() => props.item.form.answers)
 const formSummary = computed(() => {
   const a = answers.value
-  if (!a.length) return props.item.form.error ? 'Form fill failed' : 'Form not filled yet'
+  if (!a.length) return prepareFailed.value ? 'Not filled' : props.item.form.error ? 'Form fill failed' : 'Form not filled yet'
   const waiting = a.filter(x => x.needsQuestionId && !answerText(x.value)).length
   const check = a.filter(x => x.confidence !== 'high' && answerText(x.value)).length
-  const parts = [`${a.length} fields`]
+  const parts = [plural(a.length, 'field')]
   if (waiting) parts.push(`${waiting} waiting on you`)
   if (check) parts.push(`${check} to check`)
   return parts.join(', ')
@@ -75,13 +99,13 @@ const formTone = computed(() => (props.item.form.error ? 'error' : answers.value
 const resumeSummary = computed(() => {
   const r = props.item.resume
   if (!r) return 'Not written yet'
-  return `${r.experience.length} roles, ${Object.values(r.skills).flat().length} skills`
+  return `${plural(r.experience.length, 'role')}, ${plural(Object.values(r.skills).flat().length, 'skill')}`
 })
 
 const letterPreview = computed(() => {
   const text = props.item.coverLetter ?? ''
   const firstBody = text.split('\n').map(s => s.trim()).filter(Boolean)[1] ?? ''
-  return text ? `${text.split(/\s+/).length} words. ${firstBody}` : 'Not written yet'
+  return text ? `${plural(text.split(/\s+/).length, 'word')}. ${firstBody}` : 'Not written yet'
 })
 </script>
 
@@ -99,11 +123,8 @@ const letterPreview = computed(() => {
         </div>
         <h1 class="rc__title">{{ item.job.title }}</h1>
         <div class="rc__meta">
-          <span v-if="item.job.location"><v-icon icon="mdi-map-marker-outline" size="14" /> {{ item.job.location }}</span>
-          <span v-if="remote"><v-icon icon="mdi-home-city-outline" size="14" /> {{ remote }}</span>
-          <span><v-icon icon="mdi-radar" size="14" /> {{ item.job.source }}</span>
-          <span v-if="item.proposedAt"><v-icon icon="mdi-clock-outline" size="14" /> proposed {{ timeAgo(item.proposedAt) }}</span>
-          <span v-if="item.job.atsType && item.job.atsType !== 'unknown'"><v-icon icon="mdi-form-select" size="14" /> {{ item.job.atsType }}</span>
+          <span v-for="f in facts" :key="f.text"><v-icon :icon="f.icon" size="14" /> {{ f.text }}</span>
+          <span v-if="item.proposedAt"><v-icon icon="mdi-clock-outline" size="14" /> Proposed {{ timeAgo(item.proposedAt) }}</span>
         </div>
         <div class="rc__links">
           <v-btn
@@ -132,7 +153,7 @@ const letterPreview = computed(() => {
       </header>
 
       <div v-if="!isDecide" class="rc__block">
-        <ReviewProgress :item="item" />
+        <ReviewProgress :item="item" :preparing="preparing" @prepare="emit('prepare')" />
       </div>
 
       <div v-if="blockingQs.length || (item.status === 'needs_input' && refreshing)" class="rc__block rc__block--first">
@@ -176,7 +197,7 @@ const letterPreview = computed(() => {
 
         <ReviewSection v-if="item.demo" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
           <ReviewDemo :demo="item.demo" />
-          <p v-if="item.gap?.summary" class="rc__gap">Gap analysis: {{ item.gap.summary }}</p>
+          <p v-if="item.gap?.summary" class="rc__gap">Gap analysis: {{ fixPlurals(item.gap.summary) }}</p>
         </ReviewSection>
 
         <ReviewSection
@@ -193,7 +214,8 @@ const letterPreview = computed(() => {
             :screenshot-url="item.form.screenshotUrl"
             :filled-at="item.form.filledAt"
             :form-error="item.form.error"
-            :copy-mode="isManual"
+            :copy-mode="isManual && !prepareFailed"
+            :question-hint="questionHint"
           />
         </ReviewSection>
 
@@ -222,8 +244,8 @@ const letterPreview = computed(() => {
           />
         </ReviewSection>
 
-        <ReviewSection title="Full posting" icon="mdi-text-box-outline" :summary="item.job.descriptionText ? `${item.job.descriptionText.split(/\s+/).length} words` : 'No text saved'">
-          <div v-if="item.job.descriptionText" class="rc__posting">{{ item.job.descriptionText }}</div>
+        <ReviewSection title="Full posting" icon="mdi-text-box-outline" :summary="item.job.descriptionText ? plural(item.job.descriptionText.split(/\s+/).length, 'word') : 'No text saved'">
+          <ReviewPosting v-if="item.job.descriptionText" :text="item.job.descriptionText" class="rc__posting" />
         </ReviewSection>
       </div>
     </div>
@@ -359,8 +381,16 @@ const letterPreview = computed(() => {
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
-  &__letter,
   &__posting {
+    padding: 16px 18px;
+    border-radius: 8px;
+    background: rgb(var(--v-theme-sunken));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    max-height: 480px;
+    overflow-y: auto;
+  }
+
+  &__letter {
     white-space: pre-line;
     font-size: 0.875rem;
     line-height: 1.65;

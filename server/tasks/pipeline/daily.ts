@@ -1,3 +1,5 @@
+import { runOutcome, runProblems } from '#shared/utils/run-outcome'
+
 // The daily chain. One scheduled entry runs every step in order, so a slow search
 // never races the match step the way two fixed cron times would.
 export const DAILY_STEPS = [
@@ -9,6 +11,17 @@ export const DAILY_STEPS = [
   'demos:build',
 ] as const
 
+/**
+ * What one chained step reported back to the daily run: its status and, when it finished, the
+ * problems its stats show (failed items, a budget or credit stop). A step that "succeeded" while
+ * every Claude call failed is how the daily run used to look green over a dead pipeline.
+ */
+export function stepSummary(step: string, result: { status?: string; stats?: Record<string, unknown> | null; error?: string | null } | null | undefined) {
+  const status = result?.status ?? 'unknown'
+  const problems = runProblems({ task: step, status, stats: result?.stats ?? null })
+  return { status, problems }
+}
+
 export default defineTask({
   meta: {
     name: 'pipeline:daily',
@@ -17,12 +30,16 @@ export default defineTask({
   async run({ payload }) {
     const outcome = await withRun('pipeline:daily', triggerOf(payload), async (log) => {
       const steps: Record<string, string> = {}
+      const problems: Record<string, string[]> = {}
       for (const step of DAILY_STEPS) {
         log(`running ${step}`)
         const res: any = await runTask(step, { payload: { trigger: 'chained' } })
-        steps[step] = res?.result?.status ?? 'unknown'
+        const summary = stepSummary(step, res?.result)
+        steps[step] = summary.status
+        if (summary.problems.length) problems[step] = summary.problems
       }
-      return { steps }
+      const stats = { steps, problems }
+      return { ...stats, outcome: runOutcome({ task: 'pipeline:daily', status: 'succeeded', stats }, runProblems({ task: 'pipeline:daily', status: 'succeeded', stats })) }
     })
     return { result: outcome }
   },
