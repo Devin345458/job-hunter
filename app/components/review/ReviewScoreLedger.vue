@@ -4,7 +4,11 @@ import type { ScoreBreakdown } from '#shared/types/pipeline'
 // The match score as an itemized ledger: what the skills and pay fits put in, then every
 // learned adjustment as its own line with the reason it exists. The bar above the lines draws
 // the same arithmetic so a glance shows how much of the score is learned.
-const props = defineProps<{ score: ScoreBreakdown }>()
+const props = defineProps<{
+  score: ScoreBreakdown
+  /** Desktop review card: leaves out the Base score line when no learned adjustment changes it. */
+  dense?: boolean
+}>()
 
 const RECOMMENDATION: Record<ScoreBreakdown['recommendation'], { label: string; color: string }> = {
   strong_match: { label: 'Strong match', color: 'success' },
@@ -69,7 +73,7 @@ function pct(w: number) {
           <span v-else class="ledger__na">not stated</span>
         </dd>
       </div>
-      <div class="ledger__line ledger__line--sub">
+      <div v-if="!dense || learned.length" class="ledger__line ledger__line--sub">
         <dt>Base score</dt>
         <dd class="tabular">{{ base }}</dd>
       </div>

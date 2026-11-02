@@ -13,6 +13,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   approve: []
   reject: []
+  /** Open the card's Demo project section and scroll to it. */
+  showDemo: []
 }>()
 
 const blocking = computed(() => props.item.openQuestions.filter(q => q.blocking).length)
@@ -26,6 +28,13 @@ const prepareFailed = computed(() => isManual.value && /^prepare_failed/.test(pr
 // off) can try the automated submit again; the server reuses the original approve decision.
 const canRetryManual = computed(() => isManual.value && !prepareFailed.value && props.item.submission?.method === 'manual')
 const demoWillPublish = computed(() => props.item.demo?.status === 'built')
+/** Approve will publish the demo: say which one, and how its tests went, beside the button, with a way to check it first. */
+const demoLine = computed(() => {
+  const d = props.item.demo
+  if (!d || !demoWillPublish.value || isRetry.value || !CAN_APPROVE.includes(props.item.status)) return null
+  const tests = d.testsPassed === true ? 'tests passed' : d.testsPassed === false ? 'tests failed' : 'tests not run'
+  return { id: d.id, title: d.title, tests, failed: d.testsPassed === false }
+})
 
 const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item.approveEffect?.submit === 'manual' && !props.item.isSandbox ? 'Approve' : 'Approve and submit'))
 
@@ -78,7 +87,13 @@ const consequence = computed(() => {
 </script>
 
 <template>
-  <div v-if="canApprove || canReject || isManual || item.status === 'needs_input'" class="bar">
+  <div v-if="canApprove || canReject || isManual || item.status === 'needs_input'" class="bar" :class="{ 'bar--demo': demoLine }">
+    <p v-if="demoLine" class="bar__demo">
+      <v-icon icon="mdi-source-repository" size="15" class="bar__demo-icon" />
+      <span class="bar__demo-text">Demo to publish: <strong>{{ demoLine.title }}</strong>, <span :class="{ 'text-error': demoLine.failed }">{{ demoLine.tests }}</span>.</span>
+      <button type="button" class="bar__demo-link" @click="emit('showDemo')">Check it here</button>
+      <NuxtLink :to="`/demos/${demoLine.id}`" class="bar__demo-link">Demo page</NuxtLink>
+    </p>
     <div v-if="blockedReasons.length" class="bar__line bar__reasons" role="status">
       <p v-for="r in blockedReasons" :key="r" class="bar__reason">
         <v-icon icon="mdi-lock-outline" size="15" class="bar__reason-icon" />
@@ -155,6 +170,46 @@ const consequence = computed(() => {
   border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: rgb(var(--v-theme-surface));
 
+  // A demo that approve publishes: one line across the top of the bar.
+  &--demo {
+    flex-wrap: wrap;
+  }
+
+  &__demo {
+    flex: 1 0 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px 10px;
+    margin: 0 0 -4px;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    min-width: 0;
+  }
+
+  &__demo-icon {
+    flex-shrink: 0;
+    color: rgb(var(--v-theme-primary));
+  }
+
+  &__demo-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__demo-link {
+    flex-shrink: 0;
+    font-weight: 600;
+    color: rgb(var(--v-theme-primary));
+    text-decoration: none;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
   &__line {
     flex: 1;
     min-width: 0;
@@ -214,6 +269,11 @@ const consequence = computed(() => {
 
     &__line {
       font-size: 0.75rem;
+    }
+
+    // The phone's one-line consequence already says the demo publishes; the card above has the demo.
+    &__demo {
+      display: none;
     }
 
     &__buttons > * {

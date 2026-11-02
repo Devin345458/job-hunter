@@ -15,6 +15,8 @@ const props = defineProps<{
   compact?: boolean
   /** Inline: one line, "Pay $164k to $235k total · No floor set", for the phone summary under the score. */
   inline?: boolean
+  /** Desktop review card: with compact, leaves out the scale when no floor is set (there is nothing to clear) and tightens the lines. */
+  dense?: boolean
 }>()
 
 const currency = computed(() => props.comp?.currency || props.listing?.currency || 'USD')
@@ -110,7 +112,8 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
       </div>
     </div>
 
-    <div class="comp__scale" aria-hidden="true">
+    <!-- No pay figures and no floor: an empty $0 to $50k track would say nothing. -->
+    <div v-if="(hasFigures || floor !== null) && !(dense && compact && floor === null)" class="comp__scale" aria-hidden="true">
       <div class="comp__track" />
       <div v-if="totalBand" class="comp__band comp__band--total" :style="totalBand" />
       <div v-if="baseBand" class="comp__band comp__band--base" :style="baseBand" />
@@ -123,7 +126,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
       </div>
     </div>
 
-    <dl v-if="compact" class="comp__brief">
+    <dl v-if="compact" class="comp__brief" :class="{ 'comp__brief--dense': dense }">
       <div><dt>Base</dt><dd>{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'not stated' }}</dd></div>
       <div><dt>Bonus</dt><dd>{{ comp?.bonus ? (comp.bonus.estimatedAnnual !== null ? money(comp.bonus.estimatedAnnual, currency) : 'yes, amount not stated') : 'not stated' }}</dd></div>
       <div><dt>Equity</dt><dd>{{ comp?.equity ? (comp.equity.estimatedAnnual !== null ? money(comp.equity.estimatedAnnual, currency) : 'yes, amount not stated') : 'not stated' }}</dd></div>
@@ -302,6 +305,10 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
 
   &__brief {
     margin: 10px 0 0;
+
+    &--dense div {
+      padding: 3px 0 !important;
+    }
 
     div {
       display: flex;

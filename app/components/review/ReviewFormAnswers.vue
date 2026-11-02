@@ -76,7 +76,10 @@ function isDryRunNote(a: FormAnswer) {
   return !!a.fillError && /not attached in the dry run/i.test(a.fillError)
 }
 
+/** An empty field that waits on a question. Only a required one holds up the application; an optional one is just not filled. */
 function waitingText(a: FormAnswer) {
+  const field = fieldsById.value.get(a.fieldId)
+  if (field && !field.required) return 'Optional, not filled'
   const where = a.needsQuestionId && props.questionHint ? props.questionHint(a.needsQuestionId) : ''
   return where ? `Waiting on your answer ${where}` : 'Waiting on your answer'
 }

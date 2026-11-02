@@ -32,13 +32,22 @@ function pay(item: ReviewItem) {
   return total ? `${total} est. total` : ''
 }
 
+// The open card's row stays in view: after Next, Previous, J, K, or a decision moves the
+// selection, the list scrolls just enough to show it.
+const root = ref<HTMLElement | null>(null)
+watch(() => props.selectedId, async () => {
+  await nextTick()
+  const row = root.value?.querySelector<HTMLElement>('[aria-current="true"]')
+  row?.scrollIntoView({ block: 'nearest' })
+}, { immediate: true, flush: 'post' })
+
 function blockingCount(item: ReviewItem) {
   return item.openQuestions.filter(q => q.blocking).length
 }
 </script>
 
 <template>
-  <nav class="ql" aria-label="Review queue">
+  <nav ref="root" class="ql" aria-label="Review queue">
     <section v-for="s in sections" :key="s.key" class="ql__group">
       <h2 class="ql__label">
         {{ s.label }}

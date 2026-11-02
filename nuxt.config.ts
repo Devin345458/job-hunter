@@ -15,6 +15,10 @@ const mdiPackagePath = mdiCssPath ? dirname(dirname(mdiCssPath)) : undefined
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   ssr: true,
+  // The review queue is the home page; /review is the name people type for it.
+  routeRules: {
+    '/review': { redirect: { to: '/', statusCode: 301 } },
+  },
   devtools: { enabled: true },
   features: {
     inlineStyles: true,

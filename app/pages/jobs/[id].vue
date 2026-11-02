@@ -374,7 +374,7 @@ onMounted(() => {
             @dismiss-error="resumeError = null"
           />
 
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-6 d-md-none" @claim="openClaim" />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-6 d-md-none" @claim="openClaim" />
 
           <JobsCompensationBreakdown :compensation="job.compensation" :enriched-at="job.enrichedAt" class="mb-6" />
 
@@ -412,7 +412,7 @@ onMounted(() => {
         <!-- Right Column: Match Analysis + Actions -->
         <v-col cols="12" md="5" lg="4">
           <!-- Match Score -->
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" class="mb-4 d-none d-md-block" @claim="openClaim" />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-4 d-none d-md-block" @claim="openClaim" />
 
           <JobsJobActions
             class="mb-4 d-none d-md-block"

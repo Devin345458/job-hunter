@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
+import { plainQuestionRefs, plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
+import { skillSets } from '#shared/utils/skill-sets'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
-import type { QuestionView, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
+import type { QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
 
 interface HistoryRow {
@@ -17,7 +18,11 @@ const props = defineProps<{
   score: ScoreBreakdown | null
   history?: HistoryRow[]
   questions?: QuestionView[]
+  /** The posting requirements: the Has and Missing chips come from their statuses, so they agree with the requirement list. */
+  requirements?: Requirement[]
 }>()
+
+const sets = computed(() => skillSets(props.requirements, props.score))
 
 // A Missing chip is a button: tapping it opens the skill panel the page hosts.
 const emit = defineEmits<{
@@ -99,19 +104,19 @@ function signed(n: number) {
           <v-progress-linear :model-value="(p.value / p.max) * 100" :color="scoreColor((p.value / p.max) * 100)" height="6" rounded />
         </div>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ secondPerson(score.skills.reasoning) }}
+          {{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}
         </p>
-        <div v-if="score.skills.matched.length" class="score-breakdown__chips">
+        <div v-if="sets.matched.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Has</span>
-          <v-chip v-for="m in score.skills.matched" :key="m" size="x-small" variant="tonal" color="success">
-            {{ m }}
+          <v-chip v-for="c in sets.matched" :key="c.text" size="x-small" variant="tonal" color="success" :title="c.text !== c.label ? c.text : undefined">
+            {{ c.label }}
           </v-chip>
         </div>
-        <div v-if="score.skills.missing.length" class="score-breakdown__chips">
+        <div v-if="sets.missing.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing</span>
           <v-chip
-            v-for="m in score.skills.missing"
-            :key="m"
+            v-for="c in sets.missing"
+            :key="c.text"
             tag="button"
             type="button"
             size="x-small"
@@ -119,13 +124,14 @@ function signed(n: number) {
             color="error"
             append-icon="mdi-chevron-right"
             class="score-breakdown__claim-chip"
-            :aria-label="`${chipName(m)}: say whether you have it`"
-            @click="emit('claim', m, 'missing')"
+            :title="c.text !== c.label ? c.text : undefined"
+            :aria-label="`${chipName(c.label)}: say whether you have it`"
+            @click="emit('claim', c.text, c.source)"
           >
-            {{ m }}
+            {{ c.label }}
           </v-chip>
         </div>
-        <p v-if="score.skills.missing.length" class="text-caption text-medium-emphasis score-breakdown__hint">
+        <p v-if="sets.missing.length" class="text-caption text-medium-emphasis score-breakdown__hint">
           Tap a missing one you have to say so.
         </p>
       </section>

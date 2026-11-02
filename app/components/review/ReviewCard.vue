@@ -2,10 +2,13 @@
 import type { ReviewItem, SkillClaimSource } from '#shared/types/pipeline'
 import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
 import { demoStopKind, fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
+import { skillSets } from '#shared/utils/skill-sets'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
-// closed until opened. The decision bar stays pinned to the bottom.
+// closed until opened. The decision bar stays pinned to the bottom. On desktop (fill) the
+// verdict comes first, with every Missing skill under it, so a 1280x800 screen shows title,
+// score, pay, Missing, Matched count, and the decision bar without scrolling; Answer first follows.
 const props = defineProps<{
   item: ReviewItem
   approving: boolean
@@ -39,6 +42,7 @@ const meta = computed(() => itemStatusMeta(props.item))
 const company = computed(() => props.item.job.company || hostOf(props.item.job.applyUrl))
 const isDecide = computed(() => meta.value.group === 'decide')
 const blockingQs = computed(() => props.item.openQuestions.filter(q => q.blocking))
+const showAnswerFirst = computed(() => blockingQs.value.length > 0 || (props.item.status === 'needs_input' && props.refreshing))
 const optionalQs = computed(() => props.item.openQuestions.filter(q => !q.blocking))
 const isManual = computed(() => props.item.status === 'needs_manual')
 /** Preparation threw (Claude refused, a step crashed), so there is no resume or form to submit. */
@@ -67,11 +71,15 @@ function questionHint(id: number) {
   return q.blocking ? 'under Answer first, above' : 'under Optional questions, below'
 }
 
+/** Matched and Missing from the posting requirements, so the chips agree with the checklist (shared/utils/skill-sets.ts). */
+const sets = computed(() => skillSets(props.item.requirements, props.item.score))
+const hasSkills = computed(() => !!props.item.score || sets.value.matched.length > 0 || sets.value.missing.length > 0)
+
 const skillsSummary = computed(() => {
-  const s = props.item.score?.skills
-  if (!s) return 'Not scored yet'
-  const missing = s.missing.length ? `missing ${s.missing.slice(0, 2).join(', ')}${s.missing.length > 2 ? ` and ${s.missing.length - 2} more` : ''}` : 'nothing missing'
-  return `${s.matched.length} matched, ${missing}`
+  if (!hasSkills.value) return 'Not scored yet'
+  const names = sets.value.missing.map(c => c.label)
+  const missing = names.length ? `missing ${names.slice(0, 2).join(', ')}${names.length > 2 ? ` and ${names.length - 2} more` : ''}` : 'nothing missing'
+  return `${sets.value.matched.length} matched, ${missing}`
 })
 
 /**
@@ -80,9 +88,8 @@ const skillsSummary = computed(() => {
  */
 const MISSING_BUDGET = 44
 const glance = computed(() => {
-  const s = props.item.score?.skills
-  if (!s) return null
-  const names = s.missing.map(m => m.replace(/\s*\([^)]*\)/g, '').trim()).filter(Boolean)
+  if (!hasSkills.value) return null
+  const names = sets.value.missing.map(c => c.label.replace(/\s*\([^)]*\)/g, '').trim()).filter(Boolean)
   const shown: string[] = []
   let used = 0
   for (const n of names) {
@@ -92,7 +99,7 @@ const glance = computed(() => {
   }
   const rest = names.length - shown.length
   const missing = !names.length ? 'nothing' : rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.length === 2 ? shown.join(' and ') : shown.join(', ')
-  return { matched: s.matched.length, missing, none: !names.length }
+  return { matched: sets.value.matched.length, missing, none: !names.length }
 })
 
 const paySummary = computed(() => {
@@ -119,18 +126,25 @@ const demoTone = computed(() => (props.item.demo?.status === 'failed' && !demoSt
 /** The gap summary, agreeing with the demo this card shows. */
 const gapLine = computed(() => plainKnowledgeRefs(fixPlurals(gapSummaryText(props.item.gap?.summary, props.item.demo))))
 
+const demoSection = ref<{ show: () => void } | null>(null)
+
 const answers = computed(() => props.item.form.answers)
+const fieldsById = computed(() => new Map((props.item.form.snapshot?.fields ?? []).map(f => [f.id, f])))
+/** Empty fields that wait on a question: a required one holds up the application, an optional one does not. A field the snapshot does not list counts as required. */
+const unfilled = computed(() => answers.value.filter(x => x.needsQuestionId && !answerText(x.value)))
+const waitingRequired = computed(() => unfilled.value.filter(x => fieldsById.value.get(x.fieldId)?.required !== false).length)
 const formSummary = computed(() => {
   const a = answers.value
   if (!a.length) return prepareFailed.value ? 'Not filled' : props.item.form.error ? 'Form fill failed' : 'Form not filled yet'
-  const waiting = a.filter(x => x.needsQuestionId && !answerText(x.value)).length
+  const optional = unfilled.value.length - waitingRequired.value
   const check = a.filter(x => x.confidence !== 'high' && answerText(x.value)).length
   const parts = [plural(a.length, 'field')]
-  if (waiting) parts.push(`${waiting} waiting on you`)
+  if (waitingRequired.value) parts.push(`${waitingRequired.value} waiting on you`)
+  if (optional) parts.push(`${optional} optional not filled`)
   if (check) parts.push(`${check} to check`)
   return parts.join(', ')
 })
-const formTone = computed(() => (props.item.form.error ? 'error' : answers.value.some(x => x.needsQuestionId && !answerText(x.value)) ? 'warning' : 'default'))
+const formTone = computed(() => (props.item.form.error ? 'error' : waitingRequired.value ? 'warning' : 'default'))
 
 const resumeSummary = computed(() => {
   const r = props.item.resume
@@ -156,8 +170,11 @@ const letterPreview = computed(() => {
             {{ meta.label }}
           </span>
           <span v-if="item.isSandbox" class="rc__sandbox" title="Test data or the sandbox employer. Nothing reaches a real company.">Sandbox</span>
+          <span v-if="$slots.nav" class="rc__nav"><slot name="nav" /></span>
         </div>
         <h1 class="rc__title">{{ item.job.title }}</h1>
+        <!-- Desktop puts the meta line and the two links on one row (rc--fill); the phone stacks them. -->
+        <div class="rc__sub">
         <div class="rc__meta">
           <span v-for="f in facts" :key="f.text" class="rc__fact"><v-icon :icon="f.icon" size="14" class="rc__fact-icon" /> <span class="rc__fact-text">{{ f.text }}</span></span>
           <span v-if="item.proposedAt"><v-icon icon="mdi-clock-outline" size="14" /> Proposed {{ timeAgo(item.proposedAt) }}</span>
@@ -169,7 +186,7 @@ const letterPreview = computed(() => {
             target="_blank"
             rel="noopener"
             variant="tonal"
-            height="44"
+            :height="fill ? 32 : 44"
             append-icon="mdi-open-in-new"
           >
             Posting
@@ -180,12 +197,13 @@ const letterPreview = computed(() => {
             target="_blank"
             rel="noopener"
             variant="text"
-            height="44"
+            :height="fill ? 32 : 44"
             append-icon="mdi-open-in-new"
             class="rc__form-link"
           >
             <span class="rc__form-text">Form on {{ hostOf(item.job.applyUrl) }}</span>
           </v-btn>
+        </div>
         </div>
       </header>
 
@@ -193,7 +211,7 @@ const letterPreview = computed(() => {
         <ReviewProgress :item="item" :preparing="preparing" @prepare="emit('prepare')" />
       </div>
 
-      <div v-if="blockingQs.length || (item.status === 'needs_input' && refreshing)" class="rc__block rc__block--first">
+      <div v-if="!fill && showAnswerFirst" class="rc__block rc__block--first">
         <h2 class="rc__h">Answer first</h2>
         <ReviewQuestions
           :questions="blockingQs"
@@ -206,7 +224,7 @@ const letterPreview = computed(() => {
 
       <div class="rc__verdict">
         <div class="rc__panel">
-          <ReviewScoreLedger v-if="item.score" :score="item.score">
+          <ReviewScoreLedger v-if="item.score" :score="item.score" :dense="fill">
             <template #summary>
               <!-- Phone only: on a 390px screen the pay panel and the Skills fit section sit below the fold. -->
               <div v-if="glance" class="rc__glance">
@@ -230,13 +248,54 @@ const letterPreview = computed(() => {
             :score="item.score"
             :listing="{ min: item.job.salaryMin, max: item.job.salaryMax, currency: item.job.salaryCurrency }"
             compact
+            :dense="fill"
           />
         </div>
+        <!-- Desktop: Matched count and every Missing skill, full width under the score and pay. -->
+        <div v-if="fill && hasSkills" class="rc__strip">
+          <p class="rc__strip-head">
+            <span><span class="rc__strip-label">Matched</span> <span class="tabular">{{ sets.matched.length }}</span></span>
+            <span><span class="rc__strip-label">Missing</span> <span class="tabular">{{ sets.missing.length }}</span></span>
+            <span v-if="sets.missing.length" class="rc__strip-hint">Click one you have to say so.</span>
+            <span v-else class="rc__strip-hint">Nothing missing.</span>
+          </p>
+          <div v-if="sets.missing.length" class="rc__strip-chips">
+            <v-chip
+              v-for="c in sets.missing"
+              :key="c.text"
+              tag="button"
+              type="button"
+              size="small"
+              color="error"
+              variant="tonal"
+              prepend-icon="mdi-minus"
+              append-icon="mdi-chevron-right"
+              class="rc__strip-chip"
+              :title="c.text !== c.label ? c.text : undefined"
+              :aria-label="`${c.label}: say whether you have it`"
+              @click="openClaim(c.text, c.source)"
+            >
+              {{ c.label }}
+            </v-chip>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop: the verdict and every Missing skill above, then the questions approve waits on. -->
+      <div v-if="fill && showAnswerFirst" class="rc__block rc__block--after">
+        <h2 class="rc__h">Answer first</h2>
+        <ReviewQuestions
+          :questions="blockingQs"
+          :saving-id="savingQuestionId"
+          :refreshing="refreshing"
+          @answer="(id, a) => emit('answer', id, a)"
+          @skip="id => emit('skip', id)"
+        />
       </div>
 
       <div class="rc__sections">
         <ReviewSection title="Skills fit" icon="mdi-puzzle-outline" :summary="skillsSummary" default-open>
-          <ReviewSkills :score="item.score" :requirements="item.requirements" @claim="openClaim" />
+          <ReviewSkills :score="item.score" :requirements="item.requirements" :hide-missing="fill" @claim="openClaim" />
         </ReviewSection>
 
         <ReviewSection title="Pay and benefits" icon="mdi-cash-multiple" :summary="paySummary">
@@ -247,7 +306,7 @@ const letterPreview = computed(() => {
           />
         </ReviewSection>
 
-        <ReviewSection v-if="item.demo" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
+        <ReviewSection v-if="item.demo" ref="demoSection" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
           <ReviewDemo :demo="item.demo" :effect="item.approveEffect" :company="company" />
           <p v-if="gapLine" class="rc__gap">Gap analysis: {{ gapLine }}</p>
         </ReviewSection>
@@ -327,6 +386,7 @@ const letterPreview = computed(() => {
       :refreshing="refreshing"
       @approve="emit('approve')"
       @reject="emit('reject')"
+      @show-demo="demoSection?.show()"
     />
   </article>
 </template>
@@ -420,6 +480,10 @@ const letterPreview = computed(() => {
     min-width: 0;
   }
 
+  &__sub {
+    display: contents;
+  }
+
   &__glance {
     display: none;
     flex-direction: column;
@@ -451,6 +515,70 @@ const letterPreview = computed(() => {
 
   &__block {
     margin-top: 20px;
+
+    &--after {
+      margin-top: 16px;
+    }
+  }
+
+  // Previous and Next on the card (desktop), at the end of the company line.
+  &__nav {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+  }
+
+  // Desktop: the Matched count and every Missing skill across the card's width, under the score and pay.
+  &__strip {
+    grid-column: 1 / -1;
+    padding: 12px 16px 14px;
+    border-radius: 8px;
+    background: rgb(var(--v-theme-background));
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__strip-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 16px;
+    margin: 0 0 8px;
+    font-size: 0.875rem;
+  }
+
+  &__strip-label {
+    font-weight: 600;
+  }
+
+  &__strip-hint {
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__strip-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+
+    :deep(.v-chip) {
+      max-width: 100%;
+      height: auto;
+      min-height: 26px;
+      padding-top: 2px;
+      padding-bottom: 2px;
+      white-space: normal;
+    }
+  }
+
+  &__strip-chip {
+    cursor: pointer;
+    text-align: left;
+
+    :deep(.v-chip__append) {
+      margin-inline-start: 4px;
+      opacity: 0.7;
+    }
   }
 
   &__h {
@@ -535,6 +663,23 @@ const letterPreview = computed(() => {
 
   &--fill &__bar {
     position: static;
+  }
+
+  // Desktop: the meta line and Posting and Form share a row, so the verdict and Missing list fit the first screen.
+  &--fill &__sub {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+  }
+
+  &--fill &__links {
+    margin: 0;
+    flex-wrap: nowrap;
+  }
+
+  &--fill &__verdict {
+    margin-top: 14px;
   }
 }
 
