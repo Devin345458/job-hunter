@@ -368,6 +368,50 @@ export interface DemoDetail extends DemoProjectView {
   gapItem: GapItem | null
   /** The application's whole gap analysis, for context on the detail page. */
   gap: GapAnalysis | null
+  /** Present while a build or a preview build runs in this server process. Null after a restart. */
+  progress: DemoBuildProgress | null
+  /** Why a failed build stopped, when the daily run retries it on its own: out of credit, key rejected, or daily budget. */
+  stoppedFor: 'credit' | 'key' | 'budget' | null
+  preview: DemoPreview
+}
+
+/** A build running now, kept in the server's memory. */
+export interface DemoBuildProgress {
+  /** build: Claude is writing the project; preview: the harness is building the preview or running the tests. */
+  phase: 'build' | 'preview'
+  startedAt: string
+  turn: number
+  maxTurns: number
+  /** The newest build log lines, oldest first. */
+  recent: string[]
+}
+
+export interface DemoTestCase {
+  name: string
+  /** The describe block or file the test sits in, when the runner reports one. */
+  suite: string | null
+  status: 'passed' | 'failed' | 'skipped'
+  durationMs: number | null
+}
+
+/**
+ * What a demo does, shown on its detail page: a static build of its web UI served from
+ * /demo-preview/<id>/<token>/, or, for a library or service without a UI, its test list.
+ */
+export interface DemoPreview {
+  /** web: index.html plus a Vite build. tests: no UI, so the tests show what it does. none: nothing on disk yet. */
+  kind: 'web' | 'tests' | 'none'
+  /** The program that produced it: vite, vitest, jest, node --test, go test. */
+  tool: string | null
+  /** building comes from memory; ready and failed from the cached result next to the demo. */
+  status: 'missing' | 'building' | 'ready' | 'failed'
+  /** Public, token-checked URL of a ready web preview (works without a login). */
+  url: string | null
+  builtAt: string | null
+  error: string | null
+  tests: DemoTestCase[] | null
+  /** One line on why there is no web preview, or what the preview needs. */
+  note: string | null
 }
 
 export interface ReviewItem {

@@ -9,7 +9,11 @@ import type { DemoFile, GapAnalysis, GapItem } from '#shared/types/pipeline'
 import { attachDemoToResume } from './attach'
 import { availableToolchains, clipOutput, confinedPath, demoEnv, git, primaryLanguage, runProcess, runUntrusted, type Toolchain } from './exec'
 import { gapAnalysisIsStale, refreshGapAnalysis } from './gaps'
+import { refreshPreview } from './preview'
+import { clearPreviewRecord, PREVIEW_DIR } from './preview-state'
+import { claimBuild, isDemoBuilding, noteBuildLine, noteBuildTurn, releaseBuild, setBuildPhase } from './progress'
 import { countPassingTests, undash } from './resume-site'
+import { isBudgetFailure } from './stop-reason'
 import { demoCost, demoItem, demosForApplication, getAppWithJob, getDemo, githubRepoUrl, updateDemo, type DemoRow } from './store'
 
 // Builds one demo project with a tool-use loop on Claude (aiToolTurn in ai.ts, so every turn
@@ -39,7 +43,7 @@ const MAX_FILES = 80
 const MAX_FILE_BYTES = 200_000
 const MAX_TOTAL_BYTES = 1_500_000
 const RESULT_CHARS = 6000
-const IGNORED_DIRS = new Set(['.git', 'node_modules', 'vendor', 'dist', 'coverage', '.cache'])
+const IGNORED_DIRS = new Set(['.git', 'node_modules', 'vendor', 'dist', 'coverage', '.cache', PREVIEW_DIR])
 
 const NPM_SUBCOMMANDS = new Set(['install', 'i', 'ci', 'test', 't', 'run', 'run-script', 'ls', 'init', 'pkg'])
 const GO_SUBCOMMANDS = new Set(['build', 'test', 'vet', 'run', 'fmt', 'mod', 'version', 'env', 'list', 'doc'])
@@ -211,8 +215,8 @@ Skill it should show clearly: ${item.requirement}
 }
 
 // ── One build ───────────────────────────────────────────────
-
-const building = new Set<number>()
+// Which demos are building, and what each build is doing, lives in progress.ts so the API can
+// read it without importing the builder.
 
 export function kebab(text: string, max = 40): string {
   const s = text.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
@@ -246,10 +250,14 @@ export function createDemo(applicationId: number, item: GapItem): DemoRow {
   }).returning().get()
 }
 
+type Finished = { summary: string; highlights: Array<{ title: string; detail: string }>; techStack: string[]; testCommand: string[]; testOutput: string }
+
 interface ToolOutcome {
   content: string
   isError: boolean
-  finished?: { summary: string; highlights: Array<{ title: string; detail: string }>; techStack: string[]; testCommand: string[]; testOutput: string }
+  finished?: Finished
+  /** The first finish whose tests passed, answered with the self-review checklist. */
+  passedBeforeReview?: Finished
 }
 
 const HYPE = /\b(production[- ](?:grade|ready|quality)|enterprise[- ](?:grade|ready)|battle[- ]tested|comprehensive|robust|world[- ]class|blazing(?:ly)?[- ]fast|cutting[- ]edge|state[- ]of[- ]the[- ]art|seamless(?:ly)?)\b/gi
@@ -348,7 +356,11 @@ async function runTool(root: string, block: Anthropic.Beta.BetaToolUseBlock, log
         if (!state.reviewed) {
           state.reviewed = true
           log('finish: tests pass, asking for one self-review before accepting')
-          return { content: REVIEW_CHECKLIST, isError: false }
+          return {
+            content: REVIEW_CHECKLIST,
+            isError: false,
+            passedBeforeReview: { summary: f.summary, highlights: f.highlights, techStack: f.tech_stack, testCommand: f.test_command, testOutput: output },
+          }
         }
         return {
           content: 'Tests pass. The build is complete.',
@@ -374,29 +386,27 @@ const GITIGNORE: Record<string, string> = {
 /**
  * Build one demo. Returns the final row; never throws for a build failure (the row is
  * marked failed with the reason), only for programming errors before the build starts.
+ * Everything up to the first await runs synchronously, so a caller that does not await it
+ * (POST /api/demos/:id/rebuild) can rely on isDemoBuilding() being true once it returns.
  */
-/** True when a demo failed only because Claude was out of credit or over the daily budget. */
-export function isBudgetFailure(error: string | null | undefined): boolean {
-  return /credit balance is too low|out of credit|rejected the key|rejected the API key|Daily AI budget reached|Waiting for Claude/i.test(error ?? '')
-}
-
 export async function buildDemo(demoId: number, runLog: (msg: string) => void = () => {}): Promise<DemoRow> {
   const demo = getDemo(demoId)
   if (!demo) throw new Error(`Demo ${demoId} not found`)
-  if (building.has(demoId)) throw new Error(`Demo ${demoId} is already building`)
+  if (isDemoBuilding(demoId)) throw new Error(`Demo ${demoId} is already building`)
   const row = getAppWithJob(demo.applicationId)
   if (!row) throw new Error(`Application ${demo.applicationId} not found`)
   const gap = parseJson<GapAnalysis | null>(row.app.gapAnalysisJson, null)
   const item: GapItem = gap?.items.find(i => i.decision === 'demo' && i.requirement === demo.gapAddressed && i.demoIdea)
     ?? { requirement: demo.gapAddressed ?? demo.title, mustHave: false, decision: 'demo', rationale: '', demoIdea: { title: demo.title, summary: demo.summary ?? '', stack: parseJson<string[]>(demo.techStackJson, []), scopeHours: 4 } }
 
-  building.add(demoId)
   const limits = buildLimits()
+  if (!claimBuild(demoId, limits.maxTurns)) throw new Error(`Demo ${demoId} is already building`)
   const started = Date.now()
   const lines: string[] = []
   const log = (line: string) => {
     const t = ((Date.now() - started) / 1000).toFixed(0).padStart(4, ' ')
     lines.push(`[${t}s] ${line}`)
+    noteBuildLine(demoId, line)
     runLog(`demo ${demoId}: ${line}`)
   }
   const root = join(dataDir(), 'demos', demo.slug)
@@ -417,6 +427,7 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
     if (!root.startsWith(join(dataDir(), 'demos') + '/')) throw new Error('demo path escaped the demos directory')
     if (existsSync(root)) rmSync(root, { recursive: true, force: true })
     mkdirSync(root, { recursive: true })
+    clearPreviewRecord(demo)
     updateDemo(demoId, { status: 'building', localPath: root, error: null, testsPassed: null, testOutput: null, builtAt: null })
     log(`building "${demo.title}" in ${relative(dataDir(), root)} with limits ${limits.maxTurns} turns, ${limits.maxMs / 60_000} min, $${limits.maxCostUsd}`)
 
@@ -424,15 +435,27 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
     const system = systemPrompt(owner, demo.repoName!, toolchains)
     const messages: Anthropic.Beta.BetaMessageParam[] = [{ role: 'user', content: [{ type: 'text', text: briefMessage(item, row.job) }] }]
     const model = useRuntimeConfig().demoModel || undefined
-    let finished: ToolOutcome['finished'] | null = null
+    let finished: Finished | null = null
+    // Tests passed and the self-review was asked for. If a limit or a Claude failure ends the
+    // loop during the review, the build is still accepted once its tests pass again.
+    let passing: Finished | null = null
+    /** Why the loop ended early; the caller adds whether the tests had passed. */
+    let stop: { reason: string; suffix: boolean } | null = null
     let idleTurns = 0
     let truncations = 0
     const state: BuildState = { reviewed: false }
 
     for (let turn = 1; turn <= limits.maxTurns && !finished; turn++) {
-      if (Date.now() - started > limits.maxMs) return fail(`Stopped at the ${limits.maxMs / 60_000} minute limit before the tests passed`)
+      noteBuildTurn(demoId, turn)
+      if (Date.now() - started > limits.maxMs) {
+        stop = { reason: `Stopped at the ${limits.maxMs / 60_000} minute limit`, suffix: true }
+        break
+      }
       const spent = demoCost(demoId)
-      if (spent >= limits.maxCostUsd) return fail(`Stopped at the $${limits.maxCostUsd} per-build limit ($${spent.toFixed(2)} spent) before the tests passed`)
+      if (spent >= limits.maxCostUsd) {
+        stop = { reason: `Stopped at the $${limits.maxCostUsd} per-build limit ($${spent.toFixed(2)} spent)`, suffix: true }
+        break
+      }
 
       let response: Anthropic.Beta.BetaMessage
       try {
@@ -445,8 +468,10 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
           messages.push({ role: 'user', content: [{ type: 'text', text: 'Your last reply was cut off because it was too long, so none of its tool calls ran. Write one or two files per reply and keep each file focused.' }] })
           continue
         }
-        if (e instanceof AiBudgetExceeded) return fail(`Waiting for Claude: ${e.message} The next run retries this demo.`)
-        return fail(`Claude call failed on turn ${turn}: ${e?.message || e}`)
+        stop = e instanceof AiBudgetExceeded
+          ? { reason: `Waiting for Claude: ${e.message} The next run retries this demo.`, suffix: false }
+          : { reason: `Claude call failed on turn ${turn}: ${e?.message || e}`, suffix: false }
+        break
       }
       log(`turn ${turn}: ${response.model}, ${response.usage.input_tokens} in + ${response.usage.cache_read_input_tokens ?? 0} cached + ${response.usage.output_tokens} out, stop ${response.stop_reason}`)
       for (const b of response.content) if (b.type === 'text' && b.text.trim()) log(`  note: ${b.text.trim().replace(/\s+/g, ' ').slice(0, 300)}`)
@@ -454,7 +479,10 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
 
       const calls = response.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === 'tool_use')
       if (calls.length === 0) {
-        if (++idleTurns >= 3) return fail('The model stopped calling tools three times without finishing')
+        if (++idleTurns >= 3) {
+          stop = { reason: 'The model stopped calling tools three times without finishing', suffix: false }
+          break
+        }
         messages.push({ role: 'user', content: [{ type: 'text', text: 'Keep going with the tools. Call finish once the tests pass.' }] })
         continue
       }
@@ -463,11 +491,21 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
       for (const call of calls) {
         const outcome = await runTool(root, call, line => log(`  ${line}`), state)
         if (outcome.finished && !finished) finished = outcome.finished
+        if (outcome.passedBeforeReview && !passing) passing = outcome.passedBeforeReview
         results.push({ type: 'tool_result', tool_use_id: call.id, content: outcome.content, ...(outcome.isError ? { is_error: true } : {}) })
       }
       messages.push({ role: 'user', content: results })
     }
-    if (!finished) return fail(`Stopped at the ${limits.maxTurns} turn limit before the tests passed`)
+    stop ??= finished ? null : { reason: `Stopped at the ${limits.maxTurns} turn limit`, suffix: true }
+    if (!finished && passing && stop) {
+      log(`${stop.reason} during the self-review, after the tests had passed. Rerunning ${JSON.stringify(passing.testCommand)} before accepting the build.`)
+      const res = await runUntrusted(vetCommand(passing.testCommand, root), { root, cwd: root, env: demoEnv(), timeoutMs: 600_000 })
+      const output = res.output.trim()
+      log(`self-review cut short: tests ${res.timedOut ? 'timed out' : `exit ${res.code}`} (${(res.durationMs / 1000).toFixed(1)}s)`)
+      if (res.code === 0 && !res.timedOut && testsActuallyRan(output)) finished = { ...passing, testOutput: output }
+      else return fail(`${stop.reason} during the self-review, and the tests no longer pass`)
+    }
+    if (!finished) return fail(`${stop!.reason}${stop!.suffix ? ' before the tests passed' : ''}`)
 
     // ── Harness: git history authored as Devin ──
     const stackLang = primaryLanguage(finished.techStack.length ? finished.techStack : item.demoIdea!.stack)
@@ -507,6 +545,15 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
     catch (e: any) {
       log(`resume update failed: ${e?.message || e}`)
     }
+
+    // ── Harness: preview, after the commit so its files are never part of the repo ──
+    setBuildPhase(demoId, 'preview')
+    try {
+      await refreshPreview(demoId, log)
+    }
+    catch (e: any) {
+      log(`preview: error: ${e?.message || e}`)
+    }
     updateDemo(demoId, { buildLog: clipOutput(lines.join('\n'), 60_000), costUsd: demoCost(demoId) })
     return getDemo(demoId)!
   }
@@ -514,7 +561,7 @@ export async function buildDemo(demoId: number, runLog: (msg: string) => void = 
     return fail(e?.message || String(e))
   }
   finally {
-    building.delete(demoId)
+    releaseBuild(demoId)
   }
 }
 
@@ -543,7 +590,7 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
   const max = Math.max(0, Number(opts.max ?? useRuntimeConfig().demoMaxPerRun) || 1)
 
   // A demo left in building by a server restart is not building anymore.
-  const stuck = db.select().from(demoProjects).where(eq(demoProjects.status, 'building')).all().filter(d => !building.has(d.id))
+  const stuck = db.select().from(demoProjects).where(eq(demoProjects.status, 'building')).all().filter(d => !isDemoBuilding(d.id))
   for (const d of stuck) updateDemo(d.id, { status: 'failed', error: 'The build was interrupted (the server restarted while it ran)' })
 
   const apps = db.select({ app: applications, job: jobs })

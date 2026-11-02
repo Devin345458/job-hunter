@@ -162,14 +162,14 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
         // Answered under a slightly different subject spelling between the lookup and the insert.
         const status = NO.test(q.answer) ? 'lack' : YES.test(q.answer) ? null : 'partial'
         if (!status) {
-          items.push({ ...base, questionId: q.id, decision: 'reframe', rationale: `Devin answered "${q.answer}" about ${subject}. No demo needed.` })
+          items.push({ ...base, questionId: q.id, decision: 'reframe', rationale: `You answered "${q.answer}" about ${subject}. No demo needed.` })
         }
         else {
           confirmed.push({ item: { ...base, questionId: q.id }, subject, status, evidence: `Devin answered "${q.answer}" about ${subject}.` })
         }
         continue
       }
-      items.push({ ...base, decision: 'ask', questionId: q.id, rationale: `The knowledge base does not say whether Devin has ${subject}. Asked: "${q.question}"` })
+      items.push({ ...base, decision: 'ask', questionId: q.id, rationale: `The knowledge base does not say whether you have ${subject}. Asked: "${q.question}"` })
       continue
     }
     confirmed.push({ item: base, subject, status: c.status, evidence: c.evidence })

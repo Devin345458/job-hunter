@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import type { DemoProjectView } from '#shared/types/pipeline'
-import { plainError } from '#shared/utils/plain-text'
+import type { DemoDetail } from '#shared/types/pipeline'
 
-// Summary of one demo project, for the review dashboard and the demos list.
+// Summary of one demo project on the demos list: status, live build progress, why a build
+// stopped, Build again, and a way into the preview.
 const props = defineProps<{
-  demo: DemoProjectView
+  demo: DemoDetail
   /** Shown under the title when the card is not already inside an application view. */
   jobLabel?: string | null
+  /** The Build again request is in flight. */
+  rebuilding?: boolean
 }>()
+const emit = defineEmits<{ rebuild: [] }>()
+
+/** A build the server is running right now reads as building even before the row says so. */
+const shownStatus = computed(() => props.demo.progress ? 'building' as const : props.demo.status)
+const hasPreview = computed(() => ['built', 'published'].includes(props.demo.status) && props.demo.preview.kind !== 'none')
 
 const testFacts = computed(() => {
   if (props.demo.testsPassed === true) return { icon: 'mdi-check-circle', color: 'success', text: 'Tests pass' }
@@ -35,7 +42,7 @@ const testFacts = computed(() => {
 
     <v-card-text class="pt-1">
       <div class="mb-3">
-        <DemoStatusChip :status="demo.status" />
+        <DemoStatusChip :status="shownStatus" />
       </div>
       <p v-if="jobLabel && demo.gapAddressed" class="demo-card__gap text-body-2 mb-2">
         Shows: {{ demo.gapAddressed }}
@@ -62,16 +69,17 @@ const testFacts = computed(() => {
           Publishes on approve
         </span>
       </div>
-      <v-alert v-if="demo.status === 'failed' && demo.error" type="error" variant="tonal" density="compact" class="mt-3 text-body-2 demo-card__error">
-        {{ plainError(demo.error) }}
-      </v-alert>
+      <DemoBuildState :demo="demo" :busy="rebuilding" class="mt-3" @rebuild="emit('rebuild')" />
     </v-card-text>
 
     <v-card-actions class="px-4 pb-4 pt-0 demo-card__actions">
-      <v-btn variant="tonal" color="primary" :to="`/demos/${demo.id}`" prepend-icon="mdi-eye-outline">
+      <v-btn variant="tonal" color="primary" height="44" :to="`/demos/${demo.id}`" prepend-icon="mdi-file-eye-outline">
         Open demo
       </v-btn>
-      <v-btn v-if="demo.repoUrl && demo.repoUrl.startsWith('http')" variant="text" :href="demo.repoUrl" target="_blank" prepend-icon="mdi-open-in-new">
+      <v-btn v-if="hasPreview" variant="tonal" height="44" :to="`/demos/${demo.id}#preview`" :prepend-icon="demo.preview.kind === 'web' ? 'mdi-monitor-eye' : 'mdi-test-tube'">
+        {{ demo.preview.kind === 'web' ? 'Preview' : 'What it does' }}
+      </v-btn>
+      <v-btn v-if="demo.repoUrl && demo.repoUrl.startsWith('http')" variant="text" height="44" :href="demo.repoUrl" target="_blank" prepend-icon="mdi-open-in-new">
         Repository
       </v-btn>
     </v-card-actions>
@@ -89,10 +97,6 @@ const testFacts = computed(() => {
 
   &__subtitle {
     white-space: normal;
-  }
-
-  &__error {
-    overflow-wrap: anywhere;
   }
 
   &__gap,
