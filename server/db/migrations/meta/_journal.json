@@ -22,13 +22,6 @@
       "when": 1793545679054,
       "tag": "0002_learned_rules_sandbox",
       "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1793656139530,
-      "tag": "0003_memory_leads",
-      "breakpoints": true
     }
   ]
 }
