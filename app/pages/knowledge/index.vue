@@ -19,6 +19,9 @@ const searchQuery = ref('')
 const showEditor = ref(false)
 const editingEntry = ref<any>(null)
 
+/** A new entry starts in the category the list is filtered to (Profile filter, Profile entry). */
+const newEntryCategory = computed(() => (selectedCategory.value || 'skill') as KnowledgeCategory)
+
 const filteredEntries = computed(() => {
   let result = entries.value
   if (selectedCategory.value) {
@@ -76,17 +79,16 @@ onMounted(() => fetchEntries())
 </script>
 
 <template>
-  <div class="fade-in">
-    <!-- Page Header -->
-    <div class="d-flex align-center justify-space-between mb-8">
-      <div class="page-header">
+  <div class="knowledge-page fade-in has-floating-action">
+    <div class="page-header page-header--split">
+      <div>
         <h1 class="text-h4 page-header__title">Knowledge Base</h1>
         <p class="text-body-2 page-header__subtitle">
           Your professional profile in structured form. The AI uses this to match jobs, tailor resumes, and generate interview prep. The more complete your profile, the better the results.
         </p>
       </div>
-      <v-btn color="primary" prepend-icon="mdi-plus" @click="openEditor()" class="d-none d-sm-flex">
-        Add Entry
+      <v-btn color="primary" prepend-icon="mdi-plus" class="d-none d-sm-flex" @click="openEditor()">
+        Add entry
       </v-btn>
     </div>
 
@@ -211,29 +213,26 @@ onMounted(() => fetchEntries())
       </v-row>
     </div>
 
-    <!-- Mobile FAB for adding entries -->
+    <!-- Phone: labeled, and above the bottom bar (global .floating-action) -->
     <v-btn
-      icon
       color="primary"
       size="large"
-      position="fixed"
-      location="bottom end"
-      class="ma-6 d-sm-none"
+      prepend-icon="mdi-plus"
+      class="floating-action d-sm-none"
       @click="openEditor()"
     >
-      <v-icon icon="mdi-plus" />
+      Add entry
     </v-btn>
 
-    <!-- Editor dialog -->
-    <v-dialog v-model="showEditor" max-width="600" persistent>
-      <KnowledgeEntryEditor
-        :entry="editingEntry"
-        :categories="categories.map(c => c.value)"
-        :dialog="true"
-        @save="handleSave"
-        @cancel="handleCancel"
-      />
-    </v-dialog>
+    <!-- The editor renders its own dialog. Mounting it per open gives a fresh form each time. -->
+    <KnowledgeEntryEditor
+      v-if="showEditor"
+      :entry="editingEntry"
+      :default-category="newEntryCategory"
+      :dialog="true"
+      @save="handleSave"
+      @cancel="handleCancel"
+    />
   </div>
 </template>
 
