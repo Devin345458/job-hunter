@@ -228,7 +228,7 @@ onMounted(fetchConfigs)
 
     <!-- Search Configurations -->
     <v-card variant="outlined" class="mb-6">
-      <v-card-item>
+      <v-card-item class="settings__configs-head">
         <template #prepend>
           <v-avatar color="accent" variant="tonal" size="36">
             <v-icon icon="mdi-tune-variant" size="20" />
@@ -356,6 +356,7 @@ onMounted(fetchConfigs)
                   color="success"
                   hide-details
                   density="compact"
+                  :aria-label="`Include ${config.name} in the daily search`"
                   @update:model-value="toggleConfig(config)"
                 />
               </template>
@@ -368,6 +369,7 @@ onMounted(fetchConfigs)
                   icon="mdi-pencil-outline"
                   variant="text"
                   size="small"
+                  :aria-label="`Edit ${config.name}`"
                   @click="editConfig(config)"
                 />
                 <v-btn
@@ -375,6 +377,7 @@ onMounted(fetchConfigs)
                   variant="text"
                   color="error"
                   size="small"
+                  :aria-label="`Delete ${config.name}`"
                   @click="deleteConfig(config)"
                 />
               </template>
@@ -511,5 +514,20 @@ onMounted(fetchConfigs)
 
 .settings__pipeline {
   scroll-margin-top: 72px;
+}
+
+// Phone: Add Config drops under the section title so the title and subtitle get the full width.
+@media (max-width: 599.98px) {
+  .settings__configs-head {
+    grid-template-areas:
+      'prepend content'
+      '. append';
+
+    :deep(.v-card-item__append) {
+      justify-self: start;
+      padding-inline-start: 0;
+      padding-top: 12px;
+    }
+  }
 }
 </style>

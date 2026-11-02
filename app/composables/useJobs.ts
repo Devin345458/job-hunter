@@ -3,6 +3,11 @@ import type { jobs } from '~~/server/db/schema'
 
 export type Job = InferSelectModel<typeof jobs>
 
+/** The columns GET /api/jobs returns for each card (server/api/jobs/index.get.ts). The detail page loads the rest. */
+export type JobListItem = Pick<Job,
+  | 'id' | 'source' | 'title' | 'company' | 'location' | 'remoteType' | 'salaryMin' | 'salaryMax' | 'salaryCurrency'
+  | 'totalCompEstimate' | 'matchScore' | 'status' | 'tags' | 'applyUrl' | 'atsType' | 'isSandbox' | 'foundAt'>
+
 export type JobStatus = 'new' | 'reviewed' | 'applied' | 'rejected' | 'expired'
 export type RemoteType = 'remote' | 'hybrid' | 'onsite'
 
@@ -11,25 +16,67 @@ export interface JobFilters {
   search?: string
   remoteType?: RemoteType
   minScore?: number
+  maxScore?: number
+  /** score (default): best match first, unscored last. date: newest first. */
+  sort?: JobSort
   page?: number
   limit?: number
 }
 
+export type JobSort = 'score' | 'date'
+
 export interface JobsResponse {
-  jobs: Job[]
+  jobs: JobListItem[]
   total: number
   page: number
   limit: number
 }
 
+/** Result of POST /api/jobs/search: the jobs:search run it recorded in pipeline_runs. */
+export interface JobSearchResult {
+  runId: number
+  status: 'succeeded' | 'failed' | 'skipped'
+  message: string
+  jobsFound: number
+  found: number
+}
+
+/** A list request that a newer one replaced. Callers ignore it. */
+export class SupersededRequest extends Error {
+  constructor() {
+    super('superseded')
+    this.name = 'SupersededRequest'
+  }
+}
+
+/** How long a list request may take before the page gives up and offers a retry. */
+const LIST_TIMEOUT_MS = 20000
+
 export function useJobs() {
-  const jobs = ref<Job[]>([])
+  const jobs = ref<JobListItem[]>([])
+  const total = ref(0)
+  const page = ref(1)
   const loading = ref(false)
   const error = ref<string | null>(null)
 
-  async function fetchJobs(filters?: JobFilters): Promise<JobsResponse> {
+  // Only the newest list request may write to the list. Filter changes can fire requests
+  // faster than they answer; an older answer arriving last used to overwrite the newer one.
+  let latestRequest = 0
+  let inFlight: AbortController | null = null
+
+  /**
+   * Loads one page of jobs. With append, the page is added to the end of the list ("Load more");
+   * otherwise it replaces the list. Throws SupersededRequest when a newer call replaced this one.
+   */
+  async function fetchJobs(filters?: JobFilters, options: { append?: boolean } = {}): Promise<JobsResponse> {
+    const requestId = ++latestRequest
+    inFlight?.abort()
+    const controller = new AbortController()
+    inFlight = controller
+
     loading.value = true
     error.value = null
+    let timedOut = false
 
     try {
       const params: Record<string, string | number> = {}
@@ -42,19 +89,44 @@ export function useJobs() {
       if (filters?.search) params.search = filters.search
       if (filters?.remoteType) params.remoteType = filters.remoteType
       if (filters?.minScore !== undefined) params.minScore = filters.minScore
+      if (filters?.maxScore !== undefined) params.maxScore = filters.maxScore
       if (filters?.page) params.page = filters.page
       if (filters?.limit) params.limit = filters.limit
+      if (filters?.sort) params.sortBy = filters.sort
 
-      const data = await $fetch<JobsResponse>('/api/jobs', { params })
-      jobs.value = data.jobs
+      // A request that never finishes would leave the progress bar up for good; give up after
+      // 20 seconds and show the error with a retry instead. ofetch ignores its timeout option
+      // when a signal is passed, so the timeout aborts the same controller.
+      const timer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, LIST_TIMEOUT_MS)
+      let data: JobsResponse
+      try {
+        data = await $fetch<JobsResponse>('/api/jobs', { params, signal: controller.signal })
+      }
+      finally {
+        clearTimeout(timer)
+      }
+      if (requestId !== latestRequest) throw new SupersededRequest()
+
+      jobs.value = options.append ? [...jobs.value, ...data.jobs] : data.jobs
+      total.value = data.total
+      page.value = data.page
       return data
     }
     catch (e: any) {
-      error.value = e.data?.message || e.message || 'Failed to fetch jobs'
+      if (requestId !== latestRequest || e instanceof SupersededRequest) throw new SupersededRequest()
+      error.value = timedOut
+        ? 'The job list took more than 20 seconds to load. Try again.'
+        : e?.data?.statusMessage || e?.data?.message || e?.message || 'Failed to fetch jobs'
       throw e
     }
     finally {
-      loading.value = false
+      if (requestId === latestRequest) {
+        loading.value = false
+        inFlight = null
+      }
     }
   }
 
@@ -96,22 +168,9 @@ export function useJobs() {
     }
   }
 
-  async function triggerSearch(): Promise<{ message: string; jobsFound: number }> {
-    loading.value = true
-    error.value = null
-
-    try {
-      return await $fetch<{ message: string; jobsFound: number }>('/api/jobs/search', {
-        method: 'POST',
-      })
-    }
-    catch (e: any) {
-      error.value = e.data?.message || e.message || 'Failed to trigger search'
-      throw e
-    }
-    finally {
-      loading.value = false
-    }
+  /** Runs the jobs:search task now (POST /api/jobs/search). Throws with the server's message on failure. */
+  async function triggerSearch(): Promise<JobSearchResult> {
+    return await $fetch<JobSearchResult>('/api/jobs/search', { method: 'POST' })
   }
 
   async function scoreJobs(jobIds: number[]): Promise<Job[]> {
@@ -144,6 +203,8 @@ export function useJobs() {
 
   return {
     jobs,
+    total,
+    page,
     loading,
     error,
     fetchJobs,

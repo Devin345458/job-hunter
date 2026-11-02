@@ -4,9 +4,12 @@ import type { KnowledgeEntry, KnowledgeCategory, KnowledgeSource, KnowledgeEntry
 const props = withDefaults(defineProps<{
   entry?: KnowledgeEntry | null
   dialog?: boolean
+  /** Category a new entry starts in, such as the filter the list is showing. */
+  defaultCategory?: KnowledgeCategory
 }>(), {
   entry: null,
   dialog: false,
+  defaultCategory: 'skill',
 })
 
 const emit = defineEmits<{
@@ -31,7 +34,7 @@ const sourceOptions: { title: string; value: KnowledgeSource }[] = [
 ]
 
 const form = reactive({
-  category: (props.entry?.category as KnowledgeCategory) || 'skill',
+  category: (props.entry?.category as KnowledgeCategory) || props.defaultCategory,
   key: props.entry?.key || '',
   value: props.entry?.value || '',
   source: (props.entry?.source as KnowledgeSource) || 'user_answer',
@@ -44,15 +47,15 @@ const isValid = computed(() =>
   form.category && form.key.trim() && form.value.trim() && form.source,
 )
 
-watch(() => props.entry, (newEntry) => {
+watch([() => props.entry, () => props.defaultCategory], ([newEntry]) => {
   if (newEntry) {
-    form.category = (newEntry.category as KnowledgeCategory) || 'skill'
+    form.category = (newEntry.category as KnowledgeCategory) || props.defaultCategory
     form.key = newEntry.key || ''
     form.value = newEntry.value || ''
     form.source = (newEntry.source as KnowledgeSource) || 'user_answer'
   }
   else {
-    form.category = 'skill'
+    form.category = props.defaultCategory
     form.key = ''
     form.value = ''
     form.source = 'user_answer'
