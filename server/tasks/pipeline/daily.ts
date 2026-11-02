@@ -1,8 +1,11 @@
 import { runOutcome, runProblems } from '#shared/utils/run-outcome'
 
 // The daily chain. One scheduled entry runs every step in order, so a slow search
-// never races the match step the way two fixed cron times would.
+// never races the match step the way two fixed cron times would. repos:index runs first so the
+// day's questions can be checked against fresh commits. repos:suggest runs last so the questions
+// learn:daily and applications:prepare asked in this run get a suggestion too.
 export const DAILY_STEPS = [
+  'repos:index',
   'learn:daily',
   // Best effort: off or unreachable memory records a plain note and the chain carries on.
   'memory:leads',
@@ -11,6 +14,7 @@ export const DAILY_STEPS = [
   'jobs:match',
   'applications:prepare',
   'demos:build',
+  'repos:suggest',
 ] as const
 
 /**
@@ -27,7 +31,7 @@ export function stepSummary(step: string, result: { status?: string; stats?: Rec
 export default defineTask({
   meta: {
     name: 'pipeline:daily',
-    description: 'Learn from decisions, search, enrich, score, prepare applications, build demos',
+    description: 'Index GitHub commits, learn from decisions, search, enrich, score, prepare applications, build demos, suggest answers from GitHub',
   },
   async run({ payload }) {
     if (scheduleSkipped(payload as Record<string, unknown> | undefined)) return { result: { skipped: 'the schedule is off on this server (NUXT_SCHEDULER_ENABLED=false)' } }

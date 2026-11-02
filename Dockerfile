@@ -38,6 +38,9 @@ ENV PATH=/usr/local/go/bin:$PATH
 
 # Unprivileged user for model-chosen demo build commands (server/utils/demo/exec.ts).
 RUN useradd --system --uid 10001 --user-group --create-home --shell /usr/sbin/nologin demo
+# Its own unprivileged user for git in the GitHub evidence cache (server/utils/repos/git.ts), so
+# demo build commands can read neither the read token in git's environment nor the cloned code.
+RUN useradd --system --uid 10002 --user-group --create-home --shell /usr/sbin/nologin repos
 
 RUN mkdir -p /app/data /app/data/resumes
 

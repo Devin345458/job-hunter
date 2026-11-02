@@ -1,0 +1,1 @@
+ALTER TABLE `questions` ADD `memory_leads_json` text;

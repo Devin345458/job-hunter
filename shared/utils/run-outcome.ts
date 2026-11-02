@@ -17,6 +17,8 @@ export const TASK_LABELS: Record<string, string> = {
   'jobs:match': 'Score matches',
   'applications:prepare': 'Prepare applications',
   'demos:build': 'Build demo projects',
+  'repos:index': 'Index GitHub commits',
+  'repos:suggest': 'Suggest answers from GitHub',
   'system:heartbeat': 'Scheduler heartbeat',
 }
 

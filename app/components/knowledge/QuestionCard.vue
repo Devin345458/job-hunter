@@ -215,6 +215,16 @@ watch(() => props.prefill?.nonce, () => {
   draft.value = text
 })
 
+// "Use this" on Found in your GitHub: the same handoff as the chat's "Use this draft". It picks the
+// suggested level and puts the draft in the example box. Nothing is saved until Save.
+function useRepoSuggestion() {
+  const s = props.question.repoSuggestion
+  if (!s || props.mode !== 'pending' || busy.value) return
+  level.value = s.level
+  exampleText.value = s.draft
+  exampleOpen.value = true
+}
+
 // The chat's "Answer: Yes" on a skill or experience question picks it here and opens the example box.
 watch(() => props.pick?.nonce, () => {
   const lv = props.pick?.level
@@ -265,6 +275,15 @@ watch(() => props.pick?.nonce, () => {
           <span class="question-card__waiter-title text-medium-emphasis">{{ w.title }}</span>
         </NuxtLink>
       </div>
+
+      <!-- Suggested from his own commits. Silent when there is nothing: no evidence is never a No. -->
+      <QuestionsRepoEvidence
+        v-if="mode === 'pending' && takesExample && question.repoSuggestion"
+        :suggestion="question.repoSuggestion"
+        :disabled="busy"
+        :box-text="exampleOpen ? exampleText : ''"
+        @use="useRepoSuggestion"
+      />
 
       <QuestionsMemoryLeads v-if="mode === 'pending'" :question-id="question.id" :takes-example="takesExample" @ask="emit('ask')" />
 

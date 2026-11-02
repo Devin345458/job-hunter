@@ -13,6 +13,7 @@ const snackbar = useSnackbar()
 interface TaskDef { id: string; label: string; detail: string; usesAi: boolean }
 const TASKS: TaskDef[] = [
   { id: 'pipeline:daily', label: 'Full run', detail: `Every step below, in order. This is what runs ${PIPELINE_SCHEDULE_TEXT}.`, usesAi: true },
+  { id: 'repos:index', label: 'Index GitHub commits', detail: 'Reads your own commits in the repos switched on under GitHub evidence. Nothing is sent to Claude.', usesAi: false },
   { id: 'learn:daily', label: 'Learn from decisions', detail: 'Turns approve and reject reasons into scoring rules.', usesAi: false },
   { id: 'memory:leads', label: 'Leads from your Claude sessions', detail: 'Searches your laptop\'s memory for leads on open questions. Skipped when it is not reachable.', usesAi: false },
   { id: 'jobs:search', label: 'Search listings', detail: 'Pulls new postings from every active search.', usesAi: false },
@@ -20,6 +21,7 @@ const TASKS: TaskDef[] = [
   { id: 'jobs:match', label: 'Score matches', detail: 'Scores skills and pay against your floor.', usesAi: true },
   { id: 'applications:prepare', label: 'Prepare applications', detail: 'Tailors the resume, writes the letter, fills the form without submitting.', usesAi: true },
   { id: 'demos:build', label: 'Build demo projects', detail: 'Builds and tests demos for gaps. Nothing is published until you approve.', usesAi: true },
+  { id: 'repos:suggest', label: 'Suggest answers from GitHub', detail: 'Checks open skill and experience questions against your commits. Nothing is answered until you tap Use this and Save.', usesAi: true },
 ]
 
 const runs = computed<PipelineRunView[]>(() => health.runs.value?.runs ?? [])

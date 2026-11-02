@@ -7,7 +7,9 @@ import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, type ChatQuestion } from '~/componen
 // The panel shows what the knowledge base says today, asks the same Yes, Some experience, or No
 // question as /questions (with "Where did you do it?" after a Yes), and saves through the question
 // path (POST /api/jobs/:id/claim). Then Claude scores the job's skills again and the panel shows
-// the new score. It never suggests an answer: the chat explains, and drafts only from what Devin types.
+// the new score. Claude never suggests an answer here: the chat explains, and drafts only from what
+// Devin types. The one suggestion is Found in your GitHub, built from commits he authored, which
+// fills the example box only when he taps Use this.
 const props = defineProps<{
   modelValue: boolean
   jobId: number
@@ -118,6 +120,16 @@ function tap(a: SkillClaimAnswer) {
   level.value = null
   exampleOpen.value = false
   save('No', undefined, 'no')
+}
+
+/** "Use this" on Found in your GitHub: picks the suggested level and fills the example box. Nothing saves until Save. */
+function useRepoSuggestion() {
+  const s = preview.value?.question.repoSuggestion
+  if (!s || busy.value) return
+  saveError.value = null
+  level.value = s.level
+  exampleText.value = s.draft
+  exampleOpen.value = true
 }
 
 const trimmedExample = computed(() => exampleText.value.trim())
@@ -358,6 +370,14 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
           <section v-if="view === 'ask'" class="sc__ask" aria-labelledby="sc-question">
             <h3 id="sc-question" class="sc__question">{{ preview.question.text }}</h3>
             <p v-if="previousAnswer && !preview.isSandbox" class="sc__previous">You answered {{ previousAnswer }} before. A new answer replaces it.</p>
+            <!-- Suggested from his own commits. Silent when there is nothing: no evidence is never a No. -->
+            <QuestionsRepoEvidence
+              v-if="!preview.isSandbox && preview.question.status === 'pending' && preview.question.repoSuggestion"
+              :suggestion="preview.question.repoSuggestion"
+              :disabled="busy"
+              :box-text="exampleOpen ? exampleText : ''"
+              @use="useRepoSuggestion"
+            />
             <div class="sc__choices">
               <v-btn
                 v-for="a in ANSWERS"
