@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { fixPlurals, plainKnowledgeRefs } from '#shared/utils/plain-text'
 import type { GapAnalysis, GapItem } from '#shared/types/pipeline'
 
 // The gap analysis for one application: each requirement Devin's record lacks and what the
@@ -20,7 +21,7 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
     </p>
     <template v-else>
       <p class="gap-analysis__summary text-body-2 mb-4">
-        {{ gap.summary }}
+        {{ fixPlurals(plainKnowledgeRefs(gap.summary)) }}
       </p>
       <div v-for="(item, i) in gap.items" :key="i" class="gap-analysis__item">
         <div class="gap-analysis__row">
@@ -35,7 +36,7 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
           {{ item.requirement }}
         </div>
         <div class="gap-analysis__rationale text-body-2">
-          {{ item.rationale }}
+          {{ fixPlurals(plainKnowledgeRefs(item.rationale)) }}
         </div>
         <div v-if="item.demoIdea" class="gap-analysis__idea text-body-2">
           <strong>{{ item.demoIdea.title }}</strong>: {{ item.demoIdea.summary }}
