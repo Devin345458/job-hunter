@@ -33,7 +33,7 @@ export interface RepoView {
   isFork: boolean
   archived: boolean
   sizeMb: number | null
-  /** Switched on. A repo is on by default only when one of his own logins owns it. */
+  /** Switched on. A repo is on by default only when one of his own logins owns it and it is not a fork. */
   included: boolean
   pushedAt: string | null
   htmlUrl: string | null
@@ -47,7 +47,7 @@ export interface RepoView {
 
 export interface RepoOwnerGroup {
   owner: string
-  /** Owned by one of the token logins: included by default. Every other owner is off by default. */
+  /** Owned by one of the token logins: included by default, except forks. Every other owner is off by default. */
   personal: boolean
   ownerType: string | null
   repos: RepoView[]

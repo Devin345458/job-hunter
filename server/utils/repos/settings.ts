@@ -6,8 +6,9 @@ import { tokenAccounts, readTokens, type TokenAccount } from './github'
 import { removeRepoCache } from './git'
 
 // Settings > GitHub evidence: which repos the read tokens can see, which ones Devin switched on,
-// and which commit authors count as him. Repos owned by his own login are on by default. Every
-// organization's or other person's repo is off until he turns it on.
+// and which commit authors count as him. Repos owned by his own login are on by default, except
+// forks, which hold mostly other people's commits. Every organization's or other person's repo is
+// off until he turns it on.
 
 const IDENTITIES_KEY = 'repo_identities'
 /** Re-list repos from GitHub when the stored list is older than this. */
@@ -127,7 +128,7 @@ export function identityCandidates(listed: string[]): Array<{ email: string; com
 
 /**
  * Re-list every repo the tokens can see and store it. A repo seen for the first time gets its
- * default switch: on for Devin's own login, off for everyone else. Repos no token lists anymore
+ * default switch: on for Devin's own repos, off for his forks and for everyone else's. Repos no token lists anymore
  * lose their index and their clone.
  */
 export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ accounts: TokenAccount[]; error: string | null }> {
@@ -156,7 +157,7 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
         listedAt: at,
         updatedAt: at,
       }
-      db.insert(repoSources).values({ fullName: r.full_name, ...values, included: personal.has(r.owner.login.toLowerCase()) })
+      db.insert(repoSources).values({ fullName: r.full_name, ...values, included: personal.has(r.owner.login.toLowerCase()) && !r.fork })
         .onConflictDoUpdate({ target: repoSources.fullName, set: values }).run()
     }
   }

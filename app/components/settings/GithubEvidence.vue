@@ -2,7 +2,7 @@
 import type { RepoOwnerGroup, RepoSettingsView, RepoView } from '#shared/types/repos'
 
 // Settings > GitHub evidence. The repos the read tokens can see, grouped by owner, each with a
-// switch: his own repos are on by default, every organization's and other person's repo is off,
+// switch: his own repos are on by default except forks, every organization's and other person's repo is off,
 // and switching one of those on shows the client code warning. Below that, the commit identities
 // that count as his. GET /api/repos never returns a token.
 
@@ -57,7 +57,6 @@ function filteredCount(g: RepoOwnerGroup) {
 function repoMeta(r: RepoView): string {
   const parts: string[] = []
   if (r.isPrivate) parts.push('Private')
-  if (r.isFork) parts.push('Fork')
   if (r.archived) parts.push('Archived')
   if (r.sizeMb != null) parts.push(r.sizeMb >= 1 ? `${Math.round(r.sizeMb)} MB` : 'under 1 MB')
   if (r.included) {
@@ -247,7 +246,7 @@ onMounted(() => load())
         <section v-if="data.groups.length" class="ghe__block" aria-labelledby="ghe-repos">
           <h3 id="ghe-repos" class="ghe__heading">Repos</h3>
           <p class="ghe__hint">
-            Your own repos are on by default. Organization and client repos stay off until you turn them on. Turning a repo off deletes everything indexed from it.
+            Your own repos are on by default. Forks and organization and client repos stay off until you turn them on. Turning a repo off deletes everything indexed from it.
           </p>
           <v-expansion-panels v-model="openPanels" multiple variant="accordion" class="ghe__owners">
             <v-expansion-panel v-for="g in data.groups" :key="g.owner" :value="g.owner" class="ghe__owner">
@@ -255,7 +254,7 @@ onMounted(() => load())
                 <div class="ghe__owner-head">
                   <span class="ghe__owner-name">{{ g.owner }}</span>
                   <span class="ghe__owner-meta">
-                    {{ g.personal ? 'Yours, on by default' : g.ownerType === 'Organization' ? 'Organization, off by default' : 'Someone else\'s, off by default' }}.
+                    {{ g.personal ? 'Yours, on by default except forks' : g.ownerType === 'Organization' ? 'Organization, off by default' : 'Someone else\'s, off by default' }}.
                     {{ onCount(g) }} of {{ g.repos.length }} on.
                   </span>
                 </div>
@@ -277,11 +276,11 @@ onMounted(() => load())
                       <div class="ghe__repo-text">
                         <!-- Name and details are one link, so the tap area is the full 44px row height. -->
                         <a v-if="r.htmlUrl" :href="r.htmlUrl" target="_blank" rel="noopener noreferrer" class="ghe__repo-link" :aria-label="`${r.name} on GitHub (opens a new tab)`">
-                          <span class="ghe__repo-name">{{ r.name }}</span>
+                          <span class="ghe__repo-name">{{ r.name }}<span v-if="r.isFork" class="ghe__fork">Fork</span></span>
                           <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
                         </a>
                         <div v-else class="ghe__repo-link">
-                          <span class="ghe__repo-name">{{ r.name }}</span>
+                          <span class="ghe__repo-name">{{ r.name }}<span v-if="r.isFork" class="ghe__fork">Fork</span></span>
                           <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
                         </div>
                         <span v-if="r.included && r.indexError" class="ghe__repo-error">{{ r.indexError }}</span>
@@ -546,6 +545,20 @@ onMounted(() => load())
     font-weight: 500;
     color: rgb(var(--v-theme-on-surface));
     overflow-wrap: anywhere;
+  }
+
+  // Sits after the name. Forks are off by default, so the tag says why at a glance.
+  &__fork {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 0 6px;
+    border-radius: 6px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.6;
+    vertical-align: 1px;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    background: rgba(var(--v-theme-on-surface), 0.08);
   }
 
   &__repo-meta {
