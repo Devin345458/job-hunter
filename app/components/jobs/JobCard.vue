@@ -1,20 +1,20 @@
 <script setup lang="ts">
-import type { JobListItem, JobStatus } from '~/composables/useJobs'
-import { ATS_LABELS, formatMoneyShort, uniqueTags } from './format'
+import type { JobListItem } from '~/composables/useJobs'
+import { ATS_LABELS, formatMoneyShort, jobStateMeta, postingLocations, uniqueTags } from './format'
 
 const props = defineProps<{
   job: JobListItem
 }>()
 
-const statusColors: Record<JobStatus, string> = {
-  new: 'info',
-  reviewed: 'primary',
-  applied: 'success',
-  rejected: 'error',
-  expired: 'grey',
-}
+/** The application's state when the job has one ("In review"), else the job's own status. */
+const state = computed(() => jobStateMeta(props.job.status, props.job.application))
 
 const tags = computed(() => uniqueTags(props.job.tags))
+
+// One card can stand for several postings of the same role at the same company.
+const postingCount = computed(() => props.job.postingCount ?? 1)
+const locations = computed(() => (postingCount.value > 1 ? postingLocations(props.job.postings ?? []) : []))
+const locationText = computed(() => (postingCount.value > 1 && locations.value.length ? locations.value.join(' · ') : props.job.location))
 
 const salaryDisplay = computed(() => {
   const { salaryMin: min, salaryMax: max, salaryCurrency } = props.job
@@ -52,20 +52,30 @@ const remoteIcon = computed(() =>
         <div class="job-card__company">
           {{ job.company }}
         </div>
-        <div v-if="job.location" class="job-card__location">
+        <div v-if="locationText" class="job-card__location" :title="locationText">
           <v-icon size="14" icon="mdi-map-marker-outline" aria-hidden="true" />
-          <span>{{ job.location }}</span>
+          <span class="job-card__location-text">{{ locationText }}</span>
         </div>
       </div>
     </div>
 
     <div class="job-card__facts">
       <v-chip
-        :color="statusColors[job.status as JobStatus] || 'grey'"
+        :color="state.color"
         size="small"
         variant="tonal"
       >
-        {{ job.status }}
+        {{ state.label }}
+      </v-chip>
+
+      <v-chip
+        v-if="postingCount > 1"
+        size="small"
+        variant="outlined"
+        prepend-icon="mdi-layers-outline"
+        :aria-label="`${postingCount} postings of this role: ${locations.join(', ') || 'same location'}`"
+      >
+        {{ postingCount }} postings
       </v-chip>
 
       <v-chip
@@ -189,6 +199,14 @@ const remoteIcon = computed(() =>
       margin-top: 2px;
       flex-shrink: 0;
     }
+  }
+
+  // A grouped card lists every posting's location; two lines, then the title attribute has the rest.
+  &__location-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   &__facts,

@@ -108,16 +108,20 @@ function handleCancel() {
           <v-col cols="12">
             <v-text-field
               v-model="form.key"
-              label="Key"
-              placeholder="e.g., Years of experience, Preferred stack"
+              label="Name"
+              placeholder="For example: Laravel, Years of experience, Preferred stack"
+              hint="What this entry is about, in a few words. It is the title on the entry's card."
+              persistent-hint
             />
           </v-col>
           <v-col cols="12">
             <v-textarea
               v-model="form.value"
-              label="Value"
+              label="Details"
               rows="4"
-              placeholder="The knowledge value..."
+              placeholder="What you have done with it, for how long, and where"
+              hint="The pipeline reads this when it scores jobs and tailors your resume."
+              persistent-hint
             />
           </v-col>
         </v-row>
@@ -160,16 +164,20 @@ function handleCancel() {
         <v-col cols="12">
           <v-text-field
             v-model="form.key"
-            label="Key"
-            placeholder="e.g., Years of experience, Preferred stack"
+            label="Name"
+            placeholder="For example: Laravel, Years of experience, Preferred stack"
+            hint="What this entry is about, in a few words. It is the title on the entry's card."
+            persistent-hint
           />
         </v-col>
         <v-col cols="12">
           <v-textarea
             v-model="form.value"
-            label="Value"
+            label="Details"
             rows="4"
-            placeholder="The knowledge value..."
+            placeholder="What you have done with it, for how long, and where"
+            hint="The pipeline reads this when it scores jobs and tailors your resume."
+            persistent-hint
           />
         </v-col>
       </v-row>

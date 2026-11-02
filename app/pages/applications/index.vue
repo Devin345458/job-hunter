@@ -30,9 +30,13 @@ const shown = computed(() => {
     && (!q || `${a.job?.company ?? ''} ${a.job?.title ?? ''}`.toLowerCase().includes(q)))
 })
 
+/** Null until the list loads; then whether approve submits to real employers on its own. */
+const realSubmit = ref<boolean | null>(null)
+
 async function load() {
   try {
-    await fetchApplications({ limit: 100 })
+    const data = await fetchApplications({ limit: 100 })
+    realSubmit.value = data.realSubmitEnabled ?? false
   }
   catch {
     // error is shown from the composable
@@ -45,7 +49,12 @@ onMounted(load)
   <div class="al">
     <header class="al__head">
       <h1 class="al__title">Applications</h1>
-      <p class="al__sub">Everything the pipeline prepared: tailored resume, cover letter, and the employer form filled but never sent. Only Approve on the review queue submits.</p>
+      <p class="al__sub">
+        Everything the pipeline prepared: tailored resume, cover letter, and the employer form, filled but not sent.
+        Nothing goes out until you approve it on the review queue. Approving a sandbox application submits it to the test form.
+        <template v-if="realSubmit">Approving one for a real employer submits it on their site, unless the form needs an account or has a captcha. Those are marked for you to submit by hand.</template>
+        <template v-else-if="realSubmit === false">Approving one for a real employer marks it for you to submit by hand on their site, because automated submits to real employers are switched off.</template>
+      </p>
     </header>
 
     <ApplicationsStatusPipeline v-model="stage" :counts="counts" class="al__stages" />

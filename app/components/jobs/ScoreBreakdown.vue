@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plainQuestionRefs } from '#shared/utils/plain-text'
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, ScoreBreakdown } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
 
@@ -53,7 +54,7 @@ function signed(n: number) {
         Not scored yet
       </p>
       <p class="text-caption text-medium-emphasis">
-        Jobs are enriched and scored by the daily pipeline at 6 AM Central.
+        Jobs are read and scored by the scheduled pipeline, which runs {{ PIPELINE_SCHEDULE_TEXT }}.
       </p>
     </v-card-text>
 
@@ -160,7 +161,7 @@ function signed(n: number) {
             {{ q.question }}
           </li>
         </ul>
-        <v-btn to="/questions" size="small" variant="text" color="primary" class="mt-1 px-0" append-icon="mdi-arrow-right">
+        <v-btn to="/questions" size="small" variant="text" color="primary" class="mt-1 px-1 ms-n1" append-icon="mdi-arrow-right">
           Go to questions
         </v-btn>
       </v-alert>
@@ -233,6 +234,17 @@ function signed(n: number) {
 
   &__chips-label {
     min-width: 52px;
+  }
+
+  // A long requirement ("Identity and authentication (OAuth/SAML/SCIM)") wraps inside its chip
+  // instead of being cut off at the card's edge.
+  &__chips :deep(.v-chip) {
+    max-width: 100%;
+    height: auto;
+    min-height: 20px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+    white-space: normal;
   }
 
   &__facts {

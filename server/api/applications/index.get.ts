@@ -59,6 +59,8 @@ export default defineEventHandler(async (event) => {
       total: totalResult?.total,
       page,
       limit,
+      // What approve does for a real employer: submit automatically, or mark it for a submit by hand.
+      realSubmitEnabled: useRuntimeConfig().realSubmitEnabled === 'true',
     }
   } catch (error) {
     throw createError({

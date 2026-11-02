@@ -105,10 +105,14 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 - [ ] Pass 3: same four checks.
   - [x] Scheduler: the first slot of the new every-3-hours schedule fired at 12:00 Central (pipeline_runs 147, trigger `schedule`) in the deployed container 2282da270ab3, the one /api/health reported, with every step chained.
   - [x] Pipeline on today's listings: run 147 found 298 (1 new), enriched 40, scored 40 with 0 failures, asked 2 skill questions, and prepared 5 new real applications with forms filled and not submitted (Vanta twice for two different teams and Temporal on Ashby, Veeva on Lever, Calendly on Greenhouse; 11 to 18 fields filled each, each stopped at a captcha), and built one demo (Temporal). Login sweep after the deploy: 48 routes, 0 unexpected.
-  - [ ] Sandbox submit on the final build: in the final walk (applications 23 and 24 seeded and prepared on production at 12:40; enrich and match touched only those two, which also proves manual runs honor jobIds).
-  - [ ] Browser walk on the final build (4b22aa0, qa-walker running), with the sandbox submit on application 23 or 24.
+  - [x] Sandbox submit on the final build: in the third walk on 4b22aa0, one tap on Approve for sandbox application 23 reached "submitted" about 25 s later with "Reference number 4" (scratchpad pass3-browser/m-appdetail23-submitted-ref.png); application 24 was rejected with Wrong tech stack and stayed unsent. Applications 23 and 24 were seeded and prepared on production at 12:40; enrich and match touched only those two.
+  - [x] Browser walk on 4b22aa0: 12 pages and detail pages at 1280x800 and 390x844, 109 recorded states, zero page errors, zero console errors or warnings, zero 4xx or 5xx (the walker proved each sensor catches a planted error first). Regressions from walk 2: 15 fixed, 3 partly fixed. New: 2 major, 18 minor, 4 unsure; all sent to `walk3-review` and `walk3-pages`.
+  - [ ] Fixes from the third walk merged, deployed, and rechecked on production.
 
 ## Found during the run
+
+- 2026-11-02: a copy of the production database came back malformed although the live file and a backup inside the container both passed `pragma quick_check`. The transfer was at fault. Safe method: `base64 -w0` into a local file, decode it, and compare sha256 with the container's backup before use.
+- 2026-11-02, phone clear: the third walk cleared 14 cards in 2 min 2 s at tool speed (17 taps). The walker estimates 5 to 6 minutes for a person who reads Skills fit on each real card, because only the score block shows above the footer on a phone. `walk3-review` R13 puts the skills summary above the fold and shortens the footer note.
 
 - 2026-11-02: gap questions about experience no code can show ("Have you given a live product demo at an event?") said "The answer decides whether a demo project should be built". Now they say the answer decides what the resume and letter can mention, and a No skips the demo decision (1b5b407).
 - [x] 2026-11-02: a bare Yes gave the resume and letter nothing to cite. A Yes or Some experience now asks "Where did you do it?" and stores the example in your own words in the knowledge entry; older yes answers show "Add an example" and a count; the chat can help write one from what you type (82da474, merged 7a4065b). Checked from its screenshots at 1280 and 390.

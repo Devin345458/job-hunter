@@ -4,6 +4,7 @@ import type { applications, jobs } from '~~/server/db/schema'
 import type { ReviewItem } from '#shared/types/pipeline'
 import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, properName, timeAgo } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
+import { approveSentence } from '~/components/applications/approve-text'
 
 // One application's full record: where it stands, what the pipeline prepared (resume, cover
 // letter, the filled employer form with its screenshot), the evidence check behind every line,
@@ -53,6 +54,8 @@ const formFact = computed(() => {
   return named && host ? `${named} at ${host}` : named
 })
 const canRefresh = computed(() => status.value === 'needs_input')
+/** What Approve does for this application: sandbox form, automatic submit, or a submit by hand. */
+const approveText = computed(() => approveSentence(review.value?.approveEffect, app.value?.job?.company))
 
 useHead(() => ({ title: app.value?.job ? `${app.value.job.company} · Applications · Job Hunter` : 'Application · Job Hunter' }))
 
@@ -275,7 +278,7 @@ const submissionSummary = computed(() => {
           Take in my answers
         </v-btn>
         <p class="ad__actions-note">
-          Nothing here submits. Filling the form again never attaches files or clicks submit; only Approve on the review card sends an application.
+          Nothing here submits. Filling the form again never attaches files or clicks submit. {{ approveText }}
         </p>
       </div>
 
@@ -305,6 +308,8 @@ const submissionSummary = computed(() => {
             :filled-at="review.form.filledAt"
             :form-error="review.form.error"
             :question-hint="questionHint"
+            :status="app.status"
+            :submitted-at="review.submission?.submittedAt ?? null"
           />
           <p v-else class="ad__empty">
             {{ accountAts ? 'This employer uses an applicant-account system, so there is no form to fill. Apply by hand with the resume and cover letter below.' : working ? 'The form is filled after the resume and cover letter are ready.' : 'The form has not been filled yet.' }}
@@ -331,7 +336,14 @@ const submissionSummary = computed(() => {
         </ReviewSection>
 
         <ReviewSection title="Submission" icon="mdi-send-outline" :summary="submissionSummary" :tone="review?.submitError ? 'error' : review?.submission?.method === 'automated' ? 'success' : 'default'">
-          <ApplicationsSubmissionPanel :application-id="app.id" :submission="review?.submission ?? null" :submit-error="review?.submitError ?? null" />
+          <ApplicationsSubmissionPanel
+            :application-id="app.id"
+            :submission="review?.submission ?? null"
+            :submit-error="review?.submitError ?? null"
+            :status="app.status"
+            :approve-effect="review?.approveEffect ?? null"
+            :company="app.job?.company ?? null"
+          />
         </ReviewSection>
 
         <ReviewSection title="Your notes" icon="mdi-note-edit-outline" :summary="app.notes ? app.notes.slice(0, 80) : 'None'">

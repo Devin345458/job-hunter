@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { CompensationBreakdown } from '#shared/types/pipeline'
+import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { formatMoney, formatRange } from './format'
 
 const props = defineProps<{
@@ -75,7 +76,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
     </v-card-item>
 
     <v-card-text v-if="!c" class="text-body-2 text-medium-emphasis">
-      {{ enrichedAt ? 'Compensation could not be read from this posting.' : 'Not extracted yet. The daily pipeline reads pay and benefits from the full posting.' }}
+      {{ enrichedAt ? 'Compensation could not be read from this posting.' : `Not read yet. The scheduled pipeline reads pay and benefits from the full posting. It runs ${PIPELINE_SCHEDULE_TEXT}.` }}
     </v-card-text>
 
     <v-card-text v-else>
@@ -161,7 +162,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
           variant="text"
           size="small"
           color="primary"
-          class="px-0"
+          class="px-1 ms-n1"
           :append-icon="showAllBenefits ? 'mdi-chevron-up' : 'mdi-chevron-down'"
           @click="showAllBenefits = !showAllBenefits"
         >
