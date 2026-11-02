@@ -47,7 +47,7 @@ const counts = computed(() => {
         Requirements
       </v-card-title>
       <v-card-subtitle v-if="mustHave.length" class="text-caption requirements__subtitle">
-        Must-haves: {{ counts.have }} have, {{ counts.partial }} partly, {{ counts.lack }} missing, {{ counts.unknown }} not in your profile
+        Must-haves: {{ counts.have }} have, {{ counts.partial }} partial, {{ counts.lack }} missing, {{ counts.unknown }} not in your profile
       </v-card-subtitle>
     </v-card-item>
     <v-card-text>
