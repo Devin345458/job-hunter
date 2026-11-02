@@ -218,8 +218,9 @@ function onKey(e: KeyboardEvent) {
   if (rejectOpen.value || e.metaKey || e.ctrlKey || e.altKey || e.repeat) return
   const t = e.target as HTMLElement | null
   if (t && (t.closest('input, textarea, select, [contenteditable="true"]'))) return
-  // A dialog or menu is open (the skill panel, the screenshot): the keys belong to it.
-  if (document.querySelector('.v-overlay--active')) return
+  // A dialog or menu is open (the skill panel, the screenshot): the keys belong to it. A notice
+  // (snackbar) or tooltip is an overlay too, but it never takes the keys.
+  if (document.querySelector('.v-dialog.v-overlay--active, .v-menu.v-overlay--active')) return
   const key = e.key.toLowerCase()
   if (key === 'j') step(1)
   else if (key === 'k') step(-1)
