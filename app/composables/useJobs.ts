@@ -45,6 +45,9 @@ export class SupersededRequest extends Error {
   }
 }
 
+/** How long a list request may take before the page gives up and offers a retry. */
+const LIST_TIMEOUT_MS = 20000
+
 export function useJobs() {
   const jobs = ref<JobListItem[]>([])
   const total = ref(0)
@@ -69,6 +72,7 @@ export function useJobs() {
 
     loading.value = true
     error.value = null
+    let timedOut = false
 
     try {
       const params: Record<string, string | number> = {}
@@ -86,8 +90,19 @@ export function useJobs() {
       if (filters?.limit) params.limit = filters.limit
 
       // A request that never finishes would leave the progress bar up for good; give up after
-      // 20 seconds and show the error with a retry instead.
-      const data = await $fetch<JobsResponse>('/api/jobs', { params, signal: controller.signal, timeout: 20000 })
+      // 20 seconds and show the error with a retry instead. ofetch ignores its timeout option
+      // when a signal is passed, so the timeout aborts the same controller.
+      const timer = setTimeout(() => {
+        timedOut = true
+        controller.abort()
+      }, LIST_TIMEOUT_MS)
+      let data: JobsResponse
+      try {
+        data = await $fetch<JobsResponse>('/api/jobs', { params, signal: controller.signal })
+      }
+      finally {
+        clearTimeout(timer)
+      }
       if (requestId !== latestRequest) throw new SupersededRequest()
 
       jobs.value = options.append ? [...jobs.value, ...data.jobs] : data.jobs
@@ -97,8 +112,8 @@ export function useJobs() {
     }
     catch (e: any) {
       if (requestId !== latestRequest || e instanceof SupersededRequest) throw new SupersededRequest()
-      error.value = e?.name === 'TimeoutError' || /timeout/i.test(e?.message || '')
-        ? 'The job list took too long to load.'
+      error.value = timedOut
+        ? 'The job list took more than 20 seconds to load. Try again.'
         : e?.data?.statusMessage || e?.data?.message || e?.message || 'Failed to fetch jobs'
       throw e
     }
