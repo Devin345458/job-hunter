@@ -37,6 +37,8 @@ export interface RequirementJudgment {
   codeShowable: boolean
   rationale: string
   demoIdea?: { title: string; summary: string; stack: string[]; scopeHours: number } | null
+  /** False for the gap plan's leave-out kinds (soft skills, attitudes, leadership, years, education, authorization, location). */
+  inGapPlan?: boolean
 }
 
 export interface JudgedSkills {
@@ -61,6 +63,67 @@ export function countable(r: Pick<Requirement, 'text'>): boolean {
   return !isProfileFact(r.text) && !isSoftSkill(r.text)
 }
 
+/** "8+ years of experience ...", "3+ years with Go": counted in the score, never a gap a project or a question closes. */
+const YEARS = /^\s*(?:at least\s+|minimum (?:of\s+)?)?\d+\s*\+?\s*(?:or more\s+)?(?:years?|yrs?)\b/i
+
+/** Requirements the gap plan leaves out, as the old gap step did: years, education, certifications, and what the call marks. */
+function leftOutOfPlan(r: Pick<Requirement, 'text' | 'kind'>, j: Pick<RequirementJudgment, 'inGapPlan'>): boolean {
+  return j.inGapPlan === false || YEARS.test(r.text) || r.kind === 'education' || r.kind === 'certification'
+}
+
+/** "6+" in profile/Years of Experience, as a number. Null when the profile states none. */
+function profileYears(entries: KnowledgeEntry[]): { years: number; key: string } | null {
+  const e = entries.find(x => x.category === 'profile' && /years of experience/i.test(x.key))
+  const n = e ? Number(/\d+/.exec(e.value)?.[0]) : Number.NaN
+  return e && Number.isFinite(n) ? { years: n, key: entryKey(e) } : null
+}
+
+/**
+ * A plain years requirement ("8+ years of software engineering") against the profile's years:
+ * more than the profile states is lack, the same or fewer is have. The comparison is arithmetic,
+ * so code makes it whatever the call said. Years with a named technology ("3+ years with Go") are
+ * left to the call, since the profile's total does not say how long Devin used Go.
+ */
+function yearsStatus(r: Pick<Requirement, 'text'>, profile: { years: number; key: string } | null): { status: 'have' | 'lack'; evidence: string } | null {
+  if (!profile) return null
+  const m = /^\s*(?:at least\s+|minimum (?:of\s+)?)?(\d+)\s*\+?\s*(?:or more\s+)?(?:years?|yrs?)\b(?:\s+of)?\s*(.*)$/i.exec(r.text)
+  if (!m) return null
+  const rest = m[2]!.toLowerCase()
+  const general = /^(?:professional\s+|relevant\s+|hands-on\s+|industry\s+)?(?:experience|software|engineering|development|building|web|full[- ]?stack|programming)\b/.test(rest) || rest === ''
+  if (!general) return null
+  return { status: Number(m[1]) > profile.years ? 'lack' : 'have', evidence: profile.key }
+}
+
+const SUBJECT_STOP = new Set(['a', 'an', 'the', 'and', 'or', 'of', 'in', 'with', 'for', 'to', 'on', 'making', 'building', 'using', 'working', 'experience', 'approach', 'strong', 'proven', 'knowledge', 'skills', 'skill', 'ability', 'years', 'year', 'plus'])
+
+function subjectTokens(s: string): Set<string> {
+  return new Set(s.toLowerCase().replace(/[^a-z0-9+#.\s-]/g, ' ').split(/[\s-]+/)
+    .filter(w => w && !/^\d+\+?$/.test(w) && !SUBJECT_STOP.has(w))
+    .map(w => w.slice(0, 6)))
+}
+
+/**
+ * The same subject in other words: "Non-deterministic systems reliability" and "Making
+ * non-deterministic systems reliable". Exact dedupe keys first; then most of the shorter
+ * subject's words (cut to six letters) must appear in the longer one, and at least two words,
+ * so "Go" never matches "Google Cloud".
+ */
+export function sameSubject(a: string, b: string): boolean {
+  if (dedupeKeyOf('knows', a) === dedupeKeyOf('knows', b)) return true
+  const x = subjectTokens(a)
+  const y = subjectTokens(b)
+  const [small, large] = x.size <= y.size ? [x, y] : [y, x]
+  if (small.size < 2) return false
+  const shared = [...small].filter(w => large.has(w)).length
+  return shared / small.size >= 0.75
+}
+
+function matching(subject: string, rows: QuestionRow[], status: string): QuestionRow[] {
+  const keys = new Set([dedupeKeyOf('has_done', subject), dedupeKeyOf('knows', subject)])
+  const exact = rows.filter(r => r.status === status && keys.has(r.dedupeKey ?? ''))
+  return exact.length ? exact : rows.filter(r => r.status === status && !!r.subject && sameSubject(subject, r.subject))
+}
+
 /** The must-have share from final statuses: have 1, partial a half, anything else 0. Null with no countable must-have. */
 export function mustHavePoints(reqs: Requirement[]): number | null {
   const must = reqs.filter(r => r.mustHave && countable(r))
@@ -82,20 +145,17 @@ export function resolveEvidence(raw: string | null | undefined, entries: Knowled
 
 /** Devin's answer about a subject (knows or has_done), and the knowledge base entry it wrote. */
 function answerFor(subject: string, rows: QuestionRow[]): { answer: string; id: number; knowledgeKey: string | null } | null {
-  const keys = new Set([dedupeKeyOf('has_done', subject), dedupeKeyOf('knows', subject)])
-  const hits = rows.filter(r => r.status === 'answered' && r.answer && keys.has(r.dedupeKey ?? ''))
+  const hits = matching(subject, rows, 'answered').filter(r => r.answer)
   const row = hits.find(r => r.kind === 'has_done') ?? hits[0]
   return row ? { answer: row.answer!.trim(), id: row.id, knowledgeKey: row.knowledgeKey } : null
 }
 
 function pendingFor(subject: string, rows: QuestionRow[]): QuestionRow | null {
-  const keys = new Set([dedupeKeyOf('has_done', subject), dedupeKeyOf('knows', subject)])
-  return rows.find(r => r.status === 'pending' && keys.has(r.dedupeKey ?? '')) ?? null
+  return matching(subject, rows, 'pending')[0] ?? null
 }
 
 function skippedFor(subject: string, rows: QuestionRow[]): boolean {
-  const keys = new Set([dedupeKeyOf('has_done', subject), dedupeKeyOf('knows', subject)])
-  return rows.some(r => r.status === 'skipped' && keys.has(r.dedupeKey ?? ''))
+  return matching(subject, rows, 'skipped').length > 0
 }
 
 /** Knows and has_done questions in every state, loaded once per scoring call. */
@@ -128,6 +188,7 @@ async function demoLanguages(): Promise<string[]> {
  */
 export async function applyJudgments(reqs: Requirement[], judgments: RequirementJudgment[], entries: KnowledgeEntry[], rows: QuestionRow[] = skillQuestions()): Promise<JudgedSkills> {
   const analyzedAt = new Date().toISOString()
+  const years = profileYears(entries)
   const items: GapItem[] = []
   const confirmed: Array<{ item: GapItem; subject: string; lack: boolean; j: RequirementJudgment }> = []
   const seen = new Set<string>()
@@ -142,6 +203,11 @@ export async function applyJudgments(reqs: Requirement[], judgments: Requirement
     // Evidence rule: a status that claims something about Devin needs an entry that exists.
     if (status !== 'unknown' && !cited) status = 'unknown'
     let evidence = status === 'unknown' ? null : cited
+    const byYears = yearsStatus(r, years)
+    if (byYears) {
+      status = byYears.status
+      evidence = byYears.evidence
+    }
 
     const answered = countable(r) ? answerFor(subject, rows) : null
     if (answered) {
@@ -159,7 +225,7 @@ export async function applyJudgments(reqs: Requirement[], judgments: Requirement
       reframed: status === 'reframe' || undefined,
       note: status === 'reframe' ? j.rationale.trim() || null : note,
     }
-    if (!countable(r)) return out
+    if (!countable(r) || leftOutOfPlan(r, j)) return out
 
     // The gap plan: everything Devin does not plainly have, once per subject.
     const key = subject.toLowerCase()
@@ -243,7 +309,11 @@ export async function applyJudgments(reqs: Requirement[], judgments: Requirement
     summary: items.length ? `${items.length} ${items.length === 1 ? 'gap' : 'gaps'}. ${parts.join(' ')}` : 'No gaps: the knowledge base covers every requirement.',
     analyzedAt,
   }
-  const label = (r: Requirement) => r.text.trim()
+  // Short names, as the old call returned them: learning turns matched names into rule terms.
+  const label = (r: Requirement) => {
+    const i = reqs.findIndex(x => x.text === r.text)
+    return (judgments.find(x => x.index === i + 1)?.subject || r.text).trim()
+  }
   return {
     requirements,
     gap,
@@ -273,9 +343,16 @@ function asSentence(requirement: string): string {
  * questions that no question covers yet, on that application, and returns the plan with their ids.
  * Never for sandbox jobs, which create no questions.
  */
-export function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: number; job: { id: number; title: string; company: string; isSandbox: boolean } }): GapAnalysis {
-  if (ctx.job.isSandbox) return gap
-  const items = gap.items.map((i) => {
+export function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: number; job: { id: number; title: string; company: string; isSandbox: boolean } }, previous: GapAnalysis | null = null): GapAnalysis {
+  // A question this card already asked for the same requirement or subject is kept, whatever the
+  // new call called it, so a rescore never asks the same thing twice.
+  const carried = gap.items.map((i) => {
+    if (i.decision !== 'ask' || i.questionId) return i
+    const before = previous?.items.find(p => p.questionId && (p.requirement === i.requirement || (!!p.subject && !!i.subject && sameSubject(p.subject, i.subject))))
+    return before ? { ...i, questionId: before.questionId } : i
+  })
+  if (ctx.job.isSandbox) return { ...gap, items: carried }
+  const items = carried.map((i) => {
     if (i.decision !== 'ask' || i.questionId || !i.ask || !i.subject) return i
     const q = askQuestion({
       question: i.ask.question,

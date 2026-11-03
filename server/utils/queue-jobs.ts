@@ -116,9 +116,10 @@ function resultsSince<T extends { jobId: number; outcome: string; error?: string
     })
 }
 
-function costSince(purpose: string, since: string): number {
+function costSince(purpose: string | string[], since: string): number {
+  const purposes = Array.isArray(purpose) ? purpose : [purpose]
   const row = useDb().select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)` }).from(aiCalls)
-    .where(and(eq(aiCalls.purpose, purpose), gte(aiCalls.createdAt, since))).get()
+    .where(and(inArray(aiCalls.purpose, purposes), gte(aiCalls.createdAt, since))).get()
   return Math.round((row?.total ?? 0) * 10000) / 10000
 }
 
@@ -198,7 +199,7 @@ export async function matchStep(payload: Record<string, unknown>, log: (msg: str
   for (const r of resultsSince<ScoreOneResult>(MATCH_ONE_TASK, since)) tallyScore(stats, r)
   if (!ids.length) stats.rescored = (await rescoreJobs('open', 'rescore')).rescored
   stats.pending = pendingScoreJobs().length
-  stats.costUsd = costSince('match', since)
+  stats.costUsd = costSince(['match', 'match_gaps'], since)
   stats.errors = stats.errors.slice(0, 10)
   log(`${stats.scored} scored, ${stats.failed} failed, ${stats.pending} still waiting${stats.budgetStopped ? ' (stopped at the AI budget)' : ''}`)
   return stats
