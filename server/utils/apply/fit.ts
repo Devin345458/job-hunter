@@ -3,6 +3,7 @@ import type { FormAnswer, FormField } from '#shared/types/pipeline'
 import { AiBudgetExceeded, aiStructured } from '../ai'
 import type { KnowledgeEntry } from '../knowledge'
 import { contentWords, stemWord } from '../question-chat'
+import { recordNameList, withoutRecordNames } from '../repos/describe'
 import { joinKeptParagraphs, verifyClaims } from './evidence'
 import { scrubDashes, splitSentences, unsupportedNumbers } from './text'
 
@@ -13,6 +14,9 @@ import { scrubDashes, splitSentences, unsupportedNumbers } from './text'
 // generated answer does, and the review card says "shortened to fit the form's N character limit".
 
 export const CONDENSE_PURPOSE = 'form_answers_condense'
+
+/** Fields whose value is one of the form's own options, which are never rewritten. */
+const CHOICE_TYPES = new Set(['select', 'radio', 'checkbox', 'checkbox_group', 'file'])
 
 /** Answer sources the evidence check reads (the same set deriveAnswers verifies). */
 const VERIFIED_SOURCES = new Set<FormAnswer['source']>(['generated', 'resume', 'cover_letter'])
@@ -88,7 +92,16 @@ export async function fitAnswersToFields(
   opts: { entries: KnowledgeEntry[]; posting?: string; ref?: { type: string; id: number }; log?: (m: string) => void },
 ): Promise<FormAnswer[]> {
   const byId = new Map(fields.map(f => [f.id, f]))
-  const out = answers.map((a) => {
+  const names = recordNameList(opts.entries)
+  const out = answers.map((original) => {
+    let a = original
+    // No client, repo, or organization name reaches the employer, whatever the source: Devin's own
+    // saved answer reads as the project's description too. Options are left as the form gives them.
+    const field = byId.get(a.fieldId)
+    if (typeof a.value === 'string' && field && !CHOICE_TYPES.has(field.type)) {
+      const value = withoutRecordNames(a.value, names)
+      if (value !== a.value) a = { ...a, value, filled: false }
+    }
     // A shortened note belongs to the text it was made for.
     if (a.shortened && (typeof a.value !== 'string' || textKey(a.value) !== a.shortened.key)) {
       const { shortened: _, ...rest } = a

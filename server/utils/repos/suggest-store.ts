@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { repoCommits, repoSuggestions, taskQueue } from '../../db/schema'
 import type { RepoEvidence, RepoSuggestionView } from '#shared/types/repos'
+import { recordNameList, withoutRecordNames } from './describe'
 
 // Reads stored GitHub suggestions for the question views, and queues a suggestion run when a new
 // skill or experience question is asked. Kept apart from suggest.ts so questions.ts and review.ts
@@ -23,10 +24,12 @@ export function repoSuggestionsFor(questionIds: number[]): Map<number, RepoSugge
   const rows = useDb().select().from(repoSuggestions)
     .where(and(inArray(repoSuggestions.questionId, questionIds), eq(repoSuggestions.status, 'suggested')))
     .all()
+  // A draft stored before the no-names rule still names a repo or client; the card gets it described.
+  const names = rows.length ? recordNameList() : []
   for (const r of rows) {
     const evidence = parseEvidence(r.evidenceJson)
     if (!evidence.length || (r.level !== 'Yes' && r.level !== 'Some experience') || !r.draft) continue
-    out.set(r.questionId, { level: r.level, draft: r.draft, evidence, createdAt: r.createdAt })
+    out.set(r.questionId, { level: r.level, draft: withoutRecordNames(r.draft, names), evidence, createdAt: r.createdAt })
   }
   return out
 }

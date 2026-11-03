@@ -5,6 +5,7 @@ import type { TailoredResume } from '#shared/types/pipeline'
 import { aiStructured, cachedPrompt } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { htmlToText } from './review'
+import { recordNameList, withoutRecordNames } from './repos/describe'
 import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims, type ClaimLine, type ClaimOutcome } from './apply/evidence'
 import { dropRepeats, normalizeLabel, periodText, scrubDashes, splitSentences } from './apply/text'
 
@@ -89,6 +90,7 @@ Rules you must follow:
 - Skills: list only skills the knowledge base names, one skill per item with no parentheses (write "Vue.js", not "Vue.js (Vue 3)"). Put the ones the posting asks for first.
 - Never mention a skill he lacks or has not used.
 - Write in plain American English. Bullets start with a past-tense verb (present tense for the current job is fine). No first person in bullets.
+- Never name a client, a client's product, a repo, or a GitHub organization, and never write the word repo: describe the project instead ("car wash management software", "a telehealth application"). Employers on his resume may be named.
 - Never use an em dash or an en dash.`
 
 export interface TailorResult {
@@ -119,19 +121,22 @@ TARGET POSTING: ${job.title} at ${job.company}
 ${posting}`),
   })
 
-  // Assemble from the knowledge base structure; the model only supplies wording.
+  // Assemble from the knowledge base structure; the model only supplies wording. No client, repo,
+  // or organization name reaches the employer: each reads as its description before the evidence check.
+  const names = recordNameList(entries)
+  const vague = (s: string) => withoutRecordNames(s, names)
   const byKey = new Map(draft.experience.map(e => [normalizeLabel(e.key), e]))
   const experience = kbJobs.map((kj) => {
     const hit = byKey.get(normalizeLabel(kj.key))
       ?? draft.experience.find(e => normalizeLabel(e.key).includes(normalizeLabel(kj.company)))
-    const bullets = (hit?.bullets ?? []).map(b => scrubDashes(b.trim())).filter(Boolean)
+    const bullets = (hit?.bullets ?? []).map(b => vague(scrubDashes(b.trim()))).filter(Boolean)
     return { company: kj.company, title: kj.title, period: kj.period, bullets: bullets.length ? bullets : kj.lines.slice(0, 3) }
   })
 
   const projects = draft.projects
     .map((p) => {
       const kb = projectsKb.find(e => normalizeLabel(e.key) === normalizeLabel(p.key))
-      return kb ? { name: kb.key, description: scrubDashes(p.description.trim()), url: null } : null
+      return kb ? { name: kb.key, description: vague(scrubDashes(p.description.trim())), url: null } : null
     })
     .filter((p): p is NonNullable<typeof p> => !!p)
 
@@ -160,7 +165,7 @@ ${posting}`),
   }
 
   // Evidence check on every sentence and bullet.
-  const summarySentences = splitSentences(scrubDashes(draft.summary))
+  const summarySentences = splitSentences(vague(scrubDashes(draft.summary)))
   const lines: ClaimLine[] = [
     ...summarySentences.map((s, i) => ({ id: `S${i + 1}`, text: s })),
     ...experience.flatMap((e, i) => e.bullets.map((b, j) => ({ id: `E${i}.B${j}`, text: `${b} (as ${e.title} at ${e.company})` }))),

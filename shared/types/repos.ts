@@ -105,6 +105,13 @@ export interface RepoView {
   /** Why the last index left it out (too large, empty), in plain words. */
   skipReason: string | null
   indexError: string | null
+  /**
+   * What answer text says instead of this repo's name ("car wash management software"). Null until
+   * one is written (server/utils/repos/describe.ts).
+   */
+  description: string | null
+  /** generated, or devin when he wrote or corrected it in Settings. */
+  descriptionBy: 'generated' | 'devin' | null
 }
 
 export interface RepoOwnerGroup {

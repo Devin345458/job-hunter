@@ -28,6 +28,7 @@ import { isLegacyQuestion, parseYesNo, questionExample, takesExample, waitingApp
 import { parseJson } from './review'
 import { githubChatSearch, githubPromptSection, githubSearchAvailable } from './repos/chat-search'
 import { cleanTerms, type TermSet } from './repos/search'
+import { withoutRecordNames } from './repos/describe'
 
 // The chat panel on /questions. Devin asks what a generated question means, or asks for help
 // writing a free-text answer. Every fact the prompt holds is built here from the database; the
@@ -807,7 +808,8 @@ export async function questionChatReply(input: { questionId?: number | null; mes
     // that slip through are rewritten here.
     const rawDraft = ctx?.draftLimit && out.draft?.trim() ? out.draft.trim() : null
     let reply = scrubDashes(out.reply.trim())
-    let draft = rawDraft ? scrubDashes(rawDraft) : null
+    // Answer text never names a client, repo, or GitHub organization: each reads as its description.
+    let draft = rawDraft ? withoutRecordNames(scrubDashes(rawDraft)) : null
     const removed = dashCount(out.reply) + dashCount(rawDraft)
     if (removed) console.info(`[question-chat] removed ${removed} dash${removed === 1 ? '' : 'es'} from Claude's reply`)
     // Checks in code, not only in the prompt. An example must come from what Devin typed here; a

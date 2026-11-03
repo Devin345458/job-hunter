@@ -5,6 +5,7 @@ import type { TailoredResume } from '#shared/types/pipeline'
 import { aiStructured, cachedPrompt } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { profileValue } from './knowledge'
+import { recordNameList, withoutRecordNames } from './repos/describe'
 import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, verifyClaims, type ClaimOutcome } from './apply/evidence'
 import { dropRepeats, scrubDashes, splitSentences } from './apply/text'
 import { postingTextOf } from './tailor'
@@ -26,6 +27,7 @@ Rules you must follow:
 - Facts about Devin come only from the KNOWLEDGE BASE and the TAILORED RESUME. Facts about the company come only from the POSTING. Never invent a number, a product, a mission statement, a person, or a past result.
 - Never mention a skill or tool he lacks, has not used, or would need to learn. If the knowledge base does not cover a requirement, leave that requirement out of the letter.
 - No cliches ("I am writing to express my interest", "passionate", "rockstar", "fast-paced environment").
+- Never name a client, a client's product, a repo, or a GitHub organization, and never write the word repo: describe the project instead ("car wash management software", "a telehealth application"). Employers on his resume may be named.
 - Never use an em dash or an en dash. Use periods and commas.
 - American English.`
 
@@ -60,7 +62,10 @@ POSTING: ${job.title} at ${job.company}
 ${posting}`),
   })
 
-  const paragraphs = draft.paragraphs.map(p => splitSentences(scrubDashes(p.trim()))).filter(p => p.length > 0)
+  // No client, repo, or organization name reaches the employer: each reads as its description,
+  // and the evidence check then runs on the described text.
+  const names = recordNameList(entries)
+  const paragraphs = draft.paragraphs.map(p => splitSentences(withoutRecordNames(scrubDashes(p.trim()), names))).filter(p => p.length > 0)
   const lines = paragraphs.flatMap((sentences, i) => sentences.map((s, j) => ({ id: `P${i + 1}.S${j + 1}`, text: s })))
   const evidence = await verifyClaims(lines, { entries, posting, purpose: 'cover_letter_verify', ref })
   // A sentence left opening on a reference to a dropped one ("Before that, ...") is repaired here.

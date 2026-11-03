@@ -12,6 +12,7 @@ import { ATS_LABELS } from './ats'
 import { joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims } from './evidence'
 import { bestOption } from './fill'
 import { fitAnswersToFields } from './fit'
+import { recordNameList, withoutRecordNames } from '../repos/describe'
 import { dropRepeatsInValue, normalizeLabel, scrubDashes, splitSentences, truncate, unsupportedNumbers } from './text'
 import { cleanFieldLabel } from '#shared/utils/plain-text'
 
@@ -250,6 +251,7 @@ Specific rules:
 - A required box that only confirms the information in the application is true and accurate may be checked.
 - Any other box or statement that says Devin did, read, agreed to, or set up something ("I have marked the sender address as safe", "I have read the privacy policy", "I consent to...") is status "unknown". Devin decides those himself.
 - Never answer voluntary self-identification questions (gender, race, veteran, disability); they are handled elsewhere.
+- Never name a client, a client's product, a repo, or a GitHub organization, and never write the word repo: describe the project instead ("car wash management software", "a telehealth application"). Employers on his resume may be named.
 - Plain American English. Never use an em dash or an en dash.`
 
 // ── Derivation ───────────────────────────────────────────────
@@ -456,6 +458,7 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext, 
   }
 
   // Everything else: one Claude call.
+  const recordNames = mode === 'full' ? recordNameList(ctx.entries) : []
   if (mode === 'full' && free.length > 0) {
     const knownFacts = factStatements(facts).map(s => `- ${s}`)
     const posting = (ctx.job.postingText || ctx.job.description || '').replace(/<[^>]+>/g, ' ').slice(0, 7000)
@@ -508,6 +511,8 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
         continue
       }
       let value: FormAnswer['value'] = scrubDashes(r.value!.trim())
+      // Text answers never name a client, repo, or organization; the evidence check reads the described text.
+      if (!['select', 'radio', 'checkbox', 'checkbox_group'].includes(field.type)) value = withoutRecordNames(value, recordNames)
       if (['select', 'radio'].includes(field.type) && field.options?.length) {
         value = bestOption(value, field.options)
         if (!value) { unknown(`"${r.value}" is not one of the options`); continue }

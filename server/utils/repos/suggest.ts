@@ -6,6 +6,7 @@ import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
 import { SEARCH_RULES, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
+import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
 
 // repos:suggest. For each pending knows or has_done question: one cheap Claude call turns the
 // subject into search terms (cached per subject), the search runs over Devin's own commits, and
@@ -15,6 +16,24 @@ import { parseEvidence } from './suggest-store'
 // No hits stores status none, which shows nothing: finding nothing is never a No.
 
 const DRAFT_MAX = 600
+
+/**
+ * The version of the draft wording rules. A suggested row written under an older one is judged
+ * again on the next run, whatever its hit set, so its example is rewritten (the commits it cites
+ * stay). 2: the example names no client, repo, or organization (2026-11-03).
+ */
+export const SUGGEST_TEXT_RULES = 2
+
+/** The draft wording version a stored result was written under; 1 before versions were recorded. */
+export function textRulesOf(termsJson: string | null | undefined): number {
+  try {
+    const n = Number(JSON.parse(termsJson ?? '{}')?.text)
+    return Number.isInteger(n) && n > 0 ? n : 1
+  }
+  catch {
+    return 1
+  }
+}
 
 const TermsSchema = z.object({
   searchable: z.boolean().describe('False when commits cannot show this: soft skills, talks, events, people management, or anything outside code.'),
@@ -90,7 +109,7 @@ Rules:
 - A dependency in a manifest is context only. Evidence is always one of the listed commits.
 - evidence: one to five listed commits that best show it, by sha, each with one plain factual line about what that commit did ("Added WebAuthn registration and login endpoints"). Never cite a sha that is not listed.
 - Prefer commits that changed code or configuration. A commit that only edited notes, docs, or a task list is weaker. Cite it only when nothing better shows the point.
-- draft: the example only, for a box under the question that asks "Where did you do it?". The level is picked separately, so never start with Yes, No, or the level. First person as Devin, one to three plain sentences, under ${DRAFT_MAX} characters. Say which repo, what he built or did, and when (month and year from the commit dates). Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes. Empty when level is None.`
+- draft: the example only, for a box under the question that asks "Where did you do it?". The level is picked separately, so never start with Yes, No, or the level. First person as Devin, one to three plain sentences, under ${DRAFT_MAX} characters. Say what the project is in the words of its description (given beside each repo), what he built or did, and when (month and year from the commit dates). Never name a client, a repo, a GitHub organization, or a product, and never write the word repo: "On car wash management software in August 2026 I integrated Sentry", never "In the WashWerk repo". Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes. Empty when level is None.`
 }
 
 /** The search rules version a stored result was made under; 1 before versions were recorded. */
@@ -114,7 +133,8 @@ function judgePrompt(q: QuestionRow, terms: TermSet, found: SearchResult): strin
   lines.push(`Subject: ${q.subject ?? ''}`)
   lines.push(`Searched for: ${[...terms.code, ...terms.packages, ...terms.paths].join(', ')}`)
   const repos = [...new Set(found.hits.map(h => h.repo))]
-  lines.push(`\nRepos with matching commits: ${repos.join(', ')}`)
+  const described = loadRepoDescriptions()
+  lines.push(`\nRepos with matching commits, with how the draft describes each:\n${repos.map(r => `- ${r}: "${described[r]?.text || 'a client project'}"`).join('\n')}`)
   if (found.languages.length) lines.push(`Repo languages that match: ${found.languages.map(l => `${l.repo} (${l.name})`).join(', ')}`)
   if (found.dependencies.length) {
     lines.push(`Dependencies declared at the default branch that match: ${found.dependencies.slice(0, 20).map(d => `${d.repo}: ${d.name} in ${d.manifest}`).join('; ')}`)
@@ -193,6 +213,21 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
     }
   }
 
+  // Each switched-on repo needs its description before a draft can describe it (one cheap call per 20 repos, once).
+  try {
+    const d = await describeRepos({ log })
+    if (d.written) stats.aiCalls += Math.ceil(d.written / 20)
+  }
+  catch (e) {
+    if (e instanceof AiBudgetExceeded) {
+      stats.budgetStop = true
+      log(`stopped: ${e.message}`)
+      return stats
+    }
+    throw e
+  }
+  const names = recordNameList()
+
   for (const q of rows) {
     const subject = (q.subject ?? q.question).trim()
     const prev = existing.get(q.id)
@@ -211,8 +246,9 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         t = { searchable: out.searchable, terms: cleanTerms({ code: out.code, paths: specificPaths(out.paths, subject), packages: out.packages }) }
         termsBySubject.set(subject.toLowerCase(), t)
       }
-      // The rules version rides along in terms_json, so a hit set found under newer rules is judged again.
-      const termsJson = JSON.stringify({ searchable: t.searchable, terms: t.terms, rules: SEARCH_RULES })
+      // The rules versions ride along in terms_json: a hit set found under newer search rules, or a
+      // draft written under older wording rules, is judged again.
+      const termsJson = JSON.stringify({ searchable: t.searchable, terms: t.terms, rules: SEARCH_RULES, text: SUGGEST_TEXT_RULES })
       // Files, folders, and packages only this subject produces (schema.graphql, shopify.app.toml)
       // are searched whatever Claude gave, so path evidence never depends on it naming them.
       // Signatures follow the subject alone: words in the question text name other technologies too.
@@ -241,11 +277,14 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         const cited = parseEvidence(prev.evidenceJson).map(e => e.sha)
         const sameSet = JSON.stringify(hitShas) === (prev.commitShasJson ?? '')
         const sameRules = rulesOf(prev.termsJson) === SEARCH_RULES
-        const keep = sameRules
-          ? (prev.status === 'suggested' && cited.length && cited.every(s => hitShas.includes(s))) || (prev.status === 'none' && sameSet)
-          : (prev.status === 'suggested' || prev.status === 'none') && sameSet
+        const sameText = textRulesOf(prev.termsJson) === SUGGEST_TEXT_RULES
+        const keep = prev.status === 'suggested' && !sameText
+          ? false
+          : sameRules
+            ? (prev.status === 'suggested' && cited.length && cited.every(s => hitShas.includes(s))) || (prev.status === 'none' && sameSet)
+            : (prev.status === 'suggested' || prev.status === 'none') && sameSet
         if (keep) {
-          if (!sameRules) db.update(repoSuggestions).set({ termsJson }).where(eq(repoSuggestions.questionId, q.id)).run()
+          if (!sameRules || !sameText) db.update(repoSuggestions).set({ termsJson }).where(eq(repoSuggestions.questionId, q.id)).run()
           stats.unchanged++
           stats.results.push({ questionId: q.id, subject, outcome: 'unchanged', hits: hitShas.length })
           continue
@@ -273,7 +312,8 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         evidence.push({ repo: h.repo, sha: h.sha, url: h.url, date: h.date, line })
         if (evidence.length >= 5) break
       }
-      const draft = scrubDashes(verdict.draft.trim()).slice(0, DRAFT_MAX)
+      // Last guard: a repo, owner, or organization name left in the draft reads as its description.
+      const draft = withoutRecordNames(scrubDashes(verdict.draft.trim()), names).slice(0, DRAFT_MAX)
       const invented = unsupportedNumbers(draft, sourceText(found))
       if (verdict.level === 'None' || !evidence.length || !draft || invented.length) {
         const why = invented.length ? `draft named numbers the commits do not show: ${invented.join(', ')}` : verdict.reason

@@ -122,6 +122,52 @@ async function toggle(g: RepoOwnerGroup, r: RepoView, value: boolean | null) {
   }
 }
 
+// ── What answers call each repo ──
+// Answer text never names a client, repo, or organization; it uses this description instead.
+const editingDesc = ref<string | null>(null)
+const descText = ref('')
+const savingDesc = ref(false)
+const describing = ref(false)
+
+function startDescription(r: RepoView) {
+  editingDesc.value = r.fullName
+  descText.value = r.description ?? ''
+}
+
+async function saveDescription(r: RepoView) {
+  savingDesc.value = true
+  try {
+    const res = await $fetch<{ description: string | null; descriptionBy: RepoView['descriptionBy'] }>('/api/repos/description', { method: 'PUT', body: { fullName: r.fullName, text: descText.value } })
+    r.description = res.description
+    r.descriptionBy = res.descriptionBy
+    editingDesc.value = null
+    snackbar.info(res.description ? `Answers now call ${r.name} "${res.description}".` : `${r.name}'s description is cleared; a new one is written next time.`)
+  }
+  catch (e: any) {
+    snackbar.notify(`The description did not save: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+  }
+  finally {
+    savingDesc.value = false
+  }
+}
+
+async function writeDescriptions() {
+  describing.value = true
+  try {
+    const res = await $fetch<{ written: number; kept: number; failed: number }>('/api/repos/describe', { method: 'POST', body: {} })
+    await load()
+    snackbar.info(res.written
+      ? `Wrote ${plural(res.written, 'description', 'descriptions')}.${res.failed ? ` ${plural(res.failed, 'repo', 'repos')} failed; try again.` : ''}`
+      : res.failed ? `${plural(res.failed, 'repo', 'repos')} failed; try again.` : 'Every switched-on repo already has a description.')
+  }
+  catch (e: any) {
+    snackbar.notify(`Descriptions were not written: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+  }
+  finally {
+    describing.value = false
+  }
+}
+
 // ── Bulk switches ──
 const bulkBusy = ref<string | null>(null)
 const confirm = ref<{ title: string; text: string; owners: string[]; action: string; run: () => Promise<void> } | null>(null)
@@ -445,6 +491,14 @@ onMounted(async () => {
               <v-switch v-model="showAll" color="primary" hide-details inset density="compact" label="Show all repos" class="ghe__narrow-switch" />
             </template>
           </div>
+          <div class="ghe__describe">
+            <p class="ghe__hint mb-0">
+              Answers, letters, and resumes never name a client, repo, or organization. They describe the project instead, in the words under each switched-on repo. Correct any that are wrong.
+            </p>
+            <v-btn variant="tonal" height="40" class="ghe__describe-btn" prepend-icon="mdi-text-box-edit-outline" :loading="describing" @click="writeDescriptions">
+              Write missing descriptions
+            </v-btn>
+          </div>
           <v-expansion-panels v-model="openPanels" multiple variant="accordion" class="ghe__owners">
             <v-expansion-panel v-for="g in shownGroups" :key="g.owner" :value="g.owner" class="ghe__owner">
               <v-expansion-panel-title class="ghe__owner-title">
@@ -512,6 +566,26 @@ onMounted(async () => {
                         </div>
                         <span v-if="r.included && r.indexError" class="ghe__repo-error">{{ r.indexError }}</span>
                         <span v-if="r.note" class="ghe__repo-note">{{ r.note }}</span>
+                        <form v-if="editingDesc === r.fullName" class="ghe__desc-edit" @submit.prevent="saveDescription(r)">
+                          <v-text-field
+                            v-model="descText"
+                            :label="`What answers call ${r.name}`"
+                            placeholder="car wash management software"
+                            maxlength="120"
+                            density="compact"
+                            hide-details
+                            autofocus
+                            class="ghe__desc-field"
+                          />
+                          <v-btn type="submit" color="primary" variant="flat" height="40" :loading="savingDesc">Save</v-btn>
+                          <v-btn variant="text" height="40" :disabled="savingDesc" @click="editingDesc = null">Cancel</v-btn>
+                        </form>
+                        <div v-else-if="r.included || r.description" class="ghe__desc">
+                          <span class="ghe__desc-label">Answers call it:</span>
+                          <span v-if="r.description" class="ghe__desc-text">{{ r.description }}<span v-if="r.descriptionBy === 'devin'" class="ghe__desc-by"> (yours)</span></span>
+                          <span v-else class="ghe__desc-text ghe__desc-text--none">no description yet</span>
+                          <v-btn variant="text" size="small" class="ghe__desc-btn" prepend-icon="mdi-pencil-outline" :aria-label="`Edit what answers call ${r.name}`" @click="startDescription(r)">Edit</v-btn>
+                        </div>
                       </div>
                       <v-switch
                         :model-value="r.included"
@@ -809,6 +883,65 @@ onMounted(async () => {
     line-height: 1.4;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     overflow-wrap: anywhere;
+  }
+
+  &__describe {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin: 8px 0 12px;
+  }
+
+  &__describe-btn {
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__desc {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 6px;
+    font-size: 0.8125rem;
+    line-height: 1.4;
+  }
+
+  &__desc-label {
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__desc-text--none {
+    font-style: italic;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__desc-by {
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__desc-btn {
+    min-height: 32px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__desc-edit {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0 4px;
+
+    :deep(.v-btn) {
+      text-transform: none;
+      letter-spacing: normal;
+    }
+  }
+
+  &__desc-field {
+    flex: 1 1 260px;
+    min-width: 0;
   }
 
   &__repo-error {

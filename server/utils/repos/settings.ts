@@ -5,6 +5,7 @@ import { loadKnowledge, profileValue } from '../knowledge'
 import { isSsoSkip, tokenAccounts, readTokens, type TokenAccount } from './github'
 import { removeRepoCache } from './git'
 import { findProgress } from './find-state'
+import { loadRepoDescriptions, noteGithubDescriptions, type RepoDescription } from './describe'
 
 // Settings > GitHub evidence: which repos the read tokens can see, which ones Devin switched on,
 // and which commit authors count as him. Repos owned by his own login are on by default, except
@@ -234,10 +235,12 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
   const at = nowSqlText()
   const seen = new Set<string>()
   const failed = accounts.filter(a => a.error)
+  const githubDescriptions: Record<string, string | null> = {}
   for (const a of accounts) {
     for (const r of a.repos) {
       if (seen.has(r.full_name)) continue
       seen.add(r.full_name)
+      githubDescriptions[r.full_name] = r.description ?? null
       const values = {
         owner: r.owner.login,
         name: r.name,
@@ -259,6 +262,8 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
     }
   }
   excludeAppRepo()
+  // Input for the generic descriptions answer text uses instead of repo names (describe.ts).
+  noteGithubDescriptions(githubDescriptions)
   // Only forget repos when every token answered. A failed token must not wipe its repos. Repos the
   // commit search found (a public repo he contributed to that /user/repos does not list) stay.
   if (!failed.length) {
@@ -335,7 +340,7 @@ export function includedRepos(): RepoRow[] {
   return useDb().select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
 }
 
-function toRepoView(r: RepoRow, found: Record<string, number> | null): RepoView {
+function toRepoView(r: RepoRow, found: Record<string, number> | null, descriptions?: Record<string, RepoDescription>): RepoView {
   return {
     yourCommits: found ? (found[r.fullName] ?? 0) : null,
     fullName: r.fullName,
@@ -352,12 +357,15 @@ function toRepoView(r: RepoRow, found: Record<string, number> | null): RepoView 
     commitCount: r.commitCount,
     skipReason: r.skipReason,
     indexError: r.indexError,
+    description: descriptions?.[r.fullName]?.text || null,
+    descriptionBy: descriptions?.[r.fullName]?.text ? descriptions[r.fullName]!.by : null,
   }
 }
 
 /** Everything the Settings section shows. Lists repos from GitHub when the stored list is stale. */
 export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promise<RepoSettingsView> {
   const db = useDb()
+  const descriptions = loadRepoDescriptions()
   // A copy that had this app's own repo on (before it was excluded) loses it on the next visit.
   excludeAppRepo()
   const configured = readTokens().length > 0
@@ -394,7 +402,7 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
     // Repos with his commits first (most first), then the most recently pushed.
     repos: list
       .sort((a, b) => (found?.[b.fullName] ?? 0) - (found?.[a.fullName] ?? 0) || (b.pushedAt ?? '').localeCompare(a.pushedAt ?? '') || a.name.localeCompare(b.name))
-      .map(r => toRepoView(r, found)),
+      .map(r => toRepoView(r, found, descriptions)),
   })).sort((a, b) => Number(b.personal) - Number(a.personal)
     || (b.withCommits ?? 0) - (a.withCommits ?? 0)
     || a.owner.localeCompare(b.owner, 'en', { sensitivity: 'base' }))

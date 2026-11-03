@@ -154,6 +154,7 @@ export interface GithubRepo {
   default_branch: string
   html_url: string
   pushed_at: string | null
+  description?: string | null
 }
 
 const accountCache = new Map<string, { at: number; account: TokenAccount }>()
