@@ -465,6 +465,8 @@ describe('real Claude Code binary', () => {
       assert.equal(msgs[0]!.auth, 'Bearer')
       assert.ok(msgs[0]!.sentExpectedToken)
       assert.ok(!JSON.stringify(msgs[0]!.body).includes(TOKEN), 'not in the request body')
+      assert.equal(msgs[0]!.body.max_tokens, 16000, 'the output cap reaches the request (Claude Code defaults to 128000)')
+      assert.equal(msgs[0]!.body.model, 'claude-sonnet-5-5', 'the step model from NUXT_AI_STEP_MODELS')
       const breakpoints = JSON.stringify(msgs[0]!.body).match(/"cache_control"/g)?.length ?? 0
       assert.ok(breakpoints <= 4, `at most 4 cache breakpoints (saw ${breakpoints})`)
       assert.deepEqual(msgs[0]!.body.tools.map((x: any) => x.name).filter((n: string) => n !== 'DeferredToolPlaceholder'), ['StructuredOutput'])
