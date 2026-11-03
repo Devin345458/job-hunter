@@ -2,7 +2,7 @@ import { and, desc, eq, gt, inArray, lt, ne } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { pipelineRuns } from '~~/server/db/schema'
 import { DAILY_STEPS } from '~~/server/tasks/pipeline/daily'
-import type { PipelineRunView } from '#shared/types/pipeline'
+import type { PipelineRunView, SubscriptionStatus } from '#shared/types/pipeline'
 import { runOutcome, runProblems } from '#shared/utils/run-outcome'
 
 type RunRow = InferSelectModel<typeof pipelineRuns>
@@ -56,6 +56,8 @@ function describe(r: RunRow): PipelineRunView {
 // the health line never depends on how many rows fit in the list. `queue` is the job queue: what
 // runs now, what waits, and the last day's interrupted, failed, canceled, and resumed items.
 // `aiStages` is the AI spend by stage (before Devin decides, after Apply), today and over 7 days.
+// `subscription` says whether steps run on Devin's Claude subscription and, while its limit
+// holds, when the pause ends.
 export default defineEventHandler((event) => {
   const query = getQuery(event)
   const limit = Math.min(Number(query.limit) || 50, 200)
@@ -74,6 +76,7 @@ export default defineEventHandler((event) => {
     aiBudget: aiBudget(),
     aiStages: aiStageCosts(),
     aiProblem: aiAccountProblem(),
+    subscription: { on: subscriptionTokenSet(), pause: subscriptionPauseView() } satisfies SubscriptionStatus,
     queue: queueSnapshot(),
   }
 })

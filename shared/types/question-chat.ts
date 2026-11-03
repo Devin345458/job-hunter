@@ -20,7 +20,7 @@ export interface QuestionChatRequest {
 }
 
 /** Why the chat could not answer. Each comes with one plain sentence for the panel. */
-export type QuestionChatStop = 'budget' | 'credit' | 'key' | 'refused' | 'too_long' | 'unavailable'
+export type QuestionChatStop = 'budget' | 'credit' | 'key' | 'subscription' | 'token' | 'refused' | 'too_long' | 'unavailable'
 
 export type QuestionChatResponse =
   | {

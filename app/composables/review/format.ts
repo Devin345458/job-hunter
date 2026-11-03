@@ -279,7 +279,7 @@ const STAT_LABEL: Record<string, string> = {
   pruned: 'old rows removed',
 }
 
-const STAT_HIDDEN = new Set(['tz', 'local', 'outcome', 'stopReason', 'resumedAfterRestart'])
+const STAT_HIDDEN = new Set(['tz', 'local', 'outcome', 'stopReason', 'pausedUntil', 'resumedAfterRestart'])
 
 export interface RunDemo { id: number; name: string; state: string }
 

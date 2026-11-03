@@ -365,11 +365,22 @@ export interface AiStageCost {
 }
 
 export interface AiStageCosts {
+  /** What the API key was billed, by stage. Calls on Devin's subscription bill it nothing and are left out. */
   stages: AiStageCost[]
   /** Applications chosen with Apply in the last 7 days. */
   appliedThisWeek: number
   /** What preparing those applications cost (prepare purposes logged against them), so the cost reads per application. */
   appliedPrepareUsd: number
+  /** Calls on Devin's Claude subscription and the Agent SDK's estimate of what they would cost on the API. */
+  subscription: { today: { estUsd: number; calls: number }; week: { estUsd: number; calls: number } }
+}
+
+/** Devin's Claude subscription as the dashboard shows it (GET /api/pipeline/runs). */
+export interface SubscriptionStatus {
+  /** NUXT_CLAUDE_CODE_OAUTH_TOKEN is set, so steps run on the subscription. */
+  on: boolean
+  /** While its limit holds: when it ends (ISO) and the sentence to show, in the server's time zone. */
+  pause: { until: string; since: string; reported: boolean; message: string } | null
 }
 
 export const REJECT_REASONS = [

@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { aiCalls, jobs, pipelineRuns, taskQueue } from '../db/schema'
 import { emptyEnrichStats, enrichOne, needsEnrich, pendingEnrichJobs, prefilterContext, prefilterPending, sharedBoardCache, tallyEnrich, type EnrichOneResult, type EnrichStats } from './enrich'
-import { emptyMatchStats, pendingScoreJobs, rescoreJobs, scoreOne, tallyScore, type MatchStats, type ScoreOneResult } from './scoring'
+import { emptyMatchStats, MATCH_GAPS_PURPOSE, pendingScoreJobs, rescoreJobs, scoreOne, tallyScore, type MatchStats, type ScoreOneResult } from './scoring'
 import { loadCompPreferences } from './compensation'
 import { loadKnowledge } from './knowledge'
 import type { RunTrigger } from './runs'
@@ -12,8 +12,9 @@ import type { RunTrigger } from './runs'
 // - the jobs:enrich and jobs:match steps (daily run, or Run in Settings) queue an item for every
 //   job still waiting that has none, wait for the items to finish, and record one pipeline_runs
 //   row with the counts (read, scored, waiting), so the run log still reads as one run.
-// The daily budget is checked before every Claude call. A job the budget stops stays waiting and
-// the next day's run queues it again; nothing is marked failed for it.
+// The daily budget is checked before every Claude call on the API key. A job the budget stops stays
+// waiting and the next day's run queues it again; nothing is marked failed for it. On Devin's
+// subscription no budget applies; a job its limit stops waits for the reset in the queue.
 
 /**
  * True where finished work queues the next step by itself (search queues reading, reading queues
@@ -59,8 +60,9 @@ export async function runEnrichOne(payload: Record<string, unknown>): Promise<En
     const f = prefilterPending([job], prefilterContext(entries))
     if (f.skipped) return { jobId, outcome: 'skipped', skipReason: Object.keys(f.skipReasons)[0] }
   }
-  // Out of budget or credit: stop before fetching anything. The job stays waiting.
-  const stop = aiStopError()
+  // Out of budget or credit, or the subscription is at its limit: stop before fetching anything.
+  // The job stays waiting (at a subscription limit the worker puts this item back for the reset).
+  const stop = aiStopError('enrich')
   if (stop) return { jobId, outcome: 'budget', error: stop.message }
   const r = await enrichOne(job, entries, sharedBoardCache(), itemLog(ENRICH_ONE_TASK, jobId))
   if (r.outcome === 'enriched' && autoFollowOn()) queueMatchJob(jobId)
@@ -154,7 +156,7 @@ export async function enrichStep(payload: Record<string, unknown>, log: (msg: st
     const f = prefilterPending(pendingEnrichJobs(), prefilterContext())
     stats.skipped = f.skipped
     stats.skipReasons = f.skipReasons
-    const stop = aiStopError()
+    const stop = aiStopError('enrich')
     if (stop) {
       stats.budgetStopped = true
       stats.errors.push(stop.message)
@@ -196,7 +198,7 @@ export async function matchStep(payload: Record<string, unknown>, log: (msg: str
   }
   else {
     const pending = pendingScoreJobs()
-    const stop = aiStopError()
+    const stop = aiStopError(MATCH_GAPS_PURPOSE)
     if (stop) {
       stats.budgetStopped = true
       stats.errors.push(stop.message)

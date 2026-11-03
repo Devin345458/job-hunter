@@ -34,6 +34,8 @@ export function queueItemText(item: QueueItemView, now: number = Date.now()): st
   const resumed = item.attempts > 0
   switch (item.status) {
     case 'queued':
+      // Put back at Devin's subscription limit: "Paused: Score matches; your Claude subscription limit is reached, resumes at 6:34 PM".
+      if (item.note?.startsWith('Paused: ')) return `Paused: ${name}; ${item.note.slice('Paused: '.length)}`
       return resumed
         ? `Waiting to resume: ${name}, stopped by a restart`
         : `Waiting: ${name}, queued ${minutesAgo(item.createdAt, now)}`

@@ -5,6 +5,7 @@ import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsT
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
 import { backlogText, bulkText, queueItemColor, queueItemText } from '#shared/utils/queue-text'
+import { subscriptionPauseText } from '#shared/utils/subscription'
 
 // Settings > Pipeline: start any step by hand, watch it wait in the job queue and run, and read
 // the recent run log. Every trigger goes through POST /api/pipeline/run, which adds the task to
@@ -36,6 +37,12 @@ const budget = computed(() => health.runs.value?.aiBudget ?? 0)
 const spentPct = computed(() => (budget.value > 0 ? Math.min(100, (spent.value / budget.value) * 100) : 0))
 const overBudget = computed(() => budget.value > 0 && spent.value >= budget.value)
 
+// Devin's Claude subscription: steps run on it while its token is set, and the dollar budget then
+// covers only steps left on the API key. While its limit holds, Claude steps wait for the reset.
+const subscription = computed(() => health.runs.value?.subscription ?? null)
+const onSubscription = computed(() => !!subscription.value?.on)
+const pausedText = computed(() => (subscription.value?.pause ? subscriptionPauseText(subscription.value.pause.until) : null))
+
 // Where the money went: before Devin decides (every job) and after Apply (only jobs he chose).
 const stages = computed(() => health.runs.value?.aiStages ?? null)
 const STAGE_PHASES = [
@@ -53,6 +60,13 @@ const perApplication = computed(() => {
   const prep = stages.value?.appliedPrepareUsd ?? 0
   if (!n) return 'No Apply in the last 7 days.'
   return `${n} ${n === 1 ? 'application' : 'applications'} chosen with Apply in the last 7 days; preparing ${n === 1 ? 'it' : 'them'} cost ${usd(prep)}, about ${usd(prep / n)} each.`
+})
+const callCount = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'call' : 'calls'}`
+/** "On your subscription: est. $0.42 today, 12 calls; est. $3.10, 96 calls in the last 7 days." */
+const subscriptionLine = computed(() => {
+  const s = stages.value?.subscription
+  if (!s || (!onSubscription.value && !s.week.calls)) return null
+  return `On your subscription: est. ${usd(s.today.estUsd)} today, ${callCount(s.today.calls)}; est. ${usd(s.week.estUsd)}, ${callCount(s.week.calls)} in the last 7 days.`
 })
 
 function latest(task: string) {
@@ -161,11 +175,14 @@ onMounted(() => {
 
 <template>
   <div class="pp">
+    <p v-if="pausedText" class="pp__paused" role="status">
+      <v-icon icon="mdi-pause-circle-outline" size="18" class="pp__paused-icon" />
+      <span>{{ pausedText }}</span>
+    </p>
     <div class="pp__budget">
       <div class="pp__budget-text">
         <span class="pp__strong">${{ spent.toFixed(2) }}</span>
-        of ${{ budget.toFixed(2) }} AI budget spent today
-        <span v-if="overBudget" class="text-error">. Steps that use Claude stop until midnight.</span>
+        of ${{ budget.toFixed(2) }} {{ onSubscription ? 'API key budget' : 'AI budget' }} spent today<span v-if="overBudget" class="text-error">. Steps that use {{ onSubscription ? 'the API key' : 'Claude' }} stop until midnight</span>.<span v-if="onSubscription"> Steps on your Claude subscription do not count against it.</span>
       </div>
       <div class="pp__meter" role="meter" :aria-valuenow="Math.round(spentPct)" aria-valuemin="0" aria-valuemax="100" aria-label="AI budget used today">
         <span :class="overBudget ? 'bg-error' : spentPct >= 70 ? 'bg-warning' : 'bg-primary'" :style="{ width: `${spentPct}%` }" />
@@ -187,6 +204,7 @@ onMounted(() => {
         </div>
         <p v-if="g.phase === 'after'" class="pp__stages-note">{{ perApplication }}</p>
       </template>
+      <p v-if="subscriptionLine" class="pp__stages-note pp__stages-sub">{{ subscriptionLine }}</p>
     </div>
 
     <ul class="pp__tasks">
@@ -194,7 +212,7 @@ onMounted(() => {
         <div class="pp__task-text">
           <div class="pp__task-name">
             {{ t.label }}
-            <span v-if="t.usesAi" class="pp__ai">Uses AI budget</span>
+            <span v-if="t.usesAi" class="pp__ai">{{ onSubscription ? 'Uses Claude' : 'Uses AI budget' }}</span>
           </div>
           <div class="pp__task-detail">{{ t.detail }}</div>
           <div class="pp__task-last">
@@ -300,6 +318,26 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .pp {
+  &__paused {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0 0 16px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-theme-warning), 0.45);
+    background: rgba(var(--v-theme-warning), 0.08);
+    color: rgb(var(--v-theme-warning));
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  &__paused-icon {
+    flex: none;
+    margin-top: 1px;
+  }
+
   &__budget {
     margin-bottom: 16px;
   }
@@ -372,6 +410,10 @@ onMounted(() => {
   &__stages-note {
     margin: 2px 0 0 12px;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__stages-sub {
+    margin-top: 10px;
   }
 
   &__tasks {

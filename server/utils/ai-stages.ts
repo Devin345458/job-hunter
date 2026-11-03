@@ -2,7 +2,8 @@ import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { aiCalls, decisions } from '../db/schema'
 import type { AiStageCost, AiStageCosts, AiStageKey } from '#shared/types/pipeline'
 
-// Where the AI budget went, by stage of the decide-first flow. Every Claude call is logged in
+// Where the AI budget went, by stage of the decide-first flow (API key spend only; calls on Devin's
+// subscription are counted beside it with the SDK's estimate). Every Claude call is logged in
 // ai_calls with a purpose; each purpose belongs to one stage. Spending before Devin decides runs
 // for every job; spending after Apply runs only for the applications he chose. Settings > Pipeline
 // shows today and the last 7 days. A purpose this map does not know counts under Other.
@@ -31,7 +32,16 @@ function totalsSince(since: ReturnType<typeof sql>) {
     purpose: aiCalls.purpose,
     cost: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)`,
     calls: sql<number>`count(*)`,
-  }).from(aiCalls).where(gte(aiCalls.createdAt, since)).groupBy(aiCalls.purpose).all()
+  }).from(aiCalls).where(and(gte(aiCalls.createdAt, since), eq(aiCalls.backend, 'api'))).groupBy(aiCalls.purpose).all()
+}
+
+/** Calls on Devin's subscription since `since`, with the Agent SDK's estimate of their API price. */
+function subscriptionSince(since: ReturnType<typeof sql>) {
+  const row = useDb().select({
+    est: sql<number>`coalesce(sum(${aiCalls.estCostUsd}), 0)`,
+    calls: sql<number>`count(*)`,
+  }).from(aiCalls).where(and(gte(aiCalls.createdAt, since), eq(aiCalls.backend, 'agent'))).get()
+  return { estUsd: round(row?.est ?? 0), calls: row?.calls ?? 0 }
 }
 
 const round = (n: number) => Math.round(n * 10000) / 10000
@@ -61,7 +71,11 @@ export function aiStageCosts(): AiStageCosts {
   const prepare = AI_STAGES.find(s => s.key === 'prepare')!.purposes
   const appliedPrepareUsd = applied.length
     ? db.select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)` }).from(aiCalls)
-      .where(and(eq(aiCalls.refType, 'application'), inArray(aiCalls.refId, applied), inArray(aiCalls.purpose, prepare))).get()?.total ?? 0
+      .where(and(eq(aiCalls.refType, 'application'), eq(aiCalls.backend, 'api'), inArray(aiCalls.refId, applied), inArray(aiCalls.purpose, prepare))).get()?.total ?? 0
     : 0
-  return { stages, appliedThisWeek: applied.length, appliedPrepareUsd: round(appliedPrepareUsd) }
+  const subscription = {
+    today: subscriptionSince(sql`datetime('now', 'localtime', 'start of day', 'utc')`),
+    week: subscriptionSince(sql`datetime('now', '-7 days')`),
+  }
+  return { stages, appliedThisWeek: applied.length, appliedPrepareUsd: round(appliedPrepareUsd), subscription }
 }

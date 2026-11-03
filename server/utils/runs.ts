@@ -46,12 +46,24 @@ export async function withRun<T extends Record<string, unknown>>(
   const log = (msg: string) => console.log(`[${task}#${row.id}] ${msg}`)
   log(resumed ? `resumed after a restart (${trigger})` : `started (${trigger})`)
   try {
-    const stats = await fn(log)
-    // A run that stopped early at the AI budget says why: the daily budget, or an account
-    // problem (out of credit) that no amount of waiting for midnight fixes.
+    let stats: T
+    try {
+      stats = await fn(log)
+    }
+    catch (e) {
+      // Devin's subscription reached its limit: the run is paused, not failed. The queue puts the
+      // item back to run after the reset (server/plugins/queue.ts).
+      if (!(e instanceof AiSubscriptionLimit)) throw e
+      log(e.message)
+      stats = { budgetStop: true, errors: [e.message] } as unknown as T
+    }
+    // A run that stopped early at the AI budget says why: the daily budget, an account problem
+    // (out of credit) that no amount of waiting for midnight fixes, or the subscription limit.
     const s = stats as Record<string, unknown> | null
     if (s && (s.budgetStop === true || s.budgetStopped === true) && !('stopReason' in s)) {
-      (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? budgetStopKind()
+      const pausedUntil = currentQueueContext()?.subscriptionPausedUntil
+      if (pausedUntil) Object.assign(s, { stopReason: 'subscription', pausedUntil })
+      else (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? budgetStopKind()
     }
     const recorded = resumed ? { ...s, resumedAfterRestart: resumed } : stats
     db.update(pipelineRuns).set({ status: 'succeeded', finishedAt: now(), statsJson: JSON.stringify(recorded) }).where(eq(pipelineRuns.id, row.id)).run()

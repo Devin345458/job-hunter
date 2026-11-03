@@ -9,6 +9,7 @@ import { plainError } from '#shared/utils/plain-text'
 import { runOutcome, runProblems, taskLabel } from '#shared/utils/run-outcome'
 import { DAILY_STEPS } from '#shared/utils/schedule'
 import type { RunTrigger } from './runs'
+import { PRIORITY_WINDOW_MS, subscriptionPauseMessage } from './subscription-pause'
 
 // The durable job queue (table task_queue, migration 0005). Producers call enqueue() instead of
 // running work in the request; a worker (server/plugins/queue.ts, roles all and worker) claims the
@@ -51,6 +52,11 @@ export const COORD_TASKS = ['jobs:enrich', 'jobs:match'] as const
 export const LIGHT_TASKS = [HEARTBEAT_TASK] as const
 /** Never run twice: an interrupted approval may already have submitted the employer form. */
 export const NO_RETRY_TASKS = [APPROVE_TASK] as const
+/**
+ * Tasks that never call Claude. They keep running while Devin's Claude subscription is paused at
+ * its limit (server/utils/subscription-pause.ts); every other item waits for the reset.
+ */
+export const NO_AI_TASKS = [HEARTBEAT_TASK, DAILY_TASK, 'jobs:search', 'repos:index', FIND_TASK] as const
 
 const ACTIVE: QueueStatus[] = ['queued', 'running']
 const TERMINAL: QueueStatus[] = ['done', 'failed', 'canceled', 'interrupted']
@@ -190,12 +196,20 @@ const quoted = (list: readonly string[]) => list.map((t) => {
  * work, the money went to jobs that were read and scored, not to reads nobody can decide on yet.
  * Reads keep their queue order, which is newest posting first.
  */
-export function claimNext(owner: string, lane: { only?: readonly string[]; except?: readonly string[] } = {}): QueueRow | null {
+export function claimNext(owner: string, lane: { only?: readonly string[]; except?: readonly string[]; ai?: 'paused' | 'foreground' | 'free' } = {}): QueueRow | null {
   const now = sqlTime()
   const heavy = quoted(HEAVY_TASKS)
   const bulk = quoted(BULK_TASKS)
   const score = quoted([MATCH_ONE_TASK])
-  const only = `${lane.only?.length ? `AND t.task IN (${quoted(lane.only)})` : ''} ${lane.except?.length ? `AND t.task NOT IN (${quoted(lane.except)})` : ''}`
+  const noAi = quoted(NO_AI_TASKS)
+  // Devin's subscription at its limit: only tasks that never call Claude. Right after the reset:
+  // those plus items Devin started (not per-job items, not a scheduled run's steps).
+  const ai = lane.ai === 'paused'
+    ? `AND t.task IN (${noAi})`
+    : lane.ai === 'foreground'
+      ? `AND (t.task IN (${noAi}) OR NOT (t.task IN (${bulk}) OR t.trigger = 'schedule' OR EXISTS (SELECT 1 FROM task_queue p WHERE p.id = t.parent_id AND p.trigger = 'schedule')))`
+      : ''
+  const only = `${lane.only?.length ? `AND t.task IN (${quoted(lane.only)})` : ''} ${lane.except?.length ? `AND t.task NOT IN (${quoted(lane.except)})` : ''} ${ai}`
   const row = sqlite().prepare(`
     UPDATE task_queue
     SET status = 'running', lease_owner = @owner, lease_expires_at = @lease, started_at = @now
@@ -230,6 +244,25 @@ export interface ItemOutcome {
   status: 'done' | 'failed'
   error?: string | null
   result?: unknown
+}
+
+/**
+ * Puts an item that Devin's subscription limit stopped back in the queue, to run after the reset.
+ * Its attempts are not counted (a limit is not a failure). Background items (per-job items, the
+ * steps of a scheduled run) wait PRIORITY_WINDOW_MS longer, so what Devin started goes first.
+ */
+export function pauseItem(id: number, owner: string, until: string, opts: { background: boolean }) {
+  const runAfter = new Date(Date.parse(until) + (opts.background ? PRIORITY_WINDOW_MS : 0))
+  const changed = useDb().update(taskQueue).set({
+    status: 'queued',
+    runAfter: sqlTime(runAfter),
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    progressJson: null,
+    note: subscriptionPauseMessage({ until }),
+  }).where(and(eq(taskQueue.id, id), eq(taskQueue.status, 'running'), eq(taskQueue.leaseOwner, owner))).run().changes
+  if (changed) console.log(`[queue] #${id} paused at the Claude subscription limit; it runs again after ${sqlTime(runAfter)} UTC`)
+  else console.warn(`[queue] #${id} stopped at the subscription limit after its lease was taken away`)
 }
 
 /** Records how an item ended and moves its daily run on. Ignored when the lease was taken away. */
@@ -511,6 +544,8 @@ export interface QueueContext {
   progress: Record<string, unknown>
   flushTimer: ReturnType<typeof setTimeout> | null
   lastFlush: number
+  /** Set (to the reset time) when a call in this item met Devin's subscription limit. */
+  subscriptionPausedUntil?: string
 }
 
 const context = new AsyncLocalStorage<QueueContext>()

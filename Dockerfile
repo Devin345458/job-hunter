@@ -12,6 +12,12 @@ COPY package*.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
+# The Claude Code binary the Agent SDK starts (server/utils/agent-backend.ts). It ships as the SDK's
+# optional platform package (glibc build for this Debian image). The Nitro build does not trace it,
+# since the SDK finds it at run time, so it is copied to a fixed path for the runner.
+RUN mkdir -p /opt/claude-code \
+  && cp "node_modules/@anthropic-ai/claude-agent-sdk-linux-$(node -p process.arch)/claude" /opt/claude-code/claude \
+  && chmod 0755 /opt/claude-code/claude
 
 FROM base AS runner
 ARG SOURCE_COMMIT=""
@@ -21,6 +27,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/.output ./.output
+COPY --from=builder /opt/claude-code /opt/claude-code
+ENV NUXT_CLAUDE_CODE_PATH=/opt/claude-code/claude
 COPY --from=builder /app/server/db/migrations ./server/db/migrations
 COPY --from=builder /app/scripts ./scripts
 
@@ -41,6 +49,9 @@ RUN useradd --system --uid 10001 --user-group --create-home --shell /usr/sbin/no
 # Its own unprivileged user for git in the GitHub evidence cache (server/utils/repos/git.ts), so
 # demo build commands can read neither the read token in git's environment nor the cloned code.
 RUN useradd --system --uid 10002 --user-group --create-home --shell /usr/sbin/nologin repos
+# Its own unprivileged user for Claude Code on Devin's subscription (server/utils/agent-backend.ts),
+# so neither demo build commands nor git can read the subscription token in its environment.
+RUN useradd --system --uid 10003 --user-group --create-home --shell /usr/sbin/nologin claude
 
 RUN mkdir -p /app/data /app/data/resumes
 

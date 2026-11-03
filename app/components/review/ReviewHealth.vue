@@ -3,6 +3,7 @@ import { OUTCOME, clockTime, outcomeOf } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
 import { bulkText, queueItemName, queueItemText } from '#shared/utils/queue-text'
+import { subscriptionPauseText } from '#shared/utils/subscription'
 
 // Pipeline health, kept small: did the last run work, how much of today's AI budget is gone,
 // and how many questions are waiting. Detail lives in Settings and on the Questions page.
@@ -28,6 +29,12 @@ const runLabel = computed(() => {
 const problems = computed(() => (outcome.value === 'partial' ? run.value?.problems ?? [] : []))
 const runError = computed(() => (outcome.value === 'failed' ? plainError(run.value?.error) : null))
 
+// Steps run on Devin's Claude subscription while its token is set; while its limit holds, they
+// wait for the reset and this says until when, in amber.
+const subscription = computed(() => health.runs.value?.subscription ?? null)
+const onSubscription = computed(() => !!subscription.value?.on)
+const pausedText = computed(() => (subscription.value?.pause ? subscriptionPauseText(subscription.value.pause.until) : null))
+
 const spent = computed(() => health.runs.value?.aiSpentToday ?? 0)
 const budget = computed(() => health.runs.value?.aiBudget ?? 0)
 const spentPct = computed(() => (budget.value > 0 ? Math.min(100, (spent.value / budget.value) * 100) : 0))
@@ -41,12 +48,13 @@ const blocking = computed(() => health.stats.value?.questions.blocking ?? 0)
 const inlineSummary = computed(() => {
   if (open.value) return 'Pipeline health'
   if (aiProblem.value) return aiProblem.value.message
+  if (pausedText.value) return pausedText.value
   const parts = [run.value ? `${runLabel.value} ${clockTime(run.value.startedAt)}` : 'No runs yet']
   parts.push(`$${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} AI`)
   if (pending.value) parts.push(`${pending.value} question${pending.value === 1 ? '' : 's'}`)
   return parts.join(' · ')
 })
-const summaryTone = computed(() => (aiProblem.value ? 'error' : runTone.value))
+const summaryTone = computed(() => (aiProblem.value ? 'error' : pausedText.value ? 'warning' : runTone.value))
 
 // The job queue in one or two lines: what runs now and what waits, or an approval a restart
 // interrupted today. The clock ticks so "queued 2 minutes ago" stays true between refreshes.
@@ -102,6 +110,10 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
         <div v-if="aiProblem" class="hl__err" role="alert">
           {{ aiProblem.message }} Last refused {{ clockTime(aiProblem.since) }}.
         </div>
+        <div v-if="pausedText" class="hl__paused" role="status">
+          <v-icon icon="mdi-pause-circle-outline" size="16" class="hl__paused-icon" />
+          <span>{{ pausedText }}</span>
+        </div>
 
         <div class="hl__row">
           <span class="hl__dot" :class="`bg-${runTone}`" />
@@ -131,7 +143,7 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
         <div class="hl__row">
           <v-icon icon="mdi-robot-outline" size="16" class="hl__icon" />
           <div class="hl__text">
-            <div class="hl__strong">${{ spent.toFixed(2) }} <span class="hl__muted">of ${{ budget.toFixed(2) }} AI budget today</span></div>
+            <div class="hl__strong">${{ spent.toFixed(2) }} <span class="hl__muted">of ${{ budget.toFixed(2) }} {{ onSubscription ? 'API key budget' : 'AI budget' }} today</span></div>
             <div class="hl__meter" role="meter" :aria-valuenow="Math.round(spentPct)" aria-valuemin="0" aria-valuemax="100" aria-label="AI budget used today">
               <span :class="`bg-${spendTone}`" :style="{ width: `${spentPct}%` }" />
             </div>
@@ -316,6 +328,26 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     font-size: 0.75rem;
     color: rgb(var(--v-theme-error));
     overflow-wrap: anywhere;
+  }
+
+  &__paused {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-theme-warning), 0.45);
+    background: rgba(var(--v-theme-warning), 0.08);
+    color: rgb(var(--v-theme-warning));
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+  }
+
+  &__paused-icon {
+    flex: none;
+    margin-top: 1px;
   }
 }
 </style>

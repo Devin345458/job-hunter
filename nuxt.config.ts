@@ -157,7 +157,27 @@ export default defineNuxtConfig({
     // 'enrich=claude-sonnet-5-5,match=claude-haiku-5-5'. A purpose not listed uses aiModel; the
     // fallback model still applies. Chosen from the 2026-11-03 evaluation in scripts/eval.
     aiStepModels: '',
-    // Hard stop for Claude spend per local day, in dollars
+    // Devin's personal Claude subscription (NUXT_CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`).
+    // When set, every step runs through the Claude Agent SDK on it (server/utils/agent-backend.ts);
+    // the token reaches only the Claude Code child process, as CLAUDE_CODE_OAUTH_TOKEN in its
+    // environment. Never logged, never in argv, never returned by an API.
+    claudeCodeOauthToken: '',
+    // Per-step backend overrides (NUXT_AI_STEP_BACKENDS): comma separated purpose=api pairs. A step
+    // mapped to api uses NUXT_ANTHROPIC_API_KEY, and only while that key is set; everything else
+    // runs on the subscription while the token is set, and on the key while it is not.
+    aiStepBackends: '',
+    // Claude Code processes this server runs at once (NUXT_AGENT_CONCURRENCY, 1 to 8). Each is a
+    // separate process of about 190 MB that idles near 0% CPU while Claude answers
+    // (scripts/agent-sdk/measure.ts); 3 keeps the peak near 600 MB on the shared Mac Mini.
+    agentConcurrency: '3',
+    // Path to the Claude Code binary the Agent SDK starts. Empty finds the platform package in
+    // node_modules; the Docker image sets /opt/claude-code/claude.
+    claudeCodePath: '',
+    // uid of the unprivileged user Claude Code runs as in the container (its own user, so neither
+    // demo builds nor git can read the subscription token from its environment)
+    agentUid: '10003',
+    // Hard stop for Claude spend billed to the API key per local day, in dollars (calls on the
+    // subscription never count)
     dailyAiBudgetUsd: '10',
     // Background work (scheduled steps, per-job read and score items) stops at this share of the
     // daily budget, leaving the rest for what Devin starts by hand.

@@ -255,7 +255,12 @@ export const aiCalls = sqliteTable('ai_calls', {
   cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
   // Migration 0007: tokens written to the prompt cache (usage.cache_creation_input_tokens).
   cacheWriteTokens: integer('cache_write_tokens').notNull().default(0),
+  // Dollars billed to the API key. A call on Devin's subscription bills nothing here (0).
   costUsd: real('cost_usd').notNull().default(0),
+  // Migration 0008: which backend served the call ('api': the Console key; 'agent': Devin's
+  // subscription through the Claude Agent SDK) and, for agent calls, the SDK's cost estimate.
+  backend: text('backend').notNull().default('api'),
+  estCostUsd: real('est_cost_usd').notNull().default(0),
   refType: text('ref_type'),
   refId: integer('ref_id'),
   error: text('error'),

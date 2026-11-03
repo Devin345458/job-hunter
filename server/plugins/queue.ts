@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto'
 import { hostname } from 'node:os'
 import { Cron } from 'croner'
 import { PIPELINE_CRON, PIPELINE_TIME_ZONE } from '#shared/utils/schedule'
-import type { QueueRow } from '../utils/queue'
+import { NO_RETRY_TASKS, currentQueueContext, pauseItem, type ItemOutcome, type QueueRow } from '../utils/queue'
+import { isBackgroundWork } from '../utils/ai'
 import { runQueueItem } from '../utils/queue-run'
+import { subscriptionClaimMode } from '../utils/subscription-pause'
 
 // Starts this process's part of the job queue, by role (server/utils/role.ts):
 // - all and worker: the worker (claims and runs queue items) and, unless NUXT_SCHEDULER_ENABLED is
@@ -112,9 +114,23 @@ function createWorker() {
         console.warn(`[queue] could not renew the lease on #${item.id}`, e)
       }
     }, RENEW_EVERY_MS)
-    const promise = runInQueueContext(item, () => runQueueItem(item, owner))
+    // A call in the item met Devin's subscription limit: the item goes back in the queue to run
+    // after the reset instead of ending (never for an approval, which may have submitted).
+    const run = () => runQueueItem(item, owner)
+      .catch((e): ItemOutcome => {
+        console.error(`[queue] #${item.id} ${item.task} failed`, e)
+        return { status: 'failed', error: e?.message || String(e) }
+      })
       .then((outcome) => {
-        if (outcome !== 'waiting') completeItem(item.id, owner, outcome)
+        const ctx = currentQueueContext()
+        const until = ctx?.subscriptionPausedUntil
+        const retry = !!until && outcome !== 'waiting' && !(NO_RETRY_TASKS as readonly string[]).includes(item.task)
+        return { outcome, pause: retry ? { until: until!, background: isBackgroundWork() } : null }
+      })
+    const promise = runInQueueContext(item, run)
+      .then(({ outcome, pause }) => {
+        if (pause) pauseItem(item.id, owner, pause.until, { background: pause.background })
+        else if (outcome !== 'waiting') completeItem(item.id, owner, outcome)
       })
       .catch((e) => {
         console.error(`[queue] #${item.id} ${item.task} failed`, e)
@@ -138,9 +154,12 @@ function createWorker() {
     ticking = true
     try {
       recoverExpired(owner, new Set(running.keys()))
+      // Devin's Claude subscription at its limit: only items that never call Claude, then for a
+      // minute after the reset only items he started (server/utils/subscription-pause.ts).
+      const ai = subscriptionClaimMode()
       const fill = (lane: Lane, max: number, pick: { only?: readonly string[]; except?: readonly string[] }) => {
         while (!stopping && busy(lane) < max) {
-          const item = claimNext(owner, pick)
+          const item = claimNext(owner, { ...pick, ai })
           if (!item) break
           launch(item, lane)
         }

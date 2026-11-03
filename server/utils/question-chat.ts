@@ -12,6 +12,8 @@ import {
   AiKeyRejected,
   AiOutputTruncated,
   AiRefusal,
+  AiSubscriptionLimit,
+  AiTokenRejected,
   aiBudget,
   aiSpentToday,
   aiStructured,
@@ -19,6 +21,8 @@ import {
   cachedSystem,
   fallbackModel,
 } from './ai'
+import { PIPELINE_TIME_ZONE } from '#shared/utils/schedule'
+import { resumeClock } from '#shared/utils/subscription'
 import { scrubDashes, unsupportedNumbers } from './apply/text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
 import { memoryLogLine, memoryTarget, searchMemory } from './memory'
@@ -717,6 +721,12 @@ export function stopFor(e: unknown): Extract<QuestionChatResponse, { ok: false }
   }
   if (e instanceof AiKeyRejected) {
     return stop('key', 'Anthropic rejected the API key, so the chat cannot answer until a working key is set as NUXT_ANTHROPIC_API_KEY in Coolify.')
+  }
+  if (e instanceof AiSubscriptionLimit) {
+    return stop('subscription', `Your Claude subscription limit is reached, so the chat is paused until ${resumeClock(e.until, { timeZone: PIPELINE_TIME_ZONE })}. It answers again after that.`)
+  }
+  if (e instanceof AiTokenRejected) {
+    return stop('token', 'Claude rejected the subscription token, so the chat cannot answer until a new token from claude setup-token is set as NUXT_CLAUDE_CODE_OAUTH_TOKEN in Coolify.')
   }
   if (e instanceof AiBudgetExceeded) {
     return stop('budget', `Today's Claude budget is used up ($${aiSpentToday().toFixed(2)} of $${aiBudget().toFixed(2)}), so the chat is paused until midnight. Raise NUXT_DAILY_AI_BUDGET_USD in Coolify to keep going today.`)

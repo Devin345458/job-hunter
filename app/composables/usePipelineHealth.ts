@@ -1,4 +1,4 @@
-import type { AiStageCosts, PipelineRunView, QueueSnapshot } from '#shared/types/pipeline'
+import type { AiStageCosts, PipelineRunView, QueueSnapshot, SubscriptionStatus } from '#shared/types/pipeline'
 
 export interface StatsResponse {
   review: { toDecide: number; toSend: number; preparing: number; blocked: number; sending: number; needsYou: number; submittedToday: number; submittedTotal: number }
@@ -20,7 +20,9 @@ export interface RunsResponse {
   /** AI spend by stage of the decide-first flow, today and over the last 7 days. */
   aiStages?: AiStageCosts
   /** Set when the Anthropic account cannot serve requests (out of credit, or the key was rejected). The message is a plain sentence. */
-  aiProblem?: { kind: 'credit' | 'key'; message: string; since: string } | null
+  aiProblem?: { kind: 'credit' | 'key' | 'token'; message: string; since: string } | null
+  /** Steps run on Devin's Claude subscription; `pause` is set while its limit holds. */
+  subscription?: SubscriptionStatus
   /** The job queue: running, waiting, daily runs under way, and the last day's notable items. */
   queue?: QueueSnapshot
 }

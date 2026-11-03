@@ -5,6 +5,8 @@ import { and, gte, sql } from 'drizzle-orm'
 import { aiCalls } from '../db/schema'
 import { FALLBACK_MODEL, MODEL, profileOf, usageCost, type Effort } from './model'
 import { BULK_TASKS, currentQueueContext, getItem } from './queue'
+import { redactAgentSecrets, runAgentQuery, subscriptionTokenSet, type AgentRunResult } from './agent-backend'
+import { activeSubscriptionPause, clearSubscriptionPause, recordSubscriptionLimit, subscriptionPauseMessage } from './subscription-pause'
 import type { TailoredResume } from '#shared/types/pipeline'
 
 let _client: Anthropic | null = null
@@ -44,6 +46,28 @@ export class AiKeyRejected extends AiBudgetExceeded {
   }
 }
 
+/**
+ * Devin's Claude subscription reported a usage or rate limit (the agent backend). A subclass of
+ * AiBudgetExceeded, so every caller stops its run the way it does at the budget instead of marking
+ * jobs or applications failed; the queue puts the item back to run after `until` (plugins/queue.ts).
+ */
+export class AiSubscriptionLimit extends AiBudgetExceeded {
+  readonly until: string
+  constructor(until: string) {
+    super(0, 0, `${subscriptionPauseMessage({ until })}.`)
+    this.name = 'AiSubscriptionLimit'
+    this.until = until
+  }
+}
+
+/** Claude refused the subscription token (expired or revoked). Stops runs like a rejected API key. */
+export class AiTokenRejected extends AiBudgetExceeded {
+  constructor() {
+    super(0, 0, 'Claude rejected the subscription token in NUXT_CLAUDE_CODE_OAUTH_TOKEN. Run claude setup-token and set the new token in Coolify.')
+    this.name = 'AiTokenRejected'
+  }
+}
+
 /** True for the 400 Anthropic returns when the account balance is too low. There is no typed error for it. */
 function isCreditError(e: any) {
   return e instanceof Anthropic.BadRequestError && /credit balance is too low/i.test(String(e?.error?.error?.message ?? e?.message ?? ''))
@@ -55,27 +79,46 @@ function isKeyRejected(e: any) {
 
 /** After an account-level refusal, calls fail fast for ten minutes instead of being sent. */
 let accountStop: { until: number; kind: 'credit' | 'key' } = { until: 0, kind: 'credit' }
+/** The same for the subscription token on the agent backend. */
+let tokenStopUntil = 0
 
 const ACCOUNT_MESSAGES = {
   credit: 'Claude is out of credit, so nothing can be scored, prepared, or built until credit is added to the Anthropic account (Console, Plans & Billing).',
   key: 'Anthropic rejected the API key, so nothing can be scored, prepared, or built until a valid Console API key (starting sk-ant-api) is set as NUXT_ANTHROPIC_API_KEY in Coolify.',
+  token: 'Claude rejected the subscription token, so nothing can be scored, prepared, or built until a new token from claude setup-token is set as NUXT_CLAUDE_CODE_OAUTH_TOKEN in Coolify.',
 } as const
+
+export type AiAccountProblemKind = keyof typeof ACCOUNT_MESSAGES
+
+/** Forgets the ten-minute fail-fast stops (tests only; a restart does the same). */
+export function resetAiAccountStops() {
+  accountStop = { until: 0, kind: 'credit' }
+  tokenStopUntil = 0
+}
 
 /**
  * The account-level problem the dashboard should show, read from ai_calls so it survives
- * restarts: the most recent credit or key refusal, unless a call succeeded after it.
+ * restarts: the most recent credit or key refusal on the API key, or token refusal on the
+ * subscription, unless a call on the same backend succeeded after it.
  */
-export function aiAccountProblem(): { kind: 'credit' | 'key'; message: string; since: string } | null {
+export function aiAccountProblem(): { kind: AiAccountProblemKind; message: string; since: string } | null {
   const db = useDb()
-  const last = db.select({ createdAt: aiCalls.createdAt, error: aiCalls.error }).from(aiCalls)
-    .where(sql`${aiCalls.error} like '%credit balance%' or ${aiCalls.error} like '%out of credit%' or ${aiCalls.error} like 'key rejected%'`)
-    .orderBy(sql`${aiCalls.id} desc`).limit(1).get()
+  /** The latest refusal on one backend, unless a call on that backend succeeded after it. */
+  const unresolved = (backend: AiBackend, refusal: ReturnType<typeof sql>) => {
+    const row = db.select({ id: aiCalls.id, createdAt: aiCalls.createdAt, error: aiCalls.error }).from(aiCalls)
+      .where(sql`${aiCalls.backend} = ${backend} and (${refusal})`)
+      .orderBy(sql`${aiCalls.id} desc`).limit(1).get()
+    if (!row) return null
+    const okAfter = db.select({ id: aiCalls.id }).from(aiCalls)
+      .where(sql`${aiCalls.error} is null and ${aiCalls.backend} = ${backend} and ${aiCalls.id} > ${row.id}`)
+      .limit(1).get()
+    return okAfter ? null : row
+  }
+  const api = unresolved('api', sql`${aiCalls.error} like '%credit balance%' or ${aiCalls.error} like '%out of credit%' or ${aiCalls.error} like 'key rejected%'`)
+  const agent = unresolved('agent', sql`${aiCalls.error} like 'token rejected%'`)
+  const last = api && (!agent || api.id > agent.id) ? api : agent
   if (!last) return null
-  const okAfter = db.select({ id: aiCalls.id }).from(aiCalls)
-    .where(sql`${aiCalls.error} is null and ${aiCalls.createdAt} > ${last.createdAt}`)
-    .limit(1).get()
-  if (okAfter) return null
-  const kind = last.error?.startsWith('key rejected') ? 'key' : 'credit'
+  const kind: AiAccountProblemKind = last === agent ? 'token' : last.error?.startsWith('key rejected') ? 'key' : 'credit'
   return { kind, since: last.createdAt, message: ACCOUNT_MESSAGES[kind] }
 }
 
@@ -83,7 +126,7 @@ export class AiRefusal extends Error {}
 
 export class AiOutputTruncated extends Error {}
 
-/** Dollars spent on Claude calls since local midnight. */
+/** Dollars billed to the API key since local midnight. Calls on the subscription bill nothing (cost_usd 0). */
 export function aiSpentToday(): number {
   const db = useDb()
   const row = db
@@ -157,8 +200,11 @@ export function budgetStopKind(): 'budget' | 'background' {
  * Why no Claude call can go out right now (the daily budget is spent, or the account was refused
  * in the last ten minutes), as the error a call would throw; null when calls can go out. Per-job
  * queue items check it first, so a backlog stops at the budget without fetching anything.
+ * With `purpose`, a step that runs on the subscription is checked against the subscription pause
+ * and the token instead: the dollar budget never stops it.
  */
-export function aiStopError(): AiBudgetExceeded | null {
+export function aiStopError(purpose?: string): AiBudgetExceeded | null {
+  if (purpose && stepBackend(purpose) === 'agent') return subscriptionStopError()
   try {
     assertAiBudget()
   }
@@ -170,7 +216,7 @@ export function aiStopError(): AiBudgetExceeded | null {
   return null
 }
 
-function logCall(purpose: string, model: string, usage: any, ref?: { type: string; id: number }, error?: string) {
+function logCall(purpose: string, model: string, usage: any, ref?: { type: string; id: number }, error?: string, agent?: { estCostUsd: number }) {
   try {
     useDb().insert(aiCalls).values({
       purpose,
@@ -179,10 +225,13 @@ function logCall(purpose: string, model: string, usage: any, ref?: { type: strin
       outputTokens: usage?.output_tokens ?? 0,
       cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
       cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
-      costUsd: usage ? usageCost(model, usage) : 0,
+      // A call on the subscription bills the API key nothing; its estimate is kept beside it.
+      costUsd: agent ? 0 : usage ? usageCost(model, usage) : 0,
+      backend: agent ? 'agent' : 'api',
+      estCostUsd: agent ? agent.estCostUsd : 0,
       refType: ref?.type ?? null,
       refId: ref?.id ?? null,
-      error: error ?? null,
+      error: error == null ? null : redactAgentSecrets(error).slice(0, 1000),
     }).run()
   }
   catch (e) {
@@ -279,6 +328,138 @@ export function activeModel(): string {
   return Date.now() < primaryUnavailableUntil ? fallbackModel() : primaryModel()
 }
 
+// ── Backends: the API key, or Devin's subscription through the Claude Agent SDK ──
+
+export type AiBackend = 'api' | 'agent'
+
+/**
+ * Which backend runs a step (ai_calls.purpose). While NUXT_CLAUDE_CODE_OAUTH_TOKEN is set, every
+ * step runs on Devin's subscription (server/utils/agent-backend.ts), except a step that
+ * NUXT_AI_STEP_BACKENDS maps to api ("enrich=api"; "*=api" maps every step not named), and only
+ * while NUXT_ANTHROPIC_API_KEY is set. Without the token every step uses the API key, as before.
+ * Demo builds (aiToolTurn) always use the API key.
+ */
+export function stepBackend(purpose: string): AiBackend {
+  const config = useRuntimeConfig()
+  let exact: string | null = null
+  let fallback: string | null = null
+  for (const pair of String(config.aiStepBackends ?? '').split(',')) {
+    const [step, backend] = pair.split('=').map(s => s.trim())
+    if (!step || !backend) continue
+    if (step === purpose) exact = backend
+    else if (step === '*') fallback = backend
+  }
+  const mapped = exact ?? fallback
+  if (mapped === 'api' && String(config.anthropicApiKey ?? '').trim()) return 'api'
+  return subscriptionTokenSet() ? 'agent' : 'api'
+}
+
+/** Notes on the queue item being run that a subscription limit stopped it, so the worker puts it back to run after `until`. */
+function markSubscriptionStop(until: string) {
+  const ctx = currentQueueContext()
+  if (ctx) ctx.subscriptionPausedUntil = until
+}
+
+/**
+ * Why no call can go out on the subscription right now (its limit holds, or Claude refused the
+ * token in the last ten minutes), as the error a call would throw; null when calls can go out.
+ */
+export function subscriptionStopError(): AiBudgetExceeded | null {
+  const pause = activeSubscriptionPause()
+  if (pause) {
+    markSubscriptionStop(pause.until)
+    return new AiSubscriptionLimit(pause.until)
+  }
+  if (Date.now() < tokenStopUntil) return new AiTokenRejected()
+  return null
+}
+
+function systemText(system: AiCallOptions['system']): string {
+  if (!system) return ''
+  return typeof system === 'string' ? system : system.map(b => (b as { text?: string }).text ?? '').join('')
+}
+
+const jsonSchemas = new WeakMap<z.ZodType, Record<string, unknown>>()
+
+/** The JSON Schema (draft-07, as the Agent SDK validates) Claude must answer in: the schema's input side, so defaults stay optional. */
+export function agentJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  let out = jsonSchemas.get(schema)
+  if (!out) {
+    out = z.toJSONSchema(schema, { target: 'draft-7', io: 'input', unrepresentable: 'any' }) as Record<string, unknown>
+    jsonSchemas.set(schema, out)
+  }
+  return out
+}
+
+/**
+ * One call on the subscription. Not counted against the dollar budget: the SDK's cost estimate
+ * is logged as est_cost_usd and cost_usd stays 0. A limit records the pause and throws
+ * AiSubscriptionLimit; nothing falls back to the API key. A model the subscription cannot use is
+ * tried once on the fallback model. Every attempt is logged with backend 'agent'.
+ */
+async function onAgent<T>(opts: AiCallOptions, schema: z.ZodType | null, accept: (r: AgentRunResult & { ok: true }) => T): Promise<T> {
+  const stop = subscriptionStopError()
+  if (stop) throw stop
+  const first = opts.model || stepModel(opts.purpose) || primaryModel()
+  const models = [...new Set([first, fallbackModel()])]
+  for (const model of models) {
+    const r = await runAgentQuery({
+      purpose: opts.purpose,
+      model,
+      system: systemText(opts.system),
+      prompt: opts.prompt as string,
+      jsonSchema: schema ? agentJsonSchema(schema) : undefined,
+      effort: opts.effort ?? 'medium',
+      effortSupported: profileOf(model).effort,
+      maxTokens: opts.maxTokens ?? 16000,
+      foreground: !isBackgroundWork(),
+    })
+    const agent = { estCostUsd: r.estCostUsd }
+    if (r.ok) {
+      let value: T
+      try {
+        value = accept(r)
+      }
+      catch (e: any) {
+        logCall(opts.purpose, r.model, r.usage, opts.ref, `schema: ${e?.message ?? e}`, agent)
+        throw e
+      }
+      logCall(opts.purpose, r.model, r.usage, opts.ref, undefined, agent)
+      clearSubscriptionPause()
+      return value
+    }
+    switch (r.kind) {
+      case 'limit': {
+        const state = recordSubscriptionLimit(r.resetsAtMs, r.limitKind)
+        logCall(opts.purpose, r.model, r.usage, opts.ref, `subscription limit reached, paused until ${state.until}: ${r.message}`, agent)
+        markSubscriptionStop(state.until)
+        throw new AiSubscriptionLimit(state.until)
+      }
+      case 'auth':
+        tokenStopUntil = Date.now() + 10 * 60 * 1000
+        logCall(opts.purpose, r.model, r.usage, opts.ref, `token rejected: ${r.message}`, agent)
+        throw new AiTokenRejected()
+      case 'refusal':
+        logCall(opts.purpose, r.model, r.usage, opts.ref, 'refusal', agent)
+        throw new AiRefusal(`Claude declined the ${opts.purpose} request`)
+      case 'truncated':
+        logCall(opts.purpose, r.model, r.usage, opts.ref, 'max_tokens', agent)
+        throw new AiOutputTruncated(`Claude ran out of output tokens on ${opts.purpose}`)
+      case 'model':
+        logCall(opts.purpose, model, r.usage, opts.ref, `unavailable: ${r.message}`, agent)
+        if (model !== fallbackModel()) {
+          console.warn(`[ai] ${model} is not available on the subscription, trying ${fallbackModel()}`)
+          continue
+        }
+        throw new Error(`Claude could not run ${opts.purpose}: ${r.message}`)
+      default:
+        logCall(opts.purpose, r.model, r.usage, opts.ref, `${r.kind}: ${r.message}`, agent)
+        throw new Error(`Claude could not run ${opts.purpose} on the subscription: ${r.message}`)
+    }
+  }
+  throw new Error(`Claude could not run ${opts.purpose} on the subscription`)
+}
+
 function isAccessError(e: any) {
   return e instanceof Anthropic.RateLimitError
     || e instanceof Anthropic.PermissionDeniedError
@@ -366,6 +547,15 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
  * outputs (forced tool choice returns a 400 on the 5.x models). Enforces the daily budget.
  */
 export async function aiStructured<S extends z.ZodType>(schema: S, opts: AiCallOptions): Promise<z.infer<S>> {
+  if (stepBackend(opts.purpose) === 'agent') {
+    // The SDK checks the answer against the JSON Schema and asks again on a mismatch; the zod
+    // schema then gives the same parsed object the API backend returns.
+    return onAgent(opts, schema, (r) => {
+      const parsed = schema.safeParse(r.structured)
+      if (!parsed.success) throw new Error(`Claude's answer to ${opts.purpose} does not match its schema: ${parsed.error.issues.slice(0, 3).map(i => `${i.path.join('.') || '(root)'} ${i.message}`).join('; ')}`)
+      return parsed.data as z.infer<S>
+    })
+  }
   const ai = useAI()
   const response = await withModel(opts, (model, ro) => ai.beta.messages.parse(buildParams(model, opts, betaZodOutputFormat(schema)), ro) as any, opts.model)
   const parsed = (response as any).parsed_output
@@ -387,7 +577,8 @@ export interface AiToolTurnOptions {
 }
 
 /**
- * One turn of a tool-use conversation (the demo builder's agent loop). Same budget check,
+ * One turn of a tool-use conversation (the demo builder's agent loop). Always on the API key
+ * (the subscription backend does not run demo builds). Same budget check,
  * model fallback and ai_calls logging as aiStructured/aiText; the caller runs the tools.
  * The last block of the last message is marked for prompt caching so each turn reuses
  * the previous turn's prefix.
@@ -419,6 +610,7 @@ export async function aiToolTurn(opts: AiToolTurnOptions): Promise<Anthropic.Bet
 
 /** One Claude call that returns plain text (cover letters and similar prose). */
 export async function aiText(opts: AiCallOptions): Promise<string> {
+  if (stepBackend(opts.purpose) === 'agent') return onAgent(opts, null, r => r.text.trim())
   const ai = useAI()
   const response = await withModel(opts, (model, ro) => ai.beta.messages.create(buildParams(model, opts), ro) as Promise<Anthropic.Beta.BetaMessage>)
   return response.content
