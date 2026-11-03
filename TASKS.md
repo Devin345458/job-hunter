@@ -117,6 +117,9 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [x] 2026-11-03, Devin approved: resume site updated to 8+ years (Devin345458/resume 739e8da, pushed; live at resume.devinsmini.com, checked at 1280: hero line, meta description, the "Years Shipping Code" stat reads 8+, and the about paragraph; no "6+ years" left on the live page).
+- [ ] 2026-11-03, `prompt-cache`: Console email said prompt caching could save up to 34% of API spend. Stable instructions and knowledge base first with cache breakpoints, cache write and read pricing in costOf, measured before and after on 20 jobs and one Apply.
+
 - [x] 2026-11-03 11:40, Devin's answers: years of experience 8+ (12 knowledge rows changed through PATCH /api/knowledge: Years of Experience, Professional Summary "over 8 years", PHP and JavaScript "8+ years"; 0 rows still say 6); re-read the 160 jobs read with the old prompts (queued as one jobs:enrich run, queue item 7, about $10 on Sonnet); the reframe rule stays partial (REFRAME_STATUS). The resume site (~/PhpstormProjects/resume/index.html lines 7 and 975) still says 6+ years; changing it needs a push to the public resume repo, so it waits on Devin.
 
 - [x] 2026-11-03, `model-eval` (merged eb0f6df, live in e928fbc): most errors came from the instructions and stored statuses, not the models (14 error groups shared by 3 or 4 models). Prompt fixes for enrich, match, and gaps cut pay errors from 17 to 2 across three models and Haiku 5.5 match errors from 13 to 4; judge agreement 85 to 86%. Opus is not worth its price on these steps once fixed: Sonnet 5.5 for enrich and gaps, Haiku 5.5 for match, about $6.44 per 100 jobs against $16.70 on Opus. Spend $11.49 of $15.
