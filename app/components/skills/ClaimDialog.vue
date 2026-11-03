@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { useDisplay } from 'vuetify'
 import type { JobRescoreResult, QuestionView, SkillClaimAnswer, SkillClaimPreview, SkillClaimResult, SkillClaimSource } from '#shared/types/pipeline'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, RECORDS_DRAFT_LABEL, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
+import { EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Tap a Missing skill or a requirement that is not Have, and say whether you have it.
 // The panel shows what the knowledge base says today, asks the same Yes, Some experience, or No
@@ -491,14 +492,14 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
                 rows="3"
                 auto-grow
                 :maxlength="EXAMPLE_MAX_CHARS"
-                :counter="EXAMPLE_MAX_CHARS"
-                persistent-counter
+                hide-details
                 autocomplete="off"
                 autofocus
                 density="comfortable"
                 :disabled="busy"
                 class="sc__textarea"
               />
+              <QuestionsExampleCount :text="exampleText" />
               <div class="sc__example-actions">
                 <v-btn
                   :color="canSaveExample ? 'primary' : undefined"

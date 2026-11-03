@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import type { QuestionListItem } from '#shared/types/learning'
 import { plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { draftsFromRecords, EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, RECORDS_DRAFT_LABEL, chatThreadKey, useQuestionChat } from '~/components/questions/chat-store'
+import { draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, chatThreadKey, useQuestionChat } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
 // tap; numbers and short facts take a field; open-ended questions from the original tailoring
@@ -528,13 +529,13 @@ watch(() => props.pick?.nonce, () => {
           rows="3"
           auto-grow
           :maxlength="EXAMPLE_MAX_CHARS"
-          :counter="EXAMPLE_MAX_CHARS"
-          persistent-counter
+          hide-details
           autocomplete="off"
           autofocus
           :disabled="busy"
           class="question-card__example-box"
         />
+        <QuestionsExampleCount :text="exampleText" />
         <div class="question-card__example-actions">
           <v-btn
             :color="canSaveExample ? 'primary' : undefined"

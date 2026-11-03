@@ -13,13 +13,13 @@ import {
   type SkillClaimResult,
   type SkillClaimSource,
 } from '#shared/types/pipeline'
+import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { capitalize, plainError, secondPerson } from '#shared/utils/plain-text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
 import { ruleTerm } from './learned-score'
 import {
   answerQuestion,
   askQuestion,
-  EXAMPLE_MAX_CHARS,
   findKnowledgeEntry,
   isNegativeKnowledge,
   knowledgeCovers,

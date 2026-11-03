@@ -236,8 +236,6 @@ export function takesExample(q: { answerType: string | null, kind?: string | nul
 /** The answers that open the example box ("Where did you do it?") on a question that takes one. */
 export const EXAMPLE_LEVELS = ['Yes', 'Some experience'] as const
 
-/** Longest example the server accepts (EXAMPLE_MAX_CHARS in server/utils/questions.ts). */
-export const EXAMPLE_MAX_CHARS = 1000
 
 /** The question the chat was last about, so a reload in the same tab reopens it. */
 export function savedChatQuestionId(): number | null {

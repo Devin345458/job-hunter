@@ -215,6 +215,12 @@ export interface FormAnswer {
   atApply?: boolean
   /** The fact statement an option was mapped from, so preparing reuses the mapping while the fact is unchanged. */
   mappedFrom?: string | null
+  /**
+   * Set when the answer was condensed to fit the field's character limit (server/utils/apply/fit.ts):
+   * the limit, how long the full answer was, and a fingerprint of the shortened text (a later value
+   * drops the note). The knowledge base keeps the full answer.
+   */
+  shortened?: { limit: number; fromChars: number; key: string } | null
 }
 
 export interface FormSnapshot {

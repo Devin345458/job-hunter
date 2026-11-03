@@ -11,6 +11,7 @@ import { nowSql, parseJson, setApplicationStatus } from '../review'
 import { ATS_LABELS } from './ats'
 import { joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims } from './evidence'
 import { bestOption } from './fill'
+import { fitAnswersToFields } from './fit'
 import { dropRepeatsInValue, normalizeLabel, scrubDashes, splitSentences, truncate, unsupportedNumbers } from './text'
 import { cleanFieldLabel } from '#shared/utils/plain-text'
 
@@ -559,7 +560,11 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
   // already covers a field is used before anything new is created.
   for (const [id, a] of await resolveAsks(ctx, asks, ats, ref)) results.set(id, a)
 
-  return withoutRepeats(snapshot.fields.map(f => results.get(f.id) ?? answer(f, { value: null, source: 'skipped', sourceDetail: 'No answer', confidence: 'low' })))
+  const all = withoutRepeats(snapshot.fields.map(f => results.get(f.id) ?? answer(f, { value: null, source: 'skipped', sourceDetail: 'No answer', confidence: 'low' })))
+  // An answer longer than its field's limit gets a copy condensed to fit (stage 1 writes no free text).
+  if (mode !== 'full') return all
+  const posting = (ctx.job.postingText || ctx.job.description || '').replace(/<[^>]+>/g, ' ').slice(0, 7000)
+  return await fitAnswersToFields(all, snapshot.fields, { entries: ctx.entries, posting, ref })
 }
 
 /** The last guard before answers are stored: a paragraph or sentence repeated inside one text answer is dropped (dropRepeats). */
@@ -770,6 +775,13 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
   })
   let status = app.status
   next = withoutRepeats(next)
+  // Devin's answer (an example can run to 5,000 characters) gets a copy condensed to each field's limit.
+  const fitJob = db.select({ postingText: jobs.postingText, description: jobs.description }).from(jobs).where(eq(jobs.id, app.jobId)).get()
+  next = await fitAnswersToFields(next, snapshot.fields, {
+    entries: loadKnowledge(),
+    posting: (fitJob?.postingText || fitJob?.description || '').replace(/<[^>]+>/g, ' ').slice(0, 7000),
+    ref: { type: 'application', id: applicationId },
+  })
   const extra: Record<string, unknown> = { answersJson: JSON.stringify(next) }
   if (app.status === 'needs_input' && blocking.length === 0 && unresolvedRequired.length === 0) {
     status = 'proposed'

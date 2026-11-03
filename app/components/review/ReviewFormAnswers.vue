@@ -168,6 +168,7 @@ function isLong(a: FormAnswer) {
           <div class="fa__meta">
             <span>{{ sourceText(a) }}</span>
             <span class="fa__conf" :class="`text-${CONF[a.confidence].color}`">{{ CONF[a.confidence].label }}</span>
+            <span v-if="a.shortened" class="fa__short">Shortened to fit the form's {{ a.shortened.limit.toLocaleString('en-US') }} character limit (your full answer is {{ a.shortened.fromChars.toLocaleString('en-US') }} characters)</span>
             <!-- After approve the source line says when the file is attached, so the dry-run note would repeat or contradict it. -->
             <span v-if="isDryRunNote(a) && !attachState">Attached when you approve</span>
             <span v-else-if="a.fillError" class="text-error">Not filled: {{ plainError(a.fillError) }}</span>
@@ -326,6 +327,10 @@ function isLong(a: FormAnswer) {
     margin-top: 3px;
     font-size: 0.75rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__short {
+    color: rgb(var(--v-theme-info));
   }
 
   &__conf {

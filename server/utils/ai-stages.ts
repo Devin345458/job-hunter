@@ -18,7 +18,7 @@ export const AI_STAGES: StageDef[] = [
   { key: 'read', label: 'Read postings', phase: 'before', purposes: ['enrich'] },
   { key: 'score', label: 'Score and gap plan', phase: 'before', purposes: ['match_gaps', 'match', 'gap_candidates', 'gap_decisions'] },
   { key: 'form', label: 'Read forms and questions', phase: 'before', purposes: ['form_option_map', 'question_match'] },
-  { key: 'prepare', label: 'Prepare after Apply', phase: 'after', purposes: ['tailor', 'tailor_verify', 'cover_letter', 'cover_letter_verify', 'form_answers', 'form_answers_verify'] },
+  { key: 'prepare', label: 'Prepare after Apply', phase: 'after', purposes: ['tailor', 'tailor_verify', 'cover_letter', 'cover_letter_verify', 'form_answers', 'form_answers_verify', 'form_answers_condense'] },
   { key: 'other', label: 'Other (chat, GitHub, learning, demos)', phase: 'other', purposes: [] },
 ]
 

@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { useDisplay } from 'vuetify'
 import type { QuestionView } from '#shared/types/pipeline'
 import { plainKnowledgeRefs, plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, RECORDS_DRAFT_LABEL, takesExample, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
+import { EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Open questions answered in place. Yes or no and choices are one tap; numbers take one short
 // field and written answers a growing box, each with Save. Answers go through
@@ -256,14 +257,14 @@ const chatBoxText = computed(() => {
             rows="3"
             auto-grow
             :maxlength="EXAMPLE_MAX_CHARS"
-            :counter="EXAMPLE_MAX_CHARS"
-            persistent-counter
+            hide-details
             autocomplete="off"
             autofocus
             density="comfortable"
             :disabled="savingId !== null"
             class="qs__textarea"
           />
+          <QuestionsExampleCount :text="examples[q.id] ?? ''" />
           <div class="qs__example-actions">
             <v-btn
               :color="canSaveExample(q) ? 'primary' : undefined"

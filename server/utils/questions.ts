@@ -1,3 +1,4 @@
+import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { z } from 'zod'
 import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
@@ -296,8 +297,6 @@ export function negativeSkillValue(subject: string, source: string): string {
   return `Does not know ${subject}. No production experience with ${subject}. Never claim ${subject} experience. ${source}`
 }
 
-/** Longest example Devin can give with a Yes or Some experience answer. */
-export const EXAMPLE_MAX_CHARS = 1000
 
 /** A yes or no question about a skill or past work. A Yes or Some experience answer to it can carry an example. */
 export function takesExample(q: Pick<QuestionRow, 'answerType' | 'kind'>): boolean {
