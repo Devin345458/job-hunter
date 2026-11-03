@@ -1,3 +1,4 @@
+import { demosEnabled } from '~~/server/utils/demo/enabled'
 import { desc, inArray, ne } from 'drizzle-orm'
 import { applications, demoProjects, jobs } from '~~/server/db/schema'
 import { approveEffect } from '~~/server/utils/apply/approve-effect'
@@ -19,6 +20,7 @@ export default defineEventHandler((event) => {
   const appById = new Map(apps.map(a => [a.id, a]))
   const jobById = new Map(jobRows.map(j => [j.id, j]))
   return {
+    buildsEnabled: demosEnabled(),
     demos: rows.map((d) => {
       const detail = toDemoDetail(d)
       const app = appById.get(d.applicationId)

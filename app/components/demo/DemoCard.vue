@@ -11,6 +11,8 @@ const props = defineProps<{
   rebuilding?: boolean
   /** The Discard request is in flight. */
   discarding?: boolean
+  /** Demo builds are switched off (NUXT_DEMOS_ENABLED=false): nothing is built or published. */
+  buildsOff?: boolean
 }>()
 const emit = defineEmits<{ rebuild: []; discard: [] }>()
 
@@ -35,6 +37,7 @@ const hasPreview = computed(() => ['built', 'published'].includes(props.demo.sta
  */
 const publishFact = computed(() => {
   if (props.demo.status !== 'built') return null
+  if (props.buildsOff) return { icon: 'mdi-lock-outline', tone: null, text: 'Not published: demo builds are switched off' }
   const effect = props.demo.approveEffect
   if (effect?.demoBlocked) return { icon: 'mdi-lock-alert-outline', tone: 'warning', text: 'Cannot be published: the GitHub token is not set' }
   if (effect?.submit === 'manual') return { icon: 'mdi-lock-outline', tone: null, text: 'Publishes on approve, then you submit by hand' }

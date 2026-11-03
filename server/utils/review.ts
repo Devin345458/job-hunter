@@ -1,3 +1,4 @@
+import { demosEnabled } from './demo/enabled'
 import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, decisions, demoProjects, jobs, questions } from '../db/schema'
@@ -143,8 +144,9 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
     },
     gap: parseJson<GapAnalysis | null>(app.gapAnalysisJson, null),
     // A failed demo the current gap analysis no longer plans is not part of this application anymore.
-    demo: demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? toDemoView(demo) : null,
-    approveEffect: approveEffect(app, job, demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? demo.status : undefined),
+    // Switched off (NUXT_DEMOS_ENABLED=false), the card shows no demo: approve will not publish one.
+    demo: demosEnabled() && demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? toDemoView(demo) : null,
+    approveEffect: approveEffect(app, job, demosEnabled() && demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? demo.status : undefined),
     openQuestions: openQuestions.map(q => toQuestionView(q, suggestions.get(q.id) ?? null)),
     submission: parseJson<SubmissionResult | null>(app.submissionJson, null),
     submitError: app.submitError,

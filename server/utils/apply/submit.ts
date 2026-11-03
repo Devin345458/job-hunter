@@ -19,7 +19,7 @@ import { coverLetterPdfPath } from './prepare'
 // Devin's approve click. It refuses unless:
 // - the application has an approve decision and status submitting;
 // - the target is this app's own sandbox form, or real submits are switched on
-//   (runtimeConfig.realSubmitEnabled === 'true').
+//   (runtimeConfig.realSubmitEnabled is 'true'; an env override arrives as boolean true, so compare String()).
 // Account-required ATS, captchas, login walls and closed postings return method 'manual'.
 
 function manual(reason: string, sandbox: boolean, finalUrl: string | null = null, screenshotPath: string | null = null): SubmissionResult {
@@ -97,7 +97,7 @@ export async function submitApplication(applicationId: number): Promise<Submissi
     return manual(`${ATS_LABELS[job.atsType as keyof typeof ATS_LABELS] ?? job.atsType} requires an applicant account, which the pipeline never creates`, false)
   }
   if (!job.applyUrl) return manual('The listing has no application link', sandbox)
-  if (!sandbox && useRuntimeConfig().realSubmitEnabled !== 'true') {
+  if (!sandbox && String(useRuntimeConfig().realSubmitEnabled) !== 'true') {
     return manual('Automated submits to real employers are switched off (NUXT_REAL_SUBMIT_ENABLED is not "true")', false)
   }
 

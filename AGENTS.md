@@ -48,6 +48,7 @@
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`
   - `NUXT_DATABASE_PATH` (defaults to `./data/job-hunter.db`)
+  - `NUXT_DEMOS_ENABLED` (`false` switches demo builds and demo publishing off; production since 2026-11-03)
   - `NUXT_SCHEDULER_ENABLED` (`false` turns off the cron schedule; every Orca worktree sets it; production leaves it unset. Manual runs still go to the job queue and the worker still runs them)
   - `NUXT_ROLE` (`all` default, `web`, or `worker`; see Job queue below)
   - `NUXT_WORKER_CONCURRENCY` (default 1, at most 4; queue items the worker runs at once. Demo builds and Chromium form fills never run two at a time regardless)

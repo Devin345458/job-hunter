@@ -9,6 +9,7 @@ const snackbar = useSnackbar()
 const demos = ref<DemoDetail[]>([])
 const loading = ref(true)
 const loadError = ref<string | null>(null)
+const buildsEnabled = ref(true)
 const rebuilding = ref<number | null>(null)
 const discarding = ref<number | null>(null)
 
@@ -20,7 +21,9 @@ async function load(quiet = false) {
   loadError.value = null
   try {
     const before = new Map(demos.value.map(d => [d.id, !!d.progress]))
-    demos.value = (await $fetch<{ demos: DemoDetail[] }>('/api/demos')).demos
+    const res = await $fetch<{ demos: DemoDetail[]; buildsEnabled?: boolean }>('/api/demos')
+    buildsEnabled.value = res.buildsEnabled !== false
+    demos.value = res.demos
     for (const d of demos.value) {
       if (!before.get(d.id) || d.progress) continue
       if (d.status === 'built') snackbar.success(`${d.title} built. Tests pass.`)
@@ -91,6 +94,10 @@ onBeforeUnmount(() => {
       </p>
     </div>
 
+    <v-alert v-if="!buildsEnabled" type="info" variant="tonal" class="mb-4">
+      Demo builds are switched off for now. Nothing here is built or published, and approving an application sends it without a demo. Gap plans still show below.
+    </v-alert>
+
     <v-alert v-if="loadError" type="error" variant="tonal" class="mb-4">
       {{ loadError }}
     </v-alert>
@@ -117,6 +124,7 @@ onBeforeUnmount(() => {
         :job-label="`${d.job.title} at ${d.job.company}`"
         :rebuilding="rebuilding === d.id"
         :discarding="discarding === d.id"
+        :builds-off="!buildsEnabled"
         @rebuild="rebuild(d)"
         @discard="discard(d)"
       />
