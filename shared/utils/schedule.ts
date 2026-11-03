@@ -10,8 +10,9 @@ export const PIPELINE_SCHEDULE_TEXT = 'every 3 hours from 6 AM to 9 PM Central'
 /**
  * The steps pipeline:daily runs, in order (server/tasks/pipeline/daily.ts). Settings lists them in
  * this order. repos:index runs first so the day's questions can be checked against fresh commits.
- * repos:suggest and memory:leads run last, so the questions this run asked (match and prepare
- * create them) get suggestions and leads too. memory:leads is best effort: off or unreachable
+ * applications:read-forms reads the employer forms of strong matches for their Decide cards; no
+ * step prepares an application (that waits for Apply). repos:suggest and memory:leads run last,
+ * so the questions this run asked (match and the form reads create them) get suggestions and leads too. memory:leads is best effort: off or unreachable
  * memory records a plain note and the chain carries on.
  */
 export const DAILY_STEPS = [
@@ -20,7 +21,7 @@ export const DAILY_STEPS = [
   'jobs:search',
   'jobs:enrich',
   'jobs:match',
-  'applications:prepare',
+  'applications:read-forms',
   'demos:build',
   'repos:suggest',
   'memory:leads',

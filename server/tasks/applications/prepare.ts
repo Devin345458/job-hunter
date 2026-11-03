@@ -1,75 +1,24 @@
-import { inArray } from 'drizzle-orm'
-import { jobs } from '~~/server/db/schema'
-import { AiBudgetExceeded } from '~~/server/utils/ai'
-import { DEFAULT_MATCH_THRESHOLD, MAX_PER_RUN, pickJobsToPrepare, pickRetries, prepareApplication, refreshAllNeedsInput } from '~~/server/utils/apply/prepare'
+import { stoppedPreparations } from '~~/server/utils/apply/decide'
 
-// Prepares applications for the strongest matches: tailored resume, cover letter, gap analysis,
-// and a dry run of the employer form. At most five per run. Payload (manual runs only):
-// { threshold?: number, jobIds?: number[], limit?: number }
+// Before decide-first, the scheduled run prepared the five strongest matches on its own. It no
+// longer does: an application is prepared only after Devin taps Apply (applications:prepare-one,
+// queued by POST /api/review/:id/apply). This task stays so a run queued before the change, or
+// one started by hand, still ends cleanly: it continues stopped preparations Devin already chose
+// and never picks a job itself. applications:read-forms does the same in the scheduled run.
 export default defineTask({
   meta: {
     name: 'applications:prepare',
-    description: 'Tailor, write cover letters, and fill employer forms for top matches',
+    description: 'Continue preparations you chose that stopped; never picks jobs on its own',
   },
   async run({ payload }) {
     const outcome = await withRun('applications:prepare', triggerOf(payload), async (log) => {
-      const threshold = Number(payload?.threshold) || DEFAULT_MATCH_THRESHOLD
-      const limit = Math.min(Number(payload?.limit) || MAX_PER_RUN, MAX_PER_RUN)
-      const jobIds = Array.isArray(payload?.jobIds) ? (payload!.jobIds as unknown[]).map(Number).filter(Number.isInteger) : null
-
-      // Answers may have arrived since the last run; unblock every application they free.
-      const refresh = await refreshAllNeedsInput(log)
-
-      // Failed or cut-off preparations go first and count toward the limit.
-      const retries = jobIds?.length ? [] : pickRetries(limit)
-      const results: Array<{ jobId: number; applicationId: number | null; status: string; error?: string; retry?: boolean }> = []
-      let budgetStop = false
-      for (const app of retries) {
-        try {
-          const r = await prepareApplication(app.jobId, app, log)
-          results.push({ jobId: app.jobId, applicationId: r.applicationId, status: r.status, retry: true, ...(r.error ? { error: r.error } : {}) })
-        }
-        catch (e: any) {
-          // A budget, credit, or key stop is not a failure of this application; it waits in preparing.
-          const stopped = e instanceof AiBudgetExceeded
-          results.push({ jobId: app.jobId, applicationId: app.id, status: stopped ? 'stopped' : 'error', retry: true, error: e?.statusMessage || e?.message || String(e) })
-          if (stopped) { budgetStop = true; break }
-        }
+      const continued: number[] = []
+      for (const app of stoppedPreparations()) {
+        queuePrepare(app.id, 'Waiting in the queue to continue preparing')
+        continued.push(app.id)
       }
-
-      const remaining = budgetStop ? 0 : limit - retries.length
-      const picked = remaining <= 0
-        ? []
-        : jobIds?.length
-          ? useDb().select().from(jobs).where(inArray(jobs.id, jobIds)).all().slice(0, remaining)
-          : pickJobsToPrepare(threshold, remaining)
-      log(`retried ${retries.length}, picked ${picked.length} new ${picked.length === 1 ? 'job' : 'jobs'} at threshold ${threshold}`)
-
-      for (const job of picked) {
-        try {
-          const r = await prepareApplication(job.id, undefined, log)
-          results.push({ jobId: job.id, applicationId: r.applicationId, status: r.status, ...(r.error ? { error: r.error } : {}) })
-        }
-        catch (e: any) {
-          const stopped = e instanceof AiBudgetExceeded
-          results.push({ jobId: job.id, applicationId: null, status: stopped ? 'stopped' : 'error', error: e?.statusMessage || e?.message || String(e) })
-          if (stopped) { budgetStop = true; break }
-        }
-      }
-      const count = (s: string) => results.filter(r => r.status === s).length
-      return {
-        threshold,
-        retried: retries.length,
-        picked: picked.length,
-        proposed: count('proposed'),
-        needsInput: count('needs_input'),
-        needsManual: count('needs_manual'),
-        failed: results.filter(r => r.error && r.status !== 'stopped').length,
-        refreshed: refresh.refreshed,
-        unblocked: refresh.flipped,
-        budgetStop,
-        results,
-      }
+      log(`queued ${continued.length} stopped ${continued.length === 1 ? 'preparation' : 'preparations'} again; new jobs are prepared only after you tap Apply`)
+      return { preparationsContinued: continued.length, note: 'Applications are prepared only after you tap Apply.' }
     })
     return { result: outcome }
   },

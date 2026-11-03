@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
-import { CAN_APPROVE, CAN_REJECT, hostOf, plural } from '~/composables/review/format'
+import { CAN_APPLY, CAN_APPROVE, CAN_REJECT, hostOf, plural } from '~/composables/review/format'
 
-// The decision, pinned to the bottom of the card. Approve is one tap on a plain primary
-// button (never a swipe); the line beside it says exactly what that tap sends and to whom.
+// The decision, pinned to the bottom of the card. Stage 1 (to_decide) offers Apply, which only
+// queues the preparation; stage 2 offers Approve, one tap on a plain primary button (never a
+// swipe). The line beside the buttons says exactly what the tap does, and to whom.
 const props = defineProps<{
   item: ReviewItem
   approving: boolean
+  /** An Apply request for this card is in flight. */
+  applying?: boolean
   refreshing: boolean
   /** Where the card shows the questions approve waits on: "below the skills" on desktop, "above" on a phone. */
   questionsPlace?: string
@@ -14,6 +17,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   approve: []
+  /** Stage 1: queue the preparation of this application. */
+  apply: []
   reject: []
   /** Open the card's Demo project section and scroll to it. */
   showDemo: []
@@ -21,7 +26,9 @@ const emit = defineEmits<{
   showQuestions: []
 }>()
 
-const blocking = computed(() => props.item.openQuestions.filter(q => q.blocking).length)
+const isDecide = computed(() => CAN_APPLY.includes(props.item.status))
+/** At stage 1 nothing blocks Apply: the form's questions can be answered before or after it. */
+const blocking = computed(() => (isDecide.value ? 0 : props.item.openQuestions.filter(q => q.blocking).length))
 const demoBlocked = computed(() => props.item.approveEffect?.demoBlocked ?? null)
 const canApprove = computed(() => CAN_APPROVE.includes(props.item.status) && blocking.value === 0 && !demoBlocked.value)
 const canReject = computed(() => CAN_REJECT.includes(props.item.status))
@@ -79,7 +86,15 @@ const shortConsequence = computed(() => {
 const detailsOpen = ref(false)
 watch(() => props.item.applicationId, () => { detailsOpen.value = false })
 /** Only the plain consequence line has a short form; blockers and by-hand notes always show in full. */
-const hasShortForm = computed(() => !blockedReasons.value.length && !prepareFailed.value && !isManual.value)
+const hasShortForm = computed(() => !blockedReasons.value.length && !prepareFailed.value && !isManual.value && !isDecide.value)
+
+/** Stage 1: what Apply does. A form the pipeline cannot fill says the application goes to Devin by hand. */
+const applyLine = computed(() => {
+  const formNote = props.item.form.error ? ' The form cannot be filled here, so you would submit it by hand.' : ''
+  const questions = props.item.openQuestions.length
+  const asks = questions ? ` The ${plural(questions, 'question')} on this card can be answered before or after.` : ''
+  return `Apply writes the tailored resume, the cover letter, and the form answers, then fills the form without sending it. Nothing goes to ${props.item.job.company || 'the employer'} until you approve it.${formNote}${asks}`
+})
 
 const consequence = computed(() => {
   const effect = props.item.approveEffect
@@ -95,7 +110,7 @@ const consequence = computed(() => {
 </script>
 
 <template>
-  <div v-if="canApprove || canReject || isManual || item.status === 'needs_input'" class="bar" :class="{ 'bar--demo': demoLine }">
+  <div v-if="isDecide || canApprove || canReject || isManual || item.status === 'needs_input'" class="bar" :class="{ 'bar--demo': demoLine }">
     <p v-if="demoLine" class="bar__demo">
       <v-icon icon="mdi-source-repository" size="15" class="bar__demo-icon" />
       <span class="bar__demo-text" :class="{ 'text-warning': demoLine.blocked }">{{ demoLine.lead }}: <strong>{{ demoLine.title }}</strong>, <span :class="{ 'text-error': demoLine.failed }">{{ demoLine.tests }}</span>.</span>
@@ -111,7 +126,8 @@ const consequence = computed(() => {
       </p>
     </div>
     <p v-else class="bar__line" :class="{ 'bar__line--long': hasShortForm, 'bar__line--open': detailsOpen }" role="status" :id="`bar-detail-${item.applicationId}`">
-      <template v-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
+      <template v-if="isDecide">{{ applyLine }}</template>
+      <template v-else-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
       <template v-else-if="isManual">
         <template v-if="item.submission?.manualReason">{{ item.submission.manualReason }}. </template>Submit it on the employer's site, or reject if you changed your mind.
       </template>
@@ -137,7 +153,7 @@ const consequence = computed(() => {
         height="48"
         class="bar__reject"
         prepend-icon="mdi-close"
-        :disabled="approving"
+        :disabled="approving || applying"
         @click="emit('reject')"
       >
         {{ isManual ? 'Not applying' : 'Reject' }}
@@ -155,7 +171,19 @@ const consequence = computed(() => {
         Try automated submit again
       </v-btn>
       <v-btn
-        v-if="!isManual"
+        v-if="isDecide"
+        color="primary"
+        variant="flat"
+        height="48"
+        class="bar__approve"
+        prepend-icon="mdi-file-document-edit-outline"
+        :loading="applying"
+        @click="emit('apply')"
+      >
+        Apply
+      </v-btn>
+      <v-btn
+        v-if="!isManual && !isDecide"
         :color="canApprove ? 'primary' : undefined"
         :variant="canApprove ? 'flat' : 'tonal'"
         height="48"

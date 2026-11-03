@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import type { ReviewItem, SkillClaimSource } from '#shared/types/pipeline'
-import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
+import { answerText, formQuestionIds, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
 import { demoStopKind, fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
 import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
-// closed until opened. The decision bar stays pinned to the bottom. On desktop (fill) the
+// closed until opened. Two stages: a Decide card (to_decide) has the score, pay, skills, the gap
+// plan, and what the form read found, with Apply and Reject; nothing is written for it yet. A Send
+// card (proposed, needs_input) adds the resume, letter, and filled form, with Approve and Reject. The decision bar stays pinned to the bottom. On desktop (fill) the
 // verdict comes first, with every Missing skill under it, so a 1280x800 screen shows title,
 // score, pay, Missing, Matched count, and the decision bar without scrolling; Answer first follows.
 const props = defineProps<{
   item: ReviewItem
   approving: boolean
+  /** An Apply request for this card is in flight (stage 1). */
+  applying?: boolean
   refreshing: boolean
   savingQuestionId: number | null
   /** A "Prepare again" request for this card is in flight. */
@@ -22,6 +26,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   approve: []
+  /** Stage 1: queue the preparation. */
+  apply: []
   reject: []
   answer: [questionId: number, answer: string]
   skip: [questionId: number]
@@ -40,10 +46,40 @@ function openClaim(text: string, source: SkillClaimSource) {
 
 const meta = computed(() => itemStatusMeta(props.item))
 const company = computed(() => props.item.job.company || hostOf(props.item.job.applyUrl))
-const isDecide = computed(() => meta.value.group === 'decide')
-const blockingQs = computed(() => props.item.openQuestions.filter(q => q.blocking))
+/** A card with a decision on it (stage 1 or stage 2); any other card shows its progress instead. */
+const isDecisionCard = computed(() => meta.value.group === 'decide' || meta.value.group === 'send')
+/** Stage 1: Apply or Reject, before any resume, letter, or form answer exists. */
+const isStageOne = computed(() => props.item.status === 'to_decide')
+const blockingQs = computed(() => (isStageOne.value ? [] : props.item.openQuestions.filter(q => q.blocking)))
 const showAnswerFirst = computed(() => blockingQs.value.length > 0 || (props.item.status === 'needs_input' && props.refreshing))
-const optionalQs = computed(() => props.item.openQuestions.filter(q => !q.blocking))
+const optionalQs = computed(() => (isStageOne.value ? [] : props.item.openQuestions.filter(q => !q.blocking)))
+/** Stage 1: the questions the form read asked, required or not. None of them holds up Apply. */
+const stageOneFormIds = computed(() => formQuestionIds(props.item))
+const formQs = computed(() => (isStageOne.value ? props.item.openQuestions.filter(q => stageOneFormIds.value.has(q.id)) : []))
+/** Stage 1: skills and experience the gap plan asks about. An answer can change the score and what the resume says. */
+const skillQs = computed(() => (isStageOne.value ? props.item.openQuestions.filter(q => !stageOneFormIds.value.has(q.id)) : []))
+
+const gapSummary = computed(() => {
+  const g = props.item.gap
+  if (!g) return 'Not made yet'
+  return plainKnowledgeRefs(fixPlurals(g.summary))
+})
+/** Stage 1 form summary: "14 fields, 6 filled from your profile, 2 waiting on you, 6 written when you apply". */
+const formReadSummary = computed(() => {
+  if (props.item.form.error) return 'Apply by hand'
+  const snap = props.item.form.snapshot
+  if (!snap) return 'Not read yet'
+  const a = props.item.form.answers
+  // The resume and cover letter uploads count as written at Apply, as the section lists them.
+  const doc = (x: typeof a[number]) => x.source === 'resume' || x.source === 'cover_letter'
+  const filled = a.filter(x => !!answerText(x.value) && !doc(x)).length
+  const waiting = a.filter(x => typeof x.needsQuestionId === 'number' && !answerText(x.value)).length
+  const later = a.filter(x => x.atApply || doc(x)).length
+  const parts = [plural(snap.fields.length, 'field'), `${filled} from your profile`]
+  if (waiting) parts.push(`${waiting} waiting on you`)
+  if (later) parts.push(`${later} written when you apply`)
+  return parts.join(', ')
+})
 const isManual = computed(() => props.item.status === 'needs_manual')
 /** Preparation threw (Claude refused, a step crashed), so there is no resume or form to submit. */
 const prepareFailed = computed(() => /^prepare_failed/.test(props.item.form.error ?? ''))
@@ -239,7 +275,7 @@ const letterPreview = computed(() => {
         </div>
       </header>
 
-      <div v-if="!isDecide" class="rc__block">
+      <div v-if="!isDecisionCard" class="rc__block">
         <ReviewProgress :item="item" :preparing="preparing" @prepare="emit('prepare')" />
       </div>
 
@@ -332,9 +368,43 @@ const letterPreview = computed(() => {
         />
       </div>
 
+      <!-- Stage 1: what the employer form asks that the knowledge base does not answer. Apply never waits on these. -->
+      <div v-if="formQs.length" class="rc__block rc__block--after">
+        <h2 class="rc__h rc__h--plain">The form asks</h2>
+        <p class="rc__help">Answer now or after you apply. Your answers are saved to your profile and fill every form that asks.</p>
+        <ReviewQuestions
+          :questions="formQs"
+          :saving-id="savingQuestionId"
+          :refreshing="refreshing"
+          @answer="(id, a) => emit('answer', id, a)"
+          @skip="id => emit('skip', id)"
+        />
+      </div>
+
+      <!-- Stage 1: the gap plan's questions about skills and experience the knowledge base does not mention. -->
+      <div v-if="skillQs.length" class="rc__block rc__block--after">
+        <h2 class="rc__h rc__h--plain">Skills to confirm</h2>
+        <p class="rc__help">The gap plan could not tell whether you have these. Answer now or after you apply; a Yes lets the resume and letter mention it.</p>
+        <ReviewQuestions
+          :questions="skillQs"
+          :saving-id="savingQuestionId"
+          :refreshing="refreshing"
+          @answer="(id, a) => emit('answer', id, a)"
+          @skip="id => emit('skip', id)"
+        />
+      </div>
+
       <div class="rc__sections">
         <ReviewSection title="Skills fit" icon="mdi-puzzle-outline" :summary="skillsSummary" default-open>
           <ReviewSkills :score="item.score" :requirements="item.requirements" :hide-missing="fill" @claim="openClaim" />
+        </ReviewSection>
+
+        <ReviewSection v-if="isStageOne" title="Gap plan" icon="mdi-map-marker-path" :summary="gapSummary" default-open>
+          <DemoGapAnalysis :gap="item.gap" />
+        </ReviewSection>
+
+        <ReviewSection v-if="isStageOne" title="Employer form" icon="mdi-form-textbox" :summary="formReadSummary" :tone="item.form.error ? 'warning' : 'default'">
+          <ReviewFormRead :answers="answers" :snapshot="item.form.snapshot" :form-error="item.form.error" :detail="item.form.snapshot || item.form.error ? null : item.statusDetail" />
         </ReviewSection>
 
         <ReviewSection title="Pay and benefits" icon="mdi-cash-multiple" :summary="paySummary">
@@ -345,12 +415,13 @@ const letterPreview = computed(() => {
           />
         </ReviewSection>
 
-        <ReviewSection v-if="item.demo" ref="demoSection" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
+        <ReviewSection v-if="item.demo && !isStageOne" ref="demoSection" title="Demo project" icon="mdi-source-repository" :summary="demoSummary" :tone="demoTone">
           <ReviewDemo :demo="item.demo" :effect="item.approveEffect" :company="company" />
           <p v-if="gapLine" class="rc__gap">Gap analysis: {{ gapLine }}</p>
         </ReviewSection>
 
         <ReviewSection
+          v-if="!isStageOne"
           :key="`form-${isManual}`"
           title="Form answers"
           icon="mdi-form-textbox"
@@ -371,12 +442,12 @@ const letterPreview = computed(() => {
           />
         </ReviewSection>
 
-        <ReviewSection title="Resume" icon="mdi-file-account-outline" :summary="resumeSummary">
+        <ReviewSection v-if="!isStageOne" title="Resume" icon="mdi-file-account-outline" :summary="resumeSummary">
           <ReviewResume v-if="item.resume" :resume="item.resume" :pdf-url="item.resumePdfUrl" />
           <p v-else class="rc__empty">No tailored resume yet.</p>
         </ReviewSection>
 
-        <ReviewSection title="Cover letter" icon="mdi-email-outline" :summary="letterPreview">
+        <ReviewSection v-if="!isStageOne" title="Cover letter" icon="mdi-email-outline" :summary="letterPreview">
           <template v-if="item.coverLetter">
             <div class="rc__doc-tools">
               <ReviewCopyButton :text="item.coverLetter" variant="tonal" label="Copy cover letter" />
@@ -423,9 +494,11 @@ const letterPreview = computed(() => {
       class="rc__bar"
       :item="item"
       :approving="approving"
+      :applying="applying"
       :refreshing="refreshing"
       :questions-place="questionsPlace"
       @approve="emit('approve')"
+      @apply="emit('apply')"
       @reject="emit('reject')"
       @show-demo="demoSection?.show()"
       @show-questions="showQuestions"
@@ -661,6 +734,18 @@ const letterPreview = computed(() => {
     font-weight: 700;
     margin: 0 0 8px;
     color: rgb(var(--v-theme-warning));
+
+    // Stage 1's form questions hold nothing up, so they are not in the warning color.
+    &--plain {
+      color: rgb(var(--v-theme-on-surface));
+      margin-bottom: 2px;
+    }
+  }
+
+  &__help {
+    margin: 0 0 8px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__verdict {

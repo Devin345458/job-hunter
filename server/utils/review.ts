@@ -19,6 +19,7 @@ import type {
   TailoredResume,
 } from '#shared/types/pipeline'
 import { approveEffect } from './apply/approve-effect'
+import { decideCardVisible } from './apply/decide'
 import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
 import { negativeSkillTerms, rejectSkillOptions } from './reject-skills'
 import { repoSuggestionsFor } from './repos/suggest-store'
@@ -230,7 +231,11 @@ function openQuestionsFor(app: AppRow, job: JobRow, loaded: QuestionRow[]): Ques
     })
 }
 
-/** Review items for applications in the given statuses, best score first. */
+/**
+ * Review items for applications in the given statuses, best score first. A Decide card (to_decide)
+ * shows only while its job still scores at the threshold and is open: a rescore that drops it
+ * under, or a closed posting, takes it out of the queue without touching the row.
+ */
 export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
   const db = useDb()
   const rows = db.select({ app: applications, job: jobs })
@@ -238,6 +243,7 @@ export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
     .innerJoin(jobs, eq(applications.jobId, jobs.id))
     .where(inArray(applications.status, statuses))
     .all()
+    .filter(r => r.app.status !== 'to_decide' || decideCardVisible(r.job))
   if (rows.length === 0) return []
   const appIds = rows.map(r => r.app.id)
   const demos = db.select().from(demoProjects).where(inArray(demoProjects.applicationId, appIds)).orderBy(desc(demoProjects.id)).all()
@@ -297,7 +303,8 @@ export function jobFeatures(job: JobRow) {
 /** extra is merged into features_json: a wrong_stack rejection stores the skills it named as rejectSkills. */
 export function recordDecision(
   applicationId: number,
-  decision: 'approve' | 'reject',
+  /** apply: Devin chose the job at stage 1 (a positive signal); approve: he sent it at stage 2. */
+  decision: 'apply' | 'approve' | 'reject',
   reasonCode: string | null,
   reasonText: string | null,
   extra: { rejectSkills?: RejectSkillsRecord } = {},

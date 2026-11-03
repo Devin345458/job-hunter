@@ -130,7 +130,7 @@ onMounted(load)
       <div class="page-header mb-0">
         <h1 class="text-h4 page-header__title">Learning</h1>
         <p class="text-body-2 page-header__subtitle">
-          What your approvals and rejections taught the pipeline, and how that changes scores and search.
+          What your Apply and Reject decisions taught the pipeline, and how that changes scores and search.
           Turn off any rule that looks wrong. Below the rules: what employers did with the applications that went out.
         </p>
       </div>
@@ -155,7 +155,7 @@ onMounted(load)
       <!-- What it learned from -->
       <p class="text-body-1 mb-3 learning-page__lede">
         From <strong>{{ overview.decisions.rejections }} {{ overview.decisions.rejections === 1 ? 'rejection' : 'rejections' }}</strong>
-        and <strong>{{ overview.decisions.approvals }} {{ overview.decisions.approvals === 1 ? 'approval' : 'approvals' }}</strong>,
+        and <strong>{{ overview.decisions.approvals }} {{ overview.decisions.approvals === 1 ? 'job you applied to' : 'jobs you applied to' }}</strong>,
         the pipeline keeps <strong>{{ activeCount }} active {{ activeCount === 1 ? 'rule' : 'rules' }}</strong>.
         <span v-if="overview.decisions.sandbox" class="text-medium-emphasis">{{ overview.decisions.sandbox }} of those decisions were sandbox tests.</span>
       </p>

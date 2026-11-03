@@ -12,7 +12,7 @@ export { DAILY_STEPS }
 export default defineTask({
   meta: {
     name: 'pipeline:daily',
-    description: 'Index GitHub commits, learn from decisions, search, enrich, score, prepare applications, build demos, suggest answers from GitHub',
+    description: 'Index GitHub commits, learn from decisions, search, enrich, score, read the forms of strong matches, build demos, suggest answers from GitHub',
   },
   async run({ payload }) {
     if (scheduleSkipped(payload as Record<string, unknown> | undefined)) return { result: { skipped: 'the schedule is off on this server (NUXT_SCHEDULER_ENABLED=false)' } }

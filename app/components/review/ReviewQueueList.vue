@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { ReviewItem } from '#shared/types/pipeline'
 import type { QueueGroups } from '~/composables/useReviewQueue'
-import { GROUP_LABEL, clockTime, itemStatusMeta, moneyRange } from '~/composables/review/format'
+import { GROUP_LABEL, clockTime, formQuestionIds, itemStatusMeta, moneyRange } from '~/composables/review/format'
 
-// The queue, grouped by what each application needs from Devin. Decide-first; the groups
-// below it only appear when they have something in them.
+// The queue, grouped by what each application needs from Devin. To decide (stage 1: Apply or
+// Reject) comes first, then what Apply is preparing, then what is ready to send (stage 2: Approve
+// or Reject). The groups below those only appear when they have something in them.
 const props = defineProps<{
   groups: QueueGroups
   selectedId: number | null
@@ -14,6 +15,8 @@ const emit = defineEmits<{ select: [id: number] }>()
 
 const sections = computed(() => [
   { key: 'decide', label: GROUP_LABEL.decide, items: props.groups.decide, empty: 'Nothing left to decide.' },
+  { key: 'preparing', label: GROUP_LABEL.preparing, items: props.groups.preparing, empty: null },
+  { key: 'send', label: GROUP_LABEL.send, items: props.groups.send, empty: null },
   { key: 'attention', label: GROUP_LABEL.attention, items: props.groups.attention, empty: null },
   { key: 'sending', label: 'Sending', items: props.groups.sending, empty: null },
   { key: 'sent', label: 'Sent recently', items: props.groups.sent, empty: null },
@@ -44,6 +47,25 @@ watch(() => props.selectedId, async () => {
 function blockingCount(item: ReviewItem) {
   return item.openQuestions.filter(q => q.blocking).length
 }
+
+/** Stage 1: open questions on the card, from the employer form and from the gap plan. */
+function formQuestionCount(item: ReviewItem) {
+  const ids = formQuestionIds(item)
+  return item.openQuestions.filter(q => ids.has(q.id)).length
+}
+function skillQuestionCount(item: ReviewItem) {
+  const ids = formQuestionIds(item)
+  return item.openQuestions.filter(q => !ids.has(q.id)).length
+}
+/** "The form asks 2, 3 skills to confirm". */
+function stageOneFlag(item: ReviewItem): string {
+  const f = formQuestionCount(item)
+  const s = skillQuestionCount(item)
+  return [f ? `The form asks ${f}` : null, s ? `${s} ${s === 1 ? 'skill' : 'skills'} to confirm` : null].filter(Boolean).join(', ')
+}
+
+/** Groups whose score is the thing to look at: the two stages with a decision. */
+const DECISION_GROUPS = ['decide', 'send']
 </script>
 
 <template>
@@ -63,18 +85,22 @@ function blockingCount(item: ReviewItem) {
             :aria-current="item.applicationId === selectedId ? 'true' : undefined"
             @click="emit('select', item.applicationId)"
           >
-            <span class="ql__score tabular" :class="{ 'ql__score--dim': s.key !== 'decide' }">{{ item.score?.final ?? '?' }}</span>
+            <span class="ql__score tabular" :class="{ 'ql__score--dim': !DECISION_GROUPS.includes(s.key) }">{{ item.score?.final ?? '?' }}</span>
             <span class="ql__main">
               <span class="ql__title">{{ item.job.title }}</span>
               <span class="ql__sub">
                 {{ item.job.company }}{{ pay(item) ? ` · ${pay(item)}` : '' }}
               </span>
-              <span v-if="s.key === 'decide' && blockingCount(item)" class="ql__flag ql__flag--warning">
+              <span v-if="s.key === 'decide' && stageOneFlag(item)" class="ql__flag">
+                <v-icon icon="mdi-comment-question-outline" size="13" />
+                {{ stageOneFlag(item) }}
+              </span>
+              <span v-else-if="s.key === 'send' && blockingCount(item)" class="ql__flag ql__flag--warning">
                 <v-icon icon="mdi-comment-question-outline" size="13" />
                 {{ blockingCount(item) }} to answer
               </span>
-              <span v-else-if="s.key !== 'decide'" class="ql__flag" :class="`ql__flag--${itemStatusMeta(item).color}`">
-                <v-progress-circular v-if="s.key === 'sending'" indeterminate size="11" width="2" />
+              <span v-else-if="!DECISION_GROUPS.includes(s.key)" class="ql__flag" :class="`ql__flag--${itemStatusMeta(item).color}`">
+                <v-progress-circular v-if="s.key === 'sending' || s.key === 'preparing'" indeterminate size="11" width="2" />
                 <v-icon v-else :icon="itemStatusMeta(item).icon" size="13" />
                 {{ itemStatusMeta(item).label }}{{ item.status === 'submitted' && item.submission ? ` ${clockTime(item.submission.submittedAt)}` : '' }}
               </span>

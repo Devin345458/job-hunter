@@ -15,11 +15,11 @@ const snackbar = useSnackbar()
 interface TaskDef { id: string; label: string; detail: string; usesAi: boolean }
 const STEP_DEFS: Record<DailyStep, Omit<TaskDef, 'id'>> = {
   'repos:index': { label: 'Index GitHub commits', detail: 'Reads your own commits in the repos switched on under GitHub evidence. Nothing is sent to Claude.', usesAi: false },
-  'learn:daily': { label: 'Learn from decisions', detail: 'Turns approve and reject reasons into scoring rules.', usesAi: false },
+  'learn:daily': { label: 'Learn from decisions', detail: 'Turns your Apply and Reject decisions, and their reasons, into scoring rules.', usesAi: false },
   'jobs:search': { label: 'Search listings', detail: 'Pulls new postings from every active search.', usesAi: false },
   'jobs:enrich': { label: 'Read postings', detail: 'Fetches full postings, apply links, pay, and benefits.', usesAi: true },
   'jobs:match': { label: 'Score matches', detail: 'Scores skills and pay against your floor.', usesAi: true },
-  'applications:prepare': { label: 'Prepare applications', detail: 'Tailors the resume, writes the letter, fills the form without submitting.', usesAi: true },
+  'applications:read-forms': { label: 'Read forms for strong matches', detail: 'For jobs scoring 70 or more: the gap plan and a read of the employer form, so you can decide. The resume, letter, and answers are written only after you tap Apply.', usesAi: true },
   'demos:build': { label: 'Build demo projects', detail: 'Builds and tests demos for gaps. Nothing is published until you approve.', usesAi: true },
   'repos:suggest': { label: 'Suggest answers from GitHub', detail: 'Checks open skill and experience questions against your commits. Nothing is answered until you tap Use this and Save.', usesAi: true },
   'memory:leads': { label: 'Leads from your Claude sessions', detail: 'Searches your laptop\'s memory for leads on open questions. Skipped when it is not reachable.', usesAi: false },
@@ -35,6 +35,25 @@ const spent = computed(() => health.runs.value?.aiSpentToday ?? 0)
 const budget = computed(() => health.runs.value?.aiBudget ?? 0)
 const spentPct = computed(() => (budget.value > 0 ? Math.min(100, (spent.value / budget.value) * 100) : 0))
 const overBudget = computed(() => budget.value > 0 && spent.value >= budget.value)
+
+// Where the money went: before Devin decides (every job) and after Apply (only jobs he chose).
+const stages = computed(() => health.runs.value?.aiStages ?? null)
+const STAGE_PHASES = [
+  { phase: 'before', label: 'Before you decide, for every job' },
+  { phase: 'after', label: 'After you tap Apply, only for jobs you chose' },
+  { phase: 'other', label: 'Other' },
+] as const
+const stageGroups = computed(() => STAGE_PHASES
+  .map(p => ({ ...p, rows: (stages.value?.stages ?? []).filter(s => s.phase === p.phase) }))
+  .filter(g => g.rows.length))
+const usd = (n: number) => `$${n.toFixed(2)}`
+/** "3 applications chosen with Apply in the last 7 days; preparing them cost $1.23, about $0.41 each." */
+const perApplication = computed(() => {
+  const n = stages.value?.appliedThisWeek ?? 0
+  const prep = stages.value?.appliedPrepareUsd ?? 0
+  if (!n) return 'No Apply in the last 7 days.'
+  return `${n} ${n === 1 ? 'application' : 'applications'} chosen with Apply in the last 7 days; preparing ${n === 1 ? 'it' : 'them'} cost ${usd(prep)}, about ${usd(prep / n)} each.`
+})
 
 function latest(task: string) {
   return runs.value.find(r => r.task === task) ?? null
@@ -149,6 +168,23 @@ onMounted(() => {
       <div class="pp__meter" role="meter" :aria-valuenow="Math.round(spentPct)" aria-valuemin="0" aria-valuemax="100" aria-label="AI budget used today">
         <span :class="overBudget ? 'bg-error' : spentPct >= 70 ? 'bg-warning' : 'bg-primary'" :style="{ width: `${spentPct}%` }" />
       </div>
+    </div>
+
+    <div v-if="stages" class="pp__stages" aria-label="AI spend by stage">
+      <div class="pp__stages-row pp__stages-row--head">
+        <span>Where it went</span>
+        <span class="pp__stages-num">Today</span>
+        <span class="pp__stages-num">Last 7 days</span>
+      </div>
+      <template v-for="g in stageGroups" :key="g.phase">
+        <div class="pp__stages-phase">{{ g.label }}</div>
+        <div v-for="s in g.rows" :key="s.key" class="pp__stages-row" :title="s.purposes.length ? `Counts: ${s.purposes.join(', ')}` : undefined">
+          <span class="pp__stages-name">{{ s.label }}</span>
+          <span class="pp__stages-num tabular">{{ usd(s.today.costUsd) }}</span>
+          <span class="pp__stages-num tabular">{{ usd(s.week.costUsd) }} <span class="pp__stages-calls">{{ s.week.calls }} {{ s.week.calls === 1 ? 'call' : 'calls' }}</span></span>
+        </div>
+        <p v-if="g.phase === 'after'" class="pp__stages-note">{{ perApplication }}</p>
+      </template>
     </div>
 
     <ul class="pp__tasks">
@@ -286,6 +322,53 @@ onMounted(() => {
       display: block;
       height: 100%;
     }
+  }
+
+  &__stages {
+    margin: 0 0 18px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    font-size: 0.8125rem;
+  }
+
+  &__stages-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 88px 168px;
+    gap: 12px;
+    padding: 3px 0;
+
+    &--head {
+      font-weight: 600;
+      color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+      border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+      padding-bottom: 6px;
+      margin-bottom: 2px;
+    }
+  }
+
+  &__stages-name {
+    padding-left: 12px;
+  }
+
+  &__stages-num {
+    text-align: right;
+  }
+
+  &__stages-calls {
+    display: inline-block;
+    min-width: 64px;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__stages-phase {
+    margin-top: 8px;
+    font-weight: 600;
+  }
+
+  &__stages-note {
+    margin: 2px 0 0 12px;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__tasks {

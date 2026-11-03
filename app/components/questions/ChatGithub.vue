@@ -101,8 +101,7 @@ const missingText = computed(() => {
     </p>
     <p class="chat-github__note chat-github__coverage">
       {{ searchedText }} {{ missingText }}
-      <template v-if="coverage.codeNote"> {{ coverage.codeNote }}</template>
-      <NuxtLink to="/settings#github-evidence" class="chat-github__settings">Settings, GitHub evidence</NuxtLink>
+      <template v-if="coverage.codeNote"> {{ coverage.codeNote }}</template>{{ ' ' }}<NuxtLink to="/settings#github-evidence" class="chat-github__settings">Settings, GitHub evidence</NuxtLink>
     </p>
   </section>
 </template>

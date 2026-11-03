@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, like, ne, notInArray } from 'drizzle-orm'
+import { and, eq, like, ne } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../../db/schema'
 import type { FormAnswer, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
@@ -20,12 +20,9 @@ type JobRow = InferSelectModel<typeof jobs>
 type AppRow = InferSelectModel<typeof applications>
 
 export const DEFAULT_MATCH_THRESHOLD = 70
-export const MAX_PER_RUN = 5
 export const MAX_PREPARE_ATTEMPTS = 3
 /** Marks form_error on an application whose preparation threw, with the attempt count. */
 export const PREPARE_FAILED = 'prepare_failed'
-/** A preparing row untouched this long was cut off (crash or restart); every step updates it. */
-const STALE_PREPARING_MS = 30 * 60 * 1000
 
 export function prepareAttempts(formError: string | null): number {
   const m = formError?.match(/^prepare_failed attempt=(\d+)/)
@@ -86,7 +83,7 @@ export async function runFormDryRun(app: AppRow, job: JobRow, entries: Knowledge
     }
 
     detail(app.id, `Answering ${snapshot.fields.length} form fields`)
-    const answers = await deriveAnswers(snapshot, { applicationId: app.id, job, entries, resume, coverLetter })
+    const answers = await deriveAnswers(snapshot, { applicationId: app.id, job, entries, resume, coverLetter }, { mode: 'full', prior: parseJson<FormAnswer[]>(app.answersJson, []) })
 
     for (const a of answers) {
       const f = snapshot.fields.find(x => x.id === a.fieldId)
@@ -194,15 +191,21 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
     const letter = await writeCoverLetter(job, entries, tailored.resume, ref)
     await saveCoverLetterPdf(letter.text, name, contact, coverLetterPdfPath(app.id))
     const notes = `${tailored.notes}\n\n${letter.notes}`
-    update(app.id, { coverLetter: letter.text, tailoringNotes: notes, statusDetail: 'Analyzing gaps' })
-
-    try {
-      const gap = await analyzeGaps(app.id)
-      update(app.id, { gapAnalysisJson: JSON.stringify(gap) })
+    // The gap plan was made before Devin decided (stage 1, server/utils/apply/decide.ts). Only an
+    // application from before decide-first, or one whose plan is missing, gets one here.
+    if (!existing?.gapAnalysisJson) {
+      update(app.id, { coverLetter: letter.text, tailoringNotes: notes, statusDetail: 'Analyzing gaps' })
+      try {
+        const gap = await analyzeGaps(app.id)
+        update(app.id, { gapAnalysisJson: JSON.stringify(gap) })
+      }
+      catch (e: any) {
+        log(`app ${app.id}: gap analysis failed: ${e?.message || e}`)
+        update(app.id, { tailoringNotes: `${notes}\n\nGap analysis failed: ${e?.message || e}` })
+      }
     }
-    catch (e: any) {
-      log(`app ${app.id}: gap analysis failed: ${e?.message || e}`)
-      update(app.id, { tailoringNotes: `${notes}\n\nGap analysis failed: ${e?.message || e}` })
+    else {
+      update(app.id, { coverLetter: letter.text, tailoringNotes: notes })
     }
 
     if (requiresAccount(job.atsType)) {
@@ -286,7 +289,6 @@ export async function refillApplicationForm(applicationId: number): Promise<Prep
   }
 }
 
-/** Jobs the daily run prepares: strong matches with an apply link and no application yet. */
 /** "Vanta" + "Senior Fullstack Software Engineer": the same role, whichever posting or location it came from. */
 export function roleKey(company: string | null | undefined, title: string | null | undefined): string {
   const t = (title ?? '').toLowerCase()
@@ -295,65 +297,6 @@ export function roleKey(company: string | null | undefined, title: string | null
     .replace(/[^a-z0-9+#]+/g, ' ')
     .trim()
   return `${ruleCompanyKey(company)}|${t}`
-}
-
-export function pickJobsToPrepare(threshold = DEFAULT_MATCH_THRESHOLD, limit = MAX_PER_RUN): JobRow[] {
-  const db = useDb()
-  const candidates = db.select({ job: jobs })
-    .from(jobs)
-    .leftJoin(applications, eq(applications.jobId, jobs.id))
-    .where(and(
-      isNull(applications.id),
-      isNotNull(jobs.applyUrl),
-      gte(jobs.matchScore, threshold),
-      notInArray(jobs.status, ['rejected', 'expired']),
-    ))
-    .orderBy(desc(jobs.matchScore))
-    .limit(limit * 10)
-    .all()
-    .map(r => r.job)
-  // One application per role: a second posting of the same title at the same company (another
-  // location or board) is skipped, and so is a role Devin already has an application for, in
-  // any state, rejected included.
-  const taken = new Set(db.select({ company: jobs.company, title: jobs.title })
-    .from(applications).innerJoin(jobs, eq(applications.jobId, jobs.id)).all()
-    .map(r => roleKey(r.company, r.title)))
-  const picked: JobRow[] = []
-  for (const job of candidates) {
-    const key = roleKey(job.company, job.title)
-    if (taken.has(key)) continue
-    taken.add(key)
-    picked.push(job)
-    if (picked.length >= limit) break
-  }
-  return picked
-}
-
-/**
- * Applications to prepare again before new ones: failed preparations under the attempt limit,
- * and rows left in preparing by a crash or restart. Every preparation runs as a queue item, so a
- * row in preparing that no queued or running item holds (Prepare again, Refill, approve) and that
- * is not being prepared in this process was cut off: a run resumed after a restart continues it at
- * once. Rows that predate the queue still wait STALE_PREPARING_MS.
- */
-export function pickRetries(limit = MAX_PER_RUN): AppRow[] {
-  const now = Date.now()
-  const held = activeIds([PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK], 'applicationId')
-  const queueStarted = firstQueueItemAt()
-  return useDb().select().from(applications)
-    .where(inArray(applications.status, ['needs_manual', 'preparing']))
-    .all()
-    .filter((a) => {
-      if (inFlight.has(a.id) || held.has(a.id)) return false
-      if (a.status === 'needs_manual') {
-        const n = prepareAttempts(a.formError)
-        return n > 0 && n < MAX_PREPARE_ATTEMPTS
-      }
-      if (queueStarted && a.updatedAt >= queueStarted) return true
-      const updated = Date.parse(`${a.updatedAt.replace(' ', 'T')}Z`)
-      return Number.isFinite(updated) && now - updated > STALE_PREPARING_MS
-    })
-    .slice(0, limit)
 }
 
 /** Every needs_input application gets a refresh, so a shared question unblocks all of them. */

@@ -194,6 +194,13 @@ export interface FormAnswer {
   needsQuestionId?: number | null
   filled: boolean
   fillError?: string | null
+  /**
+   * Stage 1 only: a field Claude answers once Devin taps Apply (a free-text or judgment field).
+   * Nothing is written for it before then.
+   */
+  atApply?: boolean
+  /** The fact statement an option was mapped from, so preparing reuses the mapping while the fact is unchanged. */
+  mappedFrom?: string | null
 }
 
 export interface FormSnapshot {
@@ -244,6 +251,11 @@ export interface DemoFile {
 
 export type ApplicationStatus =
   // pipeline states
+  /**
+   * Stage 1 (Decide): a job scoring at or above the threshold, its employer form read and its gap
+   * plan known, with no resume, letter, or form answers written yet. Apply moves it to preparing.
+   */
+  | 'to_decide'
   | 'preparing'
   | 'needs_input'
   | 'proposed'
@@ -306,6 +318,32 @@ export interface SubmissionResult {
   sandbox: boolean
   /** Why method is 'manual': captcha, account required, real submits switched off, and similar. */
   manualReason?: string | null
+}
+
+/**
+ * Where the AI budget went, by stage of the decide-first flow (server/utils/ai-stages.ts).
+ * before: reading postings, scoring with the gap plan, and reading forms, for every job.
+ * prepare: the resume, letter, and form answers, only for jobs Devin tapped Apply on.
+ */
+export type AiStageKey = 'read' | 'score' | 'form' | 'prepare' | 'other'
+
+export interface AiStageCost {
+  key: AiStageKey
+  label: string
+  /** before: spent before Devin decides; after: only for applications he chose. */
+  phase: 'before' | 'after' | 'other'
+  /** The ai_calls purposes counted in this stage. */
+  purposes: string[]
+  today: { costUsd: number; calls: number }
+  week: { costUsd: number; calls: number }
+}
+
+export interface AiStageCosts {
+  stages: AiStageCost[]
+  /** Applications chosen with Apply in the last 7 days. */
+  appliedThisWeek: number
+  /** What preparing those applications cost (prepare purposes logged against them), so the cost reads per application. */
+  appliedPrepareUsd: number
 }
 
 export const REJECT_REASONS = [
