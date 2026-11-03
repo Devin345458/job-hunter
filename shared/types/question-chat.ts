@@ -3,6 +3,7 @@
 // context (question, job, posting, knowledge base) itself.
 
 import type { ChatMemoryUse } from './memory'
+import type { GithubChatSearch } from './repos'
 
 export type QuestionChatRole = 'user' | 'assistant'
 
@@ -41,6 +42,12 @@ export type QuestionChatResponse =
        * makes the panel say once per conversation that his laptop's memory is not reachable.
        */
       memory?: ChatMemoryUse
+      /**
+       * Set when this reply searched Devin's GitHub (he asked, or Claude called the search on a
+       * skill or experience question). The panel lists the findings under the reply with links,
+       * or says where it looked when nothing was found.
+       */
+      github?: GithubChatSearch | null
     }
   | {
       ok: false

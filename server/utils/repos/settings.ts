@@ -11,6 +11,28 @@ import { findProgress } from './find-state'
 // forks, which hold mostly other people's commits. Every organization's or other person's repo is
 // off until he turns it on.
 
+// ── This app's own repo ──
+// job-hunter names every skill as data (prompts, examples, skill lists), so its commits and files
+// match every search. It is never switched on, never indexed, and never searched.
+
+export const APP_REPO = 'Devin345458/job-hunter'
+export const APP_REPO_NOTE = 'This app\'s own repo names every skill as data, so it never counts as evidence.'
+
+export function isAppRepo(fullName: string | null | undefined): boolean {
+  return String(fullName ?? '').toLowerCase() === APP_REPO.toLowerCase()
+}
+
+/** Switches this app's repo off and forgets anything indexed from it (a copy that had it on). */
+export function excludeAppRepo() {
+  const db = useDb()
+  const row = db.select().from(repoSources).where(sql`lower(${repoSources.fullName}) = ${APP_REPO.toLowerCase()}`).get()
+  if (!row) return
+  const indexed = db.select({ id: repoCommits.id }).from(repoCommits).where(eq(repoCommits.repo, row.fullName)).limit(1).get()
+  if (!row.included && !row.indexedAt && !indexed) return
+  db.update(repoSources).set({ included: false, updatedAt: nowSqlText() }).where(eq(repoSources.fullName, row.fullName)).run()
+  forgetRepoData(row.fullName)
+}
+
 const IDENTITIES_KEY = 'repo_identities'
 /** Re-list repos from GitHub when the stored list is older than this. */
 const LIST_TTL_MS = 6 * 60 * 60_000
@@ -232,10 +254,11 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
       }
       // updatedAt is left alone on a re-list: repos:index orders its queue by the last index or
       // attempt, which updatedAt records.
-      db.insert(repoSources).values({ fullName: r.full_name, ...values, included: personal.has(r.owner.login.toLowerCase()) && !r.fork, updatedAt: at })
+      db.insert(repoSources).values({ fullName: r.full_name, ...values, included: personal.has(r.owner.login.toLowerCase()) && !r.fork && !isAppRepo(r.full_name), updatedAt: at })
         .onConflictDoUpdate({ target: repoSources.fullName, set: values }).run()
     }
   }
+  excludeAppRepo()
   // Only forget repos when every token answered. A failed token must not wipe its repos. Repos the
   // commit search found (a public repo he contributed to that /user/repos does not list) stay.
   if (!failed.length) {
@@ -268,6 +291,7 @@ export function setRepoIncluded(fullName: string, included: boolean): RepoRow {
   const db = useDb()
   const row = db.select().from(repoSources).where(eq(repoSources.fullName, fullName)).get()
   if (!row) throw createError({ statusCode: 404, statusMessage: 'That repo is not in the list. Refresh the list and try again.' })
+  if (included && isAppRepo(fullName)) throw createError({ statusCode: 400, statusMessage: APP_REPO_NOTE })
   db.update(repoSources).set({ included, updatedAt: nowSqlText() }).where(eq(repoSources.fullName, fullName)).run()
   if (!included) forgetRepoData(fullName)
   return db.select().from(repoSources).where(eq(repoSources.fullName, fullName)).get()!
@@ -291,7 +315,7 @@ export function setReposIncludedBulk(opts: { owner?: string | null; included: bo
   if (opts.included) {
     const found = storedFind()?.byRepo
     if (!found) throw createError({ statusCode: 409, statusMessage: 'Find the repos with your commits first.' })
-    targets = rows.filter(r => !r.included && !r.isFork && (found[r.fullName] ?? 0) > 0)
+    targets = rows.filter(r => !r.included && !r.isFork && !isAppRepo(r.fullName) && (found[r.fullName] ?? 0) > 0)
   }
   else {
     targets = rows.filter(r => r.included)
@@ -308,7 +332,7 @@ export function setReposIncludedBulk(opts: { owner?: string | null; included: bo
 }
 
 export function includedRepos(): RepoRow[] {
-  return useDb().select().from(repoSources).where(eq(repoSources.included, true)).all()
+  return useDb().select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
 }
 
 function toRepoView(r: RepoRow, found: Record<string, number> | null): RepoView {
@@ -320,7 +344,8 @@ function toRepoView(r: RepoRow, found: Record<string, number> | null): RepoView 
     isFork: r.isFork,
     archived: r.archived,
     sizeMb: r.sizeKb != null ? Math.round((r.sizeKb / 1024) * 10) / 10 : null,
-    included: !!r.included,
+    included: !!r.included && !isAppRepo(r.fullName),
+    note: isAppRepo(r.fullName) ? APP_REPO_NOTE : null,
     pushedAt: r.pushedAt,
     htmlUrl: r.htmlUrl,
     indexedAt: r.indexedAt,
@@ -333,6 +358,8 @@ function toRepoView(r: RepoRow, found: Record<string, number> | null): RepoView 
 /** Everything the Settings section shows. Lists repos from GitHub when the stored list is stale. */
 export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promise<RepoSettingsView> {
   const db = useDb()
+  // A copy that had this app's own repo on (before it was excluded) loses it on the next visit.
+  excludeAppRepo()
   const configured = readTokens().length > 0
   let listError: string | null = null
   let accounts: TokenAccount[] = []
@@ -362,7 +389,7 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
     personal: personal.has(owner.toLowerCase()),
     ownerType: list[0]?.ownerType ?? null,
     withCommits: found ? list.filter(r => hasCommits(r) && !r.isFork).length : null,
-    withCommitsOff: found ? list.filter(r => hasCommits(r) && !r.isFork && !r.included).length : null,
+    withCommitsOff: found ? list.filter(r => hasCommits(r) && !r.isFork && !r.included && !isAppRepo(r.fullName)).length : null,
     sso: list.some(r => r.included && isSsoSkip(r.skipReason)) || accounts.some(a => a.ssoOrgs.some(o => o.toLowerCase() === owner.toLowerCase())),
     // Repos with his commits first (most first), then the most recently pushed.
     repos: list
@@ -392,7 +419,7 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
   for (const r of rows) if (r.included && isSsoSkip(r.skipReason)) ssoOrgs.set(r.owner.toLowerCase(), r.owner)
 
   const on = rows.filter(r => r.included)
-  const eligible = found ? rows.filter(r => hasCommits(r) && !r.isFork && !r.included) : []
+  const eligible = found ? rows.filter(r => hasCommits(r) && !r.isFork && !r.included && !isAppRepo(r.fullName)) : []
   const progress = findProgress()
   const findView: RepoFindView = {
     // Waiting in the job queue counts as running: the search is on its way.

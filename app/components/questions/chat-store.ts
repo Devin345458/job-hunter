@@ -1,6 +1,7 @@
 import type { QuestionListItem } from '#shared/types/learning'
 import type { QuestionChatResponse, QuestionChatTurn } from '#shared/types/question-chat'
 import type { ChatMemoryUse } from '#shared/types/memory'
+import type { GithubChatSearch } from '#shared/types/repos'
 
 // Conversations for the chat panel on /questions, one per question plus one for free questions.
 // They live in this browser tab only (sessionStorage), so switching questions keeps each thread;
@@ -36,6 +37,8 @@ export interface ChatMessage {
   memory?: ChatMemoryUse
   /** memory_unreachable: the once-per-conversation line saying his laptop's memory is not reachable. */
   kind?: 'memory_unreachable'
+  /** What the reply's GitHub search found, listed under it as "Found in your GitHub". */
+  github?: GithubChatSearch | null
 }
 
 /** Said once per conversation when the memory server cannot be reached; the chat carries on without it. */
@@ -55,10 +58,22 @@ function newId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
-/** What Claude sees of an earlier reply: its text, plus the draft it gave, so "make it shorter" works. */
+/** One line per finding, so a later turn knows what an earlier search showed ("the second one"). */
+function githubNote(g: GithubChatSearch): string {
+  if (!g.findings.length) return 'GitHub search: nothing found.'
+  return `GitHub search found:\n${g.findings.slice(0, 12).map((f, i) => `${i + 1}. ${f.kind} in ${f.repo}: ${f.title}${f.date ? ` (${f.date})` : ''}`).join('\n')}`
+}
+
+/**
+ * What Claude sees of an earlier reply: its text, plus the draft it gave (so "make it shorter"
+ * works) and what its GitHub search found (so "the herp-shipper one" does).
+ */
 function toTurn(m: ChatMessage): QuestionChatTurn {
-  if (m.role === 'assistant' && m.draft) return { role: 'assistant', content: `${m.content}\n\nDraft I gave you:\n${m.draft}` }
-  return { role: m.role as QuestionChatTurn['role'], content: m.content }
+  if (m.role !== 'assistant') return { role: m.role as QuestionChatTurn['role'], content: m.content }
+  const parts = [m.content]
+  if (m.github) parts.push(githubNote(m.github))
+  if (m.draft) parts.push(`Draft I gave you:\n${m.draft}`)
+  return { role: 'assistant', content: parts.join('\n\n') }
 }
 
 export function useQuestionChat() {
@@ -109,7 +124,7 @@ export function useQuestionChat() {
         if ((res.memory === 'unreachable' || res.memory === 'busy') && !(threads.value[key] ?? []).some(m => m.kind === 'memory_unreachable')) {
           push(key, { id: newId(), role: 'notice', kind: 'memory_unreachable', content: res.memory === 'busy' ? MEMORY_BUSY : MEMORY_UNREACHABLE })
         }
-        push(key, { id: newId(), role: 'assistant', content: res.reply, suggestedAnswer: res.suggestedAnswer, draft: res.draft, memory: res.memory ?? null })
+        push(key, { id: newId(), role: 'assistant', content: res.reply, suggestedAnswer: res.suggestedAnswer, draft: res.draft, memory: res.memory ?? null, github: res.github ?? null })
       }
       else push(key, { id: newId(), role: 'notice', content: res.message })
     }
