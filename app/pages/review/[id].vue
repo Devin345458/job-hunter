@@ -43,7 +43,25 @@ queue.whenSettled((settled) => {
   if (settled.status === 'submitted') snackbar.success('Submitted')
   else if (settled.status === 'submit_failed') snackbar.notify('Submit failed. The error is on the card.', 'error', { timeout: 10000 })
   else if (settled.status === 'needs_manual') snackbar.notify('This one needs submitting by hand.', 'warning', { timeout: 8000 })
+  else if (settled.status === 'proposed') snackbar.notify('Prepared and ready to send.', 'info', { timeout: 6000 })
 })
+
+const applying = ref(false)
+async function apply() {
+  if (!item.value || applying.value) return
+  applying.value = true
+  try {
+    await queue.apply(item.value.applicationId)
+    snackbar.notify('Preparing. This page updates as it goes, and the card moves to Ready to send when it is done.', 'success', { timeout: 6000 })
+    health.refresh()
+  }
+  catch (e: any) {
+    snackbar.notify(e?.message || 'Apply failed', 'error', { timeout: -1 })
+  }
+  finally {
+    applying.value = false
+  }
+}
 
 const approving = ref(false)
 async function approve() {
@@ -166,10 +184,12 @@ async function answer(questionId: number, value: string | null, skip = false) {
       <ReviewCard
         :item="item"
         :approving="approving"
+        :applying="applying"
         :refreshing="queue.refreshing.value.has(item.applicationId)"
         :saving-question-id="savingQuestionId"
         :preparing="preparing"
         @approve="approve"
+        @apply="apply"
         @reject="() => { rejectError = null; rejectOpen = true }"
         @answer="(qid, a) => answer(qid, a)"
         @skip="qid => answer(qid, null, true)"
@@ -182,6 +202,7 @@ async function answer(questionId: number, value: string | null, skip = false) {
         :company="item.job.company"
         :skill-options="item.rejectSkillOptions"
         :is-sandbox="item.isSandbox"
+        :before-materials="item.status === 'to_decide'"
         :busy="rejecting"
         :error="rejectError"
         @confirm="confirmReject"

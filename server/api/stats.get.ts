@@ -1,5 +1,6 @@
 import { applications, jobs, questions } from '../db/schema'
 import { and, eq, gte, sql } from 'drizzle-orm'
+import { decideCardVisible } from '../utils/apply/decide'
 
 // Counts for the shell and the review dashboard. The review and questions blocks drive the
 // "left to decide" count, the nav badges, and the pipeline health strip. The older fields
@@ -21,6 +22,12 @@ export default defineEventHandler(() => {
 
   const submittedToday = db.select({ count: sql<number>`count(*)` }).from(applications)
     .where(and(eq(applications.status, 'submitted'), gte(applications.submittedAt, todayStr))).get()?.count ?? 0
+
+  // Decide cards count while their job still scores at the threshold and is open, as the queue shows them.
+  const toDecide = db.select({ status: jobs.status, matchScore: jobs.matchScore }).from(applications)
+    .innerJoin(jobs, eq(applications.jobId, jobs.id))
+    .where(eq(applications.status, 'to_decide')).all()
+    .filter(r => decideCardVisible(r)).length
 
   const pendingQuestions = db.select({ count: sql<number>`count(*)` }).from(questions).where(eq(questions.status, 'pending')).get()?.count ?? 0
   const blockingQuestions = db.select({ count: sql<number>`count(*)` }).from(questions)
@@ -57,7 +64,11 @@ export default defineEventHandler(() => {
 
   return {
     review: {
-      toDecide: appCount('proposed', 'needs_input'),
+      /** Stage 1: strong matches waiting on Apply or Reject. */
+      toDecide,
+      /** Stage 2: prepared applications waiting on Approve or Reject. */
+      toSend: appCount('proposed', 'needs_input'),
+      preparing: appCount('preparing'),
       blocked: appCount('needs_input'),
       sending: appCount('approved', 'publishing', 'submitting'),
       needsYou: appCount('submit_failed', 'needs_manual'),

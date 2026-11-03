@@ -81,6 +81,13 @@ export interface Requirement {
   status: 'have' | 'partial' | 'lack' | 'unknown'
   /** Knowledge base entry that supports a have or partial status. */
   evidence: string | null
+  /**
+   * Set by scoring (decide-first): have because real experience in the cited entry covers it,
+   * though the entry does not name it. Counted as have in the score and the Matched chips.
+   */
+  reframed?: boolean
+  /** Why: the reframe's one sentence, or the answer Devin gave about it. */
+  note?: string | null
 }
 
 export interface ScoreComponent {
@@ -99,6 +106,13 @@ export interface ScoreBreakdown {
     missing: string[]
     /** The parts the skills score is summed from: must-haves 0 to 45, stack 0 to 25, seniority 0 to 20, domain 0 to 10. */
     parts?: { mustHaves: number; stack: number; seniority: number; domain: number }
+    /**
+     * The gap plan made in the same scoring call (decide-first). Kept inside skills so a rescore in
+     * code (learned rules, pay preferences) keeps it. Absent on jobs scored before the merge.
+     */
+    gap?: GapAnalysis
+    /** True when mustHaves was computed in code from the final requirement statuses. */
+    mustHavesFromStatuses?: boolean
   }
   compensation: {
     score: number | null
@@ -194,6 +208,13 @@ export interface FormAnswer {
   needsQuestionId?: number | null
   filled: boolean
   fillError?: string | null
+  /**
+   * Stage 1 only: a field Claude answers once Devin taps Apply (a free-text or judgment field).
+   * Nothing is written for it before then.
+   */
+  atApply?: boolean
+  /** The fact statement an option was mapped from, so preparing reuses the mapping while the fact is unchanged. */
+  mappedFrom?: string | null
 }
 
 export interface FormSnapshot {
@@ -217,6 +238,12 @@ export interface GapItem {
   rationale: string
   demoIdea?: { title: string; summary: string; stack: string[]; scopeHours: number } | null
   questionId?: number | null
+  /** The knowledge base entry a reframe rests on ("skill/Laravel"), or the one a status came from. */
+  evidence?: string | null
+  /** The skill or experience in a few words ("Go"), which questions dedupe on. */
+  subject?: string
+  /** An ask not asked yet: the question the read-forms step asks once the job has a Decide card. */
+  ask?: { kind: 'knows' | 'has_done'; question: string; codeShowable: boolean } | null
 }
 
 export interface GapAnalysis {
@@ -244,6 +271,11 @@ export interface DemoFile {
 
 export type ApplicationStatus =
   // pipeline states
+  /**
+   * Stage 1 (Decide): a job scoring at or above the threshold, its employer form read and its gap
+   * plan known, with no resume, letter, or form answers written yet. Apply moves it to preparing.
+   */
+  | 'to_decide'
   | 'preparing'
   | 'needs_input'
   | 'proposed'
@@ -306,6 +338,32 @@ export interface SubmissionResult {
   sandbox: boolean
   /** Why method is 'manual': captcha, account required, real submits switched off, and similar. */
   manualReason?: string | null
+}
+
+/**
+ * Where the AI budget went, by stage of the decide-first flow (server/utils/ai-stages.ts).
+ * before: reading postings, scoring with the gap plan, and reading forms, for every job.
+ * prepare: the resume, letter, and form answers, only for jobs Devin tapped Apply on.
+ */
+export type AiStageKey = 'read' | 'score' | 'form' | 'prepare' | 'other'
+
+export interface AiStageCost {
+  key: AiStageKey
+  label: string
+  /** before: spent before Devin decides; after: only for applications he chose. */
+  phase: 'before' | 'after' | 'other'
+  /** The ai_calls purposes counted in this stage. */
+  purposes: string[]
+  today: { costUsd: number; calls: number }
+  week: { costUsd: number; calls: number }
+}
+
+export interface AiStageCosts {
+  stages: AiStageCost[]
+  /** Applications chosen with Apply in the last 7 days. */
+  appliedThisWeek: number
+  /** What preparing those applications cost (prepare purposes logged against them), so the cost reads per application. */
+  appliedPrepareUsd: number
 }
 
 export const REJECT_REASONS = [

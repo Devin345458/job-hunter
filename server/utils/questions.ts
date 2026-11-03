@@ -115,7 +115,8 @@ export const KNOWLEDGE_CATEGORIES = ['profile', 'experience', 'skill', 'preferen
 export const COMP_FLOOR_SUBJECT = 'compensation floor'
 export const COMP_FLOOR_KEY = 'preference:Minimum Total Compensation'
 
-const WAITING_STATUSES = ['needs_input', 'proposed']
+// to_decide: a Decide card's form read asked for facts; an answer fills its stored answers too.
+const WAITING_STATUSES = ['to_decide', 'needs_input', 'proposed']
 const CLOSED_JOB_STATUSES = ['rejected', 'expired', 'applied']
 
 /** Knowledge values written for a No answer start this way, so nothing ever claims them. */

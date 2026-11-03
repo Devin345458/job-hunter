@@ -14,7 +14,11 @@ const props = withDefaults(defineProps<{
   skillOptions?: RejectSkillOption[]
   /** Sandbox cards only make sandbox rules; the knowledge base is never changed from them. */
   isSandbox?: boolean
-}>(), { skillOptions: () => [], isSandbox: false })
+  /** Stage 1 (Decide): no resume or letter exists yet, so "Resume or letter not good enough" is not offered. */
+  beforeMaterials?: boolean
+}>(), { skillOptions: () => [], isSandbox: false, beforeMaterials: false })
+
+const reasons = computed(() => (props.beforeMaterials ? REJECT_REASONS.filter(r => r.code !== 'weak_materials') : REJECT_REASONS))
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -114,7 +118,7 @@ function confirm() {
       <v-card-text class="rj__body">
         <div class="rj__reasons" role="radiogroup" aria-label="Reason">
           <button
-            v-for="r in REJECT_REASONS"
+            v-for="r in reasons"
             :key="r.code"
             type="button"
             role="radio"

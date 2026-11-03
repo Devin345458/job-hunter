@@ -361,7 +361,22 @@ function currentFacts(entries: KnowledgeEntry[]): FactValues {
   return resolveFacts(entries, { answered: answeredValue })
 }
 
-export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext): Promise<FormAnswer[]> {
+/** The note on a stage-1 field that Claude answers once Devin taps Apply. */
+export const AT_APPLY_DETAIL = 'Written when you tap Apply'
+
+export interface DeriveOptions {
+  /**
+   * decide (stage 1, before Devin chooses the job): rules, personal facts, option mapping
+   * (form_option_map), and the questions the form needs. Fields that need Claude's judgment are
+   * left for Apply (atApply), so no form_answers call is made. full (after Apply): everything.
+   */
+  mode?: 'decide' | 'full'
+  /** The stage-1 answers, so preparing reuses an option mapping while its fact is unchanged. */
+  prior?: FormAnswer[]
+}
+
+export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext, opts: DeriveOptions = {}): Promise<FormAnswer[]> {
+  const mode = opts.mode ?? 'full'
   const ats = ATS_LABELS[snapshot.atsType] ?? 'employer'
   const ref = { type: 'application', id: ctx.applicationId }
   const results = new Map<string, FormAnswer>()
@@ -416,17 +431,31 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext):
 
   // Facts that must be mapped onto a list of options, or need judgment on top of the fact.
   if (factMaps.length > 0) {
-    const picks = await mapToOptions(factMaps.map(f => ({ field: f.field, fact: f.fact })), ref)
+    // A mapping made at stage 1 from the same fact, for the same label and options, is reused.
+    const reused = new Map<string, string>()
+    for (const f of factMaps) {
+      const p = opts.prior?.find(x => x.fieldId === f.field.id)
+      if (p && p.mappedFrom === f.fact && p.label === f.field.label && typeof p.value === 'string' && p.value
+        && (!f.field.options?.length || f.field.options.includes(p.value))) reused.set(f.field.id, p.value)
+    }
+    const need = factMaps.filter(f => !reused.has(f.field.id))
+    const picks = need.length ? await mapToOptions(need.map(f => ({ field: f.field, fact: f.fact })), ref) : new Map<string, string | null>()
+    for (const [id, v] of reused) picks.set(id, v)
     for (const f of factMaps) {
       const pick = picks.get(f.field.id)
-      if (pick) results.set(f.field.id, answer(f.field, { value: pick, source: factSource(f.detail), sourceDetail: f.detail, confidence: 'high' }))
+      if (pick) results.set(f.field.id, answer(f.field, { value: pick, source: factSource(f.detail), sourceDetail: f.detail, confidence: 'high', mappedFrom: f.fact }))
       else if (f.field.required) formFieldAsk(f.field, null)
       else results.set(f.field.id, answer(f.field, { value: null, source: 'skipped', sourceDetail: `Could not map "${truncate(f.fact, 80)}" to an answer`, confidence: 'low' }))
     }
   }
 
+  // Stage 1: everything else waits for Apply. Nothing is written for it and nothing is asked.
+  if (mode === 'decide') {
+    for (const field of free) results.set(field.id, answer(field, { value: null, source: 'skipped', sourceDetail: AT_APPLY_DETAIL, confidence: 'low', atApply: true }))
+  }
+
   // Everything else: one Claude call.
-  if (free.length > 0) {
+  if (mode === 'full' && free.length > 0) {
     const knownFacts = factStatements(facts).map(s => `- ${s}`)
     const posting = (ctx.job.postingText || ctx.job.description || '').replace(/<[^>]+>/g, ' ').slice(0, 7000)
     const res = await aiStructured(FreeSchema, {

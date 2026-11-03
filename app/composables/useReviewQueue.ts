@@ -1,7 +1,7 @@
 import type { ApplicationStatus, RejectReasonCode, RejectSkillsMode, ReviewItem } from '#shared/types/pipeline'
-import { IN_FLIGHT, statusMeta } from './review/format'
+import { IN_FLIGHT, PREPARING, statusMeta } from './review/format'
 
-const QUEUE_STATUSES: ApplicationStatus[] = ['proposed', 'needs_input', 'approved', 'publishing', 'submitting', 'submit_failed', 'needs_manual', 'submitted']
+const QUEUE_STATUSES: ApplicationStatus[] = ['to_decide', 'preparing', 'proposed', 'needs_input', 'approved', 'publishing', 'submitting', 'submit_failed', 'needs_manual', 'submitted']
 
 
 function errorMessage(e: any, fallback: string): string {
@@ -13,7 +13,12 @@ function errorMessage(e: any, fallback: string): string {
 // ── Queue state ──────────────────────────────────────────────
 
 export interface QueueGroups {
+  /** Stage 1: Apply or Reject. */
   decide: ReviewItem[]
+  /** Apply was tapped: the resume, letter, and form are being written. */
+  preparing: ReviewItem[]
+  /** Stage 2: prepared, Approve or Reject. */
+  send: ReviewItem[]
   attention: ReviewItem[]
   sending: ReviewItem[]
   sent: ReviewItem[]
@@ -59,7 +64,7 @@ export function useReviewQueue() {
   }
 
   const groups = computed<QueueGroups>(() => {
-    const g: QueueGroups = { decide: [], attention: [], sending: [], sent: [] }
+    const g: QueueGroups = { decide: [], preparing: [], send: [], attention: [], sending: [], sent: [] }
     for (const item of items.value) {
       const group = statusMeta(item.status).group
       if (group !== 'closed') g[group].push(item)
@@ -70,8 +75,8 @@ export function useReviewQueue() {
     return g
   })
 
-  /** Every item in display order: what to decide, then what needs attention, then in flight, then sent. */
-  const ordered = computed(() => [...groups.value.decide, ...groups.value.attention, ...groups.value.sending, ...groups.value.sent])
+  /** Every item in display order: what to decide, what is being prepared, what is ready to send, what needs attention, then in flight and sent. */
+  const ordered = computed(() => [...groups.value.decide, ...groups.value.preparing, ...groups.value.send, ...groups.value.attention, ...groups.value.sending, ...groups.value.sent])
 
   function find(id: number | null | undefined) {
     return id == null ? null : items.value.find(x => x.applicationId === id) ?? null
@@ -93,9 +98,9 @@ export function useReviewQueue() {
   const pollStarted = new Map<number, number>()
   let pollTimer: ReturnType<typeof setTimeout> | null = null
 
-  /** In flight after approve, or answered and waiting for the server to mark it ready. */
+  /** Being prepared after Apply, in flight after approve, or answered and waiting for the server to mark it ready. */
   function needsPolling(i: ReviewItem) {
-    return IN_FLIGHT.includes(i.status) || (i.status === 'needs_input' && !i.openQuestions.some(q => q.blocking))
+    return PREPARING.includes(i.status) || IN_FLIGHT.includes(i.status) || (i.status === 'needs_input' && !i.openQuestions.some(q => q.blocking))
   }
 
   function schedulePoll() {
@@ -137,6 +142,21 @@ export function useReviewQueue() {
   }
 
   // ── Decisions ──
+  /** Stage 1: queue the preparation. The card moves to Preparing and is followed until it is ready to send. */
+  async function apply(id: number): Promise<ReviewItem> {
+    try {
+      const item = await $fetch<ReviewItem>(`/api/review/${id}/apply`, { method: 'POST' })
+      replace(item)
+      pollStarted.set(id, Date.now())
+      schedulePoll()
+      return item
+    }
+    catch (e: any) {
+      await fetchOne(id)
+      throw new Error(errorMessage(e, 'Apply failed'))
+    }
+  }
+
   async function approve(id: number): Promise<ReviewItem> {
     try {
       const item = await $fetch<ReviewItem>(`/api/review/${id}/approve`, { method: 'POST' })
@@ -220,6 +240,7 @@ export function useReviewQueue() {
     upsert,
     find,
     fetchOne,
+    apply,
     approve,
     reject,
     answerQuestion,

@@ -4,7 +4,8 @@ import { REJECT_REASONS, type RejectReasonCode, type RejectSkillsMode, type Revi
 import { statusMeta } from '~/composables/review/format'
 
 // The review queue. Opens on the best match, says how many are left, and moves to the next
-// card after each decision. Desktop: queue list beside the open card. Phone: one card at a
+// card after each decision. Stage 1 cards (To decide) take Apply or Reject; Apply prepares the
+// application in the job queue and the card comes back under Ready to send for Approve or Reject. Desktop: queue list beside the open card. Phone: one card at a
 // time with previous and next, and the full list in a sheet.
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Review · Job Hunter' })
@@ -31,16 +32,21 @@ function select(id: number | null, opts: { scroll?: boolean } = {}) {
   if (opts.scroll !== false && import.meta.client) window.scrollTo({ top: 0 })
 }
 
-/** First card to show: the best match still waiting on a decision, else whatever needs attention. */
+/** First card to show: the best match still waiting on a decision (stage 1, then stage 2), else whatever needs attention. */
 function defaultId(): number | null {
-  return groups.value.decide[0]?.applicationId ?? groups.value.attention[0]?.applicationId ?? null
+  return groups.value.decide[0]?.applicationId ?? groups.value.send[0]?.applicationId ?? groups.value.attention[0]?.applicationId ?? groups.value.preparing[0]?.applicationId ?? null
 }
+
+/** Every card waiting on a decision, in queue order: stage 1, then stage 2. */
+const deciding = computed(() => [...groups.value.decide, ...groups.value.send])
 
 /** Where the open card sits in the whole queue, for previous and next. */
 const orderedIndex = computed(() => ordered.value.findIndex(x => x.applicationId === selectedId.value))
 
-const GROUP_POSITION: Record<'decide' | 'attention' | 'sending' | 'sent', string> = {
-  decide: 'Card',
+const GROUP_POSITION: Record<'decide' | 'preparing' | 'send' | 'attention' | 'sending' | 'sent', string> = {
+  decide: 'To decide:',
+  preparing: 'Preparing:',
+  send: 'Ready to send:',
   attention: 'Needs you:',
   sending: 'Sending:',
   sent: 'Submitted:',
@@ -51,7 +57,7 @@ const GROUP_POSITION: Record<'decide' | 'attention' | 'sending' | 'sent', string
  * it: "10 left to decide" sits over "Card 1 of 10", not "Card 1 of 12" counting sent ones too.
  */
 const position = computed(() => {
-  for (const key of ['decide', 'attention', 'sending', 'sent'] as const) {
+  for (const key of ['decide', 'preparing', 'send', 'attention', 'sending', 'sent'] as const) {
     const list = groups.value[key]
     const i = list.findIndex(x => x.applicationId === selectedId.value)
     if (i >= 0) return { label: GROUP_POSITION[key], count: `${i + 1} of ${list.length}` }
@@ -71,7 +77,7 @@ function step(delta: number) {
 function nextDecideAfter(id: number, snapshot: ReviewItem[]): number | null {
   const i = snapshot.findIndex(x => x.applicationId === id)
   const rest = [...snapshot.slice(i + 1), ...snapshot.slice(0, Math.max(0, i))]
-  const live = new Set(groups.value.decide.map(x => x.applicationId))
+  const live = new Set(deciding.value.map(x => x.applicationId))
   return rest.find(x => live.has(x.applicationId) && x.applicationId !== id)?.applicationId ?? null
 }
 
@@ -95,8 +101,36 @@ queue.whenSettled((item) => {
   // The card and the queue keep showing the failure, so this notice can time out.
   else if (item.status === 'submit_failed') snackbar.notify(`Submit failed: ${name}`, 'error', { timeout: 10000, action: show })
   else if (item.status === 'needs_manual') snackbar.notify(`Submit by hand: ${name}`, 'warning', { timeout: 8000, action: show })
-  else if (item.status === 'proposed') snackbar.notify(`Ready to approve: ${name}`, 'info', { timeout: 6000, action: show })
+  else if (item.status === 'proposed') snackbar.notify(`Ready to send: ${name}`, 'info', { timeout: 6000, action: show })
+  else if (item.status === 'needs_input') snackbar.notify(`Prepared, waiting on your answer: ${name}`, 'info', { timeout: 6000, action: show })
 })
+
+// ── Apply (stage 1): queue the preparation, then move on to the next card ──
+const applyingId = ref<number | null>(null)
+
+async function apply() {
+  const item = selected.value
+  if (!item || applyingId.value) return
+  applyingId.value = item.applicationId
+  const snapshot = [...deciding.value]
+  try {
+    await queue.apply(item.applicationId)
+    health.refresh()
+    const next = nextDecideAfter(item.applicationId, snapshot)
+    snackbar.notify(
+      `Preparing: ${item.job.title} at ${item.job.company}. It comes back under Ready to send.`,
+      'success',
+      { timeout: 6000, action: next ? { text: 'Show', handler: () => select(item.applicationId) } : undefined },
+    )
+    if (next) setTimeout(() => { if (selectedId.value === item.applicationId) select(next) }, 900)
+  }
+  catch (e: any) {
+    snackbar.notify(e?.message || 'Apply failed', 'error', { timeout: -1 })
+  }
+  finally {
+    applyingId.value = null
+  }
+}
 
 // ── Decisions ──
 const approvingId = ref<number | null>(null)
@@ -105,7 +139,7 @@ async function approve() {
   const item = selected.value
   if (!item || approvingId.value) return
   approvingId.value = item.applicationId
-  const snapshot = [...groups.value.decide]
+  const snapshot = [...deciding.value]
   const wasRetry = item.status === 'submit_failed'
   try {
     await queue.approve(item.applicationId)
@@ -142,8 +176,8 @@ async function confirmReject(code: RejectReasonCode, text: string | null, skills
   if (!item) return
   rejecting.value = true
   rejectError.value = null
-  const snapshot = [...groups.value.decide]
-  const wasDecide = statusMeta(item.status).group === 'decide'
+  const snapshot = [...deciding.value]
+  const wasDecide = ['decide', 'send'].includes(statusMeta(item.status).group)
   try {
     await queue.reject(item.applicationId, code, text, skills, skillsMode)
     rejectOpen.value = false
@@ -228,10 +262,11 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
-const leftLabel = computed(() => {
-  const n = groups.value.decide.length
-  return n === 0 ? 'All decided' : `${n} left to decide`
-})
+/** "3 to decide, 17 ready to send": only the numbers take tabular figures, so the comma keeps its own width. */
+const leftParts = computed(() => [
+  { n: groups.value.decide.length, text: 'to decide' },
+  { n: groups.value.send.length, text: 'ready to send' },
+].filter(p => p.n > 0))
 </script>
 
 <template>
@@ -255,7 +290,7 @@ const leftLabel = computed(() => {
       <v-icon icon="mdi-inbox-outline" size="28" />
       <h1 class="rv__state-title">Nothing to review</h1>
       <p class="rv__state-text">
-        New applications land here after a run prepares them. The pipeline runs {{ PIPELINE_SCHEDULE_TEXT }}, or start it from Settings.
+        Jobs scoring 70 or more land here once a run has read their employer form. The pipeline runs {{ PIPELINE_SCHEDULE_TEXT }}, or start it from Settings.
       </p>
       <div class="rv__state-actions">
         <v-btn color="primary" height="44" to="/settings#pipeline" prepend-icon="mdi-play-outline">Pipeline settings</v-btn>
@@ -268,7 +303,10 @@ const leftLabel = computed(() => {
       <aside class="rv__side">
         <header class="rv__side-head">
           <h1 class="rv__title">Review</h1>
-          <p class="rv__left tabular" :class="{ 'rv__left--done': !groups.decide.length }">{{ leftLabel }}</p>
+          <p class="rv__left" :class="{ 'rv__left--done': !deciding.length }">
+            <template v-if="!leftParts.length">All decided</template>
+            <template v-else><template v-for="(p, i) in leftParts" :key="p.text"><span class="tabular">{{ p.n }}</span> {{ p.text }}{{ i < leftParts.length - 1 ? ', ' : '' }}</template></template>
+          </p>
         </header>
         <ReviewHealth />
         <ReviewQueueList :groups="groups" :selected-id="selectedId" class="rv__list" @select="id => select(id)" />
@@ -280,11 +318,13 @@ const leftLabel = computed(() => {
           :key="selected.applicationId"
           :item="selected"
           :approving="approvingId === selected.applicationId"
+          :applying="applyingId === selected.applicationId"
           :refreshing="queue.refreshing.value.has(selected.applicationId)"
           :saving-question-id="savingQuestionId"
           :preparing="preparingId === selected.applicationId"
           fill
           @approve="approve"
+          @apply="apply"
           @reject="openReject"
           @answer="(id, a) => answer(id, a)"
           @skip="id => answer(id, null, true)"
@@ -309,7 +349,10 @@ const leftLabel = computed(() => {
     <div v-else class="rv__single">
       <div class="rv__mhead">
         <div>
-          <p class="rv__left tabular" :class="{ 'rv__left--done': !groups.decide.length }">{{ leftLabel }}</p>
+          <p class="rv__left" :class="{ 'rv__left--done': !deciding.length }">
+            <template v-if="!leftParts.length">All decided</template>
+            <template v-else><template v-for="(p, i) in leftParts" :key="p.text"><span class="tabular">{{ p.n }}</span> {{ p.text }}{{ i < leftParts.length - 1 ? ', ' : '' }}</template></template>
+          </p>
           <!-- Tabular figures give punctuation a digit-wide slot in Schibsted Grotesk ("Sending : 1"), so only the numbers use them. -->
           <p v-if="position" class="rv__pos">{{ position.label }} <span class="tabular">{{ position.count }}</span></p>
         </div>
@@ -326,10 +369,12 @@ const leftLabel = computed(() => {
         :key="selected.applicationId"
         :item="selected"
         :approving="approvingId === selected.applicationId"
+        :applying="applyingId === selected.applicationId"
         :refreshing="queue.refreshing.value.has(selected.applicationId)"
         :saving-question-id="savingQuestionId"
         :preparing="preparingId === selected.applicationId"
         @approve="approve"
+        @apply="apply"
         @reject="openReject"
         @answer="(id, a) => answer(id, a)"
         @skip="id => answer(id, null, true)"
@@ -362,6 +407,7 @@ const leftLabel = computed(() => {
       :company="selected.job.company"
       :skill-options="selected.rejectSkillOptions"
       :is-sandbox="selected.isSandbox"
+      :before-materials="selected.status === 'to_decide'"
       :busy="rejecting"
       :error="rejectError"
       @confirm="confirmReject"

@@ -19,6 +19,7 @@ import type {
   TailoredResume,
 } from '#shared/types/pipeline'
 import { approveEffect } from './apply/approve-effect'
+import { decideCardVisible } from './apply/decide'
 import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
 import { negativeSkillTerms, rejectSkillOptions } from './reject-skills'
 import { repoSuggestionsFor } from './repos/suggest-store'
@@ -160,6 +161,18 @@ export function referencedQuestionIds(app: AppRow): number[] {
     .filter((id): id is number => typeof id === 'number')
 }
 
+/**
+ * Question ids a Decide card's gap plan asks. A question can have been asked by another job first
+ * (askQuestion dedupes by subject), so the card loads them by id, not only by application_id.
+ */
+function decideGapQuestionIds(app: AppRow): number[] {
+  if (app.status !== 'to_decide') return []
+  return (parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)?.items ?? [])
+    .filter(i => i.decision === 'ask')
+    .map(i => i.questionId)
+    .filter((id): id is number => typeof id === 'number')
+}
+
 function hasValue(v: FormAnswer['value']): boolean {
   if (v === null || v === undefined) return false
   if (typeof v === 'string') return v.trim().length > 0
@@ -196,7 +209,7 @@ function questionFilter(appIds: number[], refIds: number[], waitIds: number[]) {
  * while its application_id names only the first.
  */
 function openQuestionsFor(app: AppRow, job: JobRow, loaded: QuestionRow[]): QuestionRow[] {
-  const refs = new Set(referencedQuestionIds(app))
+  const refs = new Set([...referencedQuestionIds(app), ...decideGapQuestionIds(app)])
   const waits = new Set(requiredWaitQuestionIds(app))
   // Blocking is per application: a question blocks this one only when one of its own required
   // form fields waits on it. A question this application asked that no field references keeps
@@ -230,7 +243,11 @@ function openQuestionsFor(app: AppRow, job: JobRow, loaded: QuestionRow[]): Ques
     })
 }
 
-/** Review items for applications in the given statuses, best score first. */
+/**
+ * Review items for applications in the given statuses, best score first. A Decide card (to_decide)
+ * shows only while its job still scores at the threshold and is open: a rescore that drops it
+ * under, or a closed posting, takes it out of the queue without touching the row.
+ */
 export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
   const db = useDb()
   const rows = db.select({ app: applications, job: jobs })
@@ -238,10 +255,11 @@ export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
     .innerJoin(jobs, eq(applications.jobId, jobs.id))
     .where(inArray(applications.status, statuses))
     .all()
+    .filter(r => r.app.status !== 'to_decide' || decideCardVisible(r.job))
   if (rows.length === 0) return []
   const appIds = rows.map(r => r.app.id)
   const demos = db.select().from(demoProjects).where(inArray(demoProjects.applicationId, appIds)).orderBy(desc(demoProjects.id)).all()
-  const refIds = rows.flatMap(r => referencedQuestionIds(r.app))
+  const refIds = rows.flatMap(r => [...referencedQuestionIds(r.app), ...decideGapQuestionIds(r.app)])
   const waitIds = rows.flatMap(r => requiredWaitQuestionIds(r.app))
   const qs = db.select().from(questions).where(questionFilter(appIds, refIds, waitIds)).all()
   const negativeSkills = negativeSkillTerms()
@@ -268,7 +286,7 @@ export function getReviewItem(applicationId: number): ReviewItem | null {
     .where(eq(demoProjects.applicationId, applicationId))
     .orderBy(desc(demoProjects.id)).all()
     .find(d => d.status !== 'discarded') ?? null
-  const qs = db.select().from(questions).where(questionFilter([applicationId], referencedQuestionIds(row.app), requiredWaitQuestionIds(row.app))).all()
+  const qs = db.select().from(questions).where(questionFilter([applicationId], [...referencedQuestionIds(row.app), ...decideGapQuestionIds(row.app)], requiredWaitQuestionIds(row.app))).all()
   return toReviewItem(row.app, row.job, demo, openQuestionsFor(row.app, row.job, qs))
 }
 
@@ -297,7 +315,8 @@ export function jobFeatures(job: JobRow) {
 /** extra is merged into features_json: a wrong_stack rejection stores the skills it named as rejectSkills. */
 export function recordDecision(
   applicationId: number,
-  decision: 'approve' | 'reject',
+  /** apply: Devin chose the job at stage 1 (a positive signal); approve: he sent it at stage 2. */
+  decision: 'apply' | 'approve' | 'reject',
   reasonCode: string | null,
   reasonText: string | null,
   extra: { rejectSkills?: RejectSkillsRecord } = {},

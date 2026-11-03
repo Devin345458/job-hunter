@@ -9,6 +9,7 @@ export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   const app = Number.isInteger(id) ? useDb().select().from(applications).where(eq(applications.id, id)).get() : null
   if (!app) throw createError({ statusCode: 404, statusMessage: 'Application not found' })
+  if (app.status === 'to_decide') throw createError({ statusCode: 409, statusMessage: 'Nothing is prepared for this one yet. Tap Apply on its review card to prepare it.' })
   if (!ALLOWED.has(app.status)) throw createError({ statusCode: 409, statusMessage: `A ${app.status} application cannot be prepared again` })
   const busy = activeItem([PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK], 'applicationId', app.id)
   if (busy) throw createError({ statusCode: 409, statusMessage: busy.status === 'running' ? 'This application is being worked on now' : 'This application is already waiting in the queue' })

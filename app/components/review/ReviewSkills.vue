@@ -92,8 +92,9 @@ const tappable = (r: Requirement) => r.status !== 'have' && !isProfileFact(r.tex
             <span class="skills__req-text">{{ r.text }}</span>
             <span v-if="isProfileFact(r.text)" class="skills__req-meta">{{ r.mustHave ? 'Must have' : 'Nice to have' }} · Profile fact, not a skill</span>
             <span v-else class="skills__req-meta">
-              {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeSource(r.evidence)}` : '' }}
+              {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ r.reframed ? 'Covered by related experience' : STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeSource(r.evidence)}` : '' }}
             </span>
+            <span v-if="r.note" class="skills__req-meta">{{ r.note }}</span>
           </span>
           <v-icon v-if="tappable(r)" icon="mdi-chevron-right" size="18" class="skills__req-go" />
         </component>

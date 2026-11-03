@@ -153,6 +153,10 @@ export default defineNuxtConfig({
     // Claude models. The fallback is used whenever the key cannot call the primary.
     aiModel: 'claude-opus-5-5',
     aiFallbackModel: 'claude-haiku-4-5',
+    // Per-step models (NUXT_AI_STEP_MODELS): comma separated purpose=model pairs, for example
+    // 'enrich=claude-sonnet-5-5,match=claude-haiku-5-5'. A purpose not listed uses aiModel; the
+    // fallback model still applies. Chosen from the 2026-11-03 evaluation in scripts/eval.
+    aiStepModels: '',
     // Hard stop for Claude spend per local day, in dollars
     dailyAiBudgetUsd: '10',
     // uid of the unprivileged user that runs demo build commands in the container

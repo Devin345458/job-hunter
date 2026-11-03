@@ -7,7 +7,7 @@ import type { GapAnalysis, GapItem } from '#shared/types/pipeline'
 defineProps<{ gap: GapAnalysis | null }>()
 
 const DECISION: Record<GapItem['decision'], { label: string; color: string; icon: string }> = {
-  demo: { label: 'Build a demo', color: 'secondary', icon: 'mdi-flask-outline' },
+  demo: { label: 'Demo idea', color: 'secondary', icon: 'mdi-flask-outline' },
   ask: { label: 'Asked you', color: 'warning', icon: 'mdi-chat-question-outline' },
   reframe: { label: 'Use existing experience', color: 'info', icon: 'mdi-swap-horizontal' },
   skip: { label: 'Skip', color: 'grey', icon: 'mdi-minus-circle-outline' },
@@ -37,6 +37,9 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
         </div>
         <div class="gap-analysis__rationale text-body-2">
           {{ fixPlurals(plainKnowledgeRefs(item.rationale)) }}
+        </div>
+        <div v-if="item.decision === 'reframe' && item.evidence" class="gap-analysis__evidence text-body-2">
+          Rests on your knowledge base entry: {{ plainKnowledgeRefs(item.evidence) }}
         </div>
         <div v-if="item.demoIdea" class="gap-analysis__idea text-body-2">
           <strong>{{ item.demoIdea.title }}</strong>: {{ item.demoIdea.summary }}
@@ -74,6 +77,12 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
     margin-top: 4px;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     line-height: 1.6;
+  }
+
+  &__evidence {
+    margin-top: 4px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__idea {

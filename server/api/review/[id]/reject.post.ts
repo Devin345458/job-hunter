@@ -5,14 +5,15 @@ import { applyRejectSkillKnowledge, resolveRejectSkills } from '~~/server/utils/
 
 const CODES = new Set<string>(REJECT_REASONS.map(r => r.code))
 
-// Reject never submits anything. It records the reason for learning.
+// Reject never submits anything. It records the reason for learning. It works at stage 1 (Decide,
+// before anything is written) and at stage 2 (Send, after Apply prepared the application).
 // Body: { reasonCode, reasonText?, skills?, skillsMode? }. skills (Wrong tech stack only) names the
 // skills at fault; skillsMode 'lack' also writes them to the knowledge base as a No, 'avoid' does not.
 export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   const item = Number.isInteger(id) ? getReviewItem(id) : null
   if (!item) throw createError({ statusCode: 404, statusMessage: 'Application not found' })
-  if (!['proposed', 'needs_input', 'submit_failed', 'needs_manual'].includes(item.status)) {
+  if (!['to_decide', 'proposed', 'needs_input', 'submit_failed', 'needs_manual'].includes(item.status)) {
     throw createError({ statusCode: 409, statusMessage: `This application is ${item.status} and can no longer be rejected` })
   }
   const body = await readBody<{ reasonCode?: string; reasonText?: string; skills?: unknown; skillsMode?: unknown }>(event)

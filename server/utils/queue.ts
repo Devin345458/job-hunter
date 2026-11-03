@@ -36,7 +36,7 @@ export const ENRICH_ONE_TASK = 'jobs:enrich-one'
 export const MATCH_ONE_TASK = 'jobs:match-one'
 
 /** Tasks that drive Chromium for a form or build demos. At most one of them runs at a time, in any process. */
-export const HEAVY_TASKS = ['demos:build', REBUILD_TASK, PREVIEW_TASK, 'applications:prepare', PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK] as const
+export const HEAVY_TASKS = ['demos:build', REBUILD_TASK, PREVIEW_TASK, 'applications:prepare', 'applications:read-forms', PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK] as const
 /**
  * One item per job: read one posting, score one job. They run in their own lane, several at once
  * (NUXT_BULK_CONCURRENCY), so a backlog of hundreds never holds up an approval or a demo.
@@ -149,16 +149,12 @@ export function activeIds(tasks: readonly string[], field: string): Set<number> 
   return new Set(rows.map(r => Number(r.v)).filter(Number.isInteger))
 }
 
-/** When the first queue item was created: work started after it always runs as a queue item. */
-export function firstQueueItemAt(): string | null {
-  return useDb().select({ at: taskQueue.createdAt }).from(taskQueue).orderBy(taskQueue.id).limit(1).get()?.at ?? null
-}
-
 /**
  * Queues the whole preparation of one application (applications:prepare-one: tailor, cover letter,
- * gap analysis, form dry run) and shows it as preparing, in one transaction so the daily prepare
- * step never sees it in preparing without its item. Prepare, Prepare again, and an Apply action
- * call this. A second call while one waits returns the waiting item.
+ * form dry run, and the gap plan when stage 1 did not make one) and shows it as preparing, in one
+ * transaction so the read-forms step never sees it in preparing without its item. Apply, Prepare
+ * again, and the read-forms step (for stopped preparations) call this. A second call while one
+ * waits returns the waiting item.
  */
 export function queuePrepare(applicationId: number, detail = 'Waiting in the queue to prepare'): QueueRow {
   return sqlite().transaction(() => {
