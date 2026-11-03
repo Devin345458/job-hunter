@@ -1,3 +1,4 @@
+import { demosEnabled } from '../demo/enabled'
 import type { FormSnapshot } from '#shared/types/pipeline'
 import { isOwnSandbox } from '../sandbox'
 import { ATS_LABELS, requiresAccount } from './ats'
@@ -28,7 +29,7 @@ function parse<T>(raw: string | null): T | null {
  */
 export function approveEffect(app: AppLike, job: JobLike, demoStatus: string | null | undefined): ApproveEffect {
   const config = useRuntimeConfig()
-  const demoBlocked = demoStatus === 'built' && !String(config.githubToken || '')
+  const demoBlocked = demosEnabled() && demoStatus === 'built' && !String(config.githubToken || '')
     ? 'The demo project cannot be published because the GitHub token is not set'
     : null
   const snapshot = parse<FormSnapshot>(app.formSnapshotJson)

@@ -1,3 +1,4 @@
+import { demosEnabled } from './demo/enabled'
 import { desc, eq } from 'drizzle-orm'
 import { applications, demoProjects } from '../db/schema'
 import { submitApplication } from './apply/submit'
@@ -21,7 +22,8 @@ export async function runApproval(applicationId: number): Promise<void> {
       .where(eq(demoProjects.applicationId, applicationId))
       .orderBy(desc(demoProjects.id)).all()
       .find(d => d.status === 'built')
-    if (demo) {
+    // Switched off (NUXT_DEMOS_ENABLED=false): a built demo stays unpublished and the application is sent without it.
+    if (demo && demosEnabled()) {
       setApplicationStatus(applicationId, 'publishing', `Publishing demo project "${demo.title}"`)
       try {
         const published = await publishDemo(demo.id)
