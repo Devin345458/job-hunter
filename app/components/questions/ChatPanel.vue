@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { chatThreadKey, EXAMPLE_LEVELS, takesExample, useQuestionChat, type ChatQuestion } from './chat-store'
+import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
@@ -7,6 +7,8 @@ import { chatThreadKey, EXAMPLE_LEVELS, takesExample, useQuestionChat, type Chat
 // into the card's answer box for him to edit and save. On a skill or experience question the draft
 // is an example for the "Where did you do it?" box, written only from what he types here, and a
 // suggested Yes or Some experience opens that box instead of saving.
+// "Draft from my records" drafts from his knowledge base, his GitHub, his past Claude sessions, and
+// what he typed here, and lists the source of every sentence under the draft.
 
 const props = defineProps<{
   /** The question the chat is about. Null for a general question. */
@@ -20,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   answer: [value: string]
-  useDraft: [text: string, level: string | null]
+  useDraft: [text: string, level: string | null, meta?: DraftMeta]
   detach: []
   close: []
 }>()
@@ -33,6 +35,9 @@ const input = ref<{ focus: () => void } | null>(null)
 const key = computed(() => chatThreadKey(props.question?.id))
 const messages = computed(() => chat.threads.value[key.value] ?? [])
 const busy = computed(() => !!chat.sending.value[key.value])
+const draftingRecords = computed(() => !!chat.drafting.value[key.value])
+/** This question can take a draft from his records. */
+const recordsDraftable = computed(() => draftsFromRecords(props.question))
 /** The first reply in this conversation that had memory excerpts in its prompt; it alone carries the note. */
 const firstMemoryReply = computed(() => messages.value.find(m => m.role === 'assistant' && m.memory === 'used')?.id ?? null)
 const job = computed(() => props.question?.job ?? props.question?.waitingApplications?.[0] ?? null)
@@ -51,14 +56,19 @@ const answeredNo = computed(() => props.question?.status === 'answered' && (prop
 
 const starters = computed(() => {
   if (!props.question) return []
-  if (writesAnswer.value) return ['What does this mean?', 'Help me answer this']
+  if (writesAnswer.value) return recordsDraftable.value ? ['What does this mean?'] : ['What does this mean?', 'Help me answer this']
   if (exampleQuestion.value && !answeredNo.value && props.question.status !== 'skipped') {
-    return props.question.status === 'answered'
-      ? ['What does this mean?', 'Help me write the example']
-      : ['What does this mean?', 'What would count as a yes?', 'Help me write the example']
+    return props.question.status === 'answered' ? ['What does this mean?'] : ['What does this mean?', 'What would count as a yes?']
   }
   return ['What does this mean?', 'What would count as a yes?']
 })
+
+/** "Draft from my records", from the button or from a typed ask ("draft it from my records"). */
+function draftFromRecords(typed?: string) {
+  const q = props.question
+  if (!q || busy.value) return
+  chat.draftFromRecords(q.id, typed)
+}
 
 /** Where a draft goes on the card. */
 const boxName = computed(() => exampleQuestion.value ? 'example box' : 'answer box')
@@ -74,7 +84,8 @@ function submit(value = text.value) {
   const v = value.trim()
   if (!v || busy.value) return
   text.value = ''
-  chat.send(props.question?.id ?? null, v)
+  if (props.question && recordsDraftable.value && asksForRecordsDraft(v)) draftFromRecords(v)
+  else chat.send(props.question?.id ?? null, v)
 }
 
 function onEnter(e: KeyboardEvent) {
@@ -119,7 +130,15 @@ function useDraft(id: string, draft: string, level: string | null = null) {
     return
   }
   confirmingDraft.value = null
-  emit('useDraft', draft, level)
+  const m = messages.value.find(x => x.id === id)
+  emit('useDraft', draft, level, m?.records ? { records: m.records, memoryNote: memoryNoteBefore(m) } : undefined)
+}
+
+/** The memory line the app put just before a records draft, if any. */
+function memoryNoteBefore(m: ChatMessage): string | null {
+  const i = messages.value.findIndex(x => x.id === m.id)
+  const prev = i > 0 ? messages.value[i - 1] : null
+  return prev?.role === 'notice' && /memory/i.test(prev.content) ? prev.content : null
 }
 
 watch(key, () => {
@@ -200,10 +219,22 @@ defineExpose({ focus: () => input.value?.focus() })
       <div v-if="!messages.length && !busy" class="question-chat__empty">
         <p class="text-body-2 text-medium-emphasis">
           {{ question
-            ? 'Claude explains what the employer is asking and what would count, using only your knowledge base as facts about you. It never answers for you.'
+            ? recordsDraftable
+              ? 'Claude explains what the employer is asking and what would count. Draft from my records writes a first draft from your knowledge base, your GitHub, and your past Claude sessions, with the source of every sentence. Nothing is saved until you press Save.'
+              : 'Claude explains what the employer is asking and what would count, using only your knowledge base as facts about you. It never answers for you.'
             : 'Claude explains in plain words. It uses your knowledge base as the only facts about you.' }}
         </p>
-        <div v-if="starters.length" class="question-chat__starters">
+        <div v-if="starters.length || recordsDraftable" class="question-chat__starters">
+          <v-btn
+            v-if="recordsDraftable"
+            color="primary"
+            variant="flat"
+            class="question-chat__starter"
+            prepend-icon="mdi-file-document-edit-outline"
+            @click="draftFromRecords()"
+          >
+            Draft from my records
+          </v-btn>
           <v-btn
             v-for="s in starters"
             :key="s"
@@ -235,8 +266,9 @@ defineExpose({ focus: () => input.value?.focus() })
           <QuestionsChatGithub v-if="m.role === 'assistant' && m.github" :search="m.github" />
 
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
-            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
-            <div class="question-chat__draft-text">{{ m.draft }}</div>
+            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ m.records ? RECORDS_DRAFT_LABEL : exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
+            <QuestionsRecordsSources v-if="m.records" :draft="m.records" />
+            <div v-else class="question-chat__draft-text">{{ m.draft }}</div>
             <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
               <span class="text-body-2">Replace what you already typed in the {{ boxName }}?</span>
               <div class="question-chat__confirm-actions">
@@ -280,8 +312,23 @@ defineExpose({ focus: () => input.value?.focus() })
 
       <div v-if="busy" class="question-chat__msg question-chat__msg--assistant question-chat__thinking">
         <v-progress-circular indeterminate size="16" width="2" color="primary" />
-        <span class="text-body-2 text-medium-emphasis">Claude is thinking</span>
+        <span class="text-body-2 text-medium-emphasis">{{ draftingRecords ? 'Searching your knowledge base, GitHub, and past sessions, then drafting' : 'Claude is thinking' }}</span>
       </div>
+    </div>
+
+    <div v-if="recordsDraftable && messages.length" class="question-chat__records">
+      <v-btn
+        variant="tonal"
+        color="primary"
+        size="small"
+        class="question-chat__records-btn"
+        prepend-icon="mdi-file-document-edit-outline"
+        :disabled="busy"
+        @click="draftFromRecords()"
+      >
+        Draft from my records
+      </v-btn>
+      <span class="text-caption text-medium-emphasis">Uses what you typed here too.</span>
     </div>
 
     <form class="question-chat__compose" @submit.prevent="submit()">
@@ -530,6 +577,25 @@ defineExpose({ focus: () => input.value?.focus() })
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+
+  &__records {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 8px 12px 0;
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  }
+
+  &__records-btn {
+    min-height: 36px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__records + &__compose {
+    border-top: 0;
   }
 
   &__compose {

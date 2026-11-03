@@ -2,7 +2,8 @@
 import { useDisplay } from 'vuetify'
 import type { QuestionView } from '#shared/types/pipeline'
 import { plainKnowledgeRefs, plainQuestionContext } from '#shared/utils/plain-text'
-import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, takesExample, type ChatQuestion } from '~/components/questions/chat-store'
+import type { RecordsDraft } from '#shared/types/question-chat'
+import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, RECORDS_DRAFT_LABEL, takesExample, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Open questions answered in place. Yes or no and choices are one tap; numbers take one short
 // field and written answers a growing box, each with Save. Answers go through
@@ -26,6 +27,15 @@ const emit = defineEmits<{
 }>()
 
 const drafts = reactive<Record<number, string>>({})
+/** A draft from Devin's records now in a box, with the source of each sentence; shown while the box holds text. */
+const recordsFor = reactive<Record<number, { draft: RecordsDraft; note: string | null } | undefined>>({})
+
+function shownRecords(q: QuestionView) {
+  const r = recordsFor[q.id]
+  if (!r) return null
+  const text = takesExample(q) ? examples[q.id] : drafts[q.id]
+  return (text ?? '').trim() ? r : null
+}
 
 function submitText(q: QuestionView) {
   const value = (drafts[q.id] ?? '').trim()
@@ -160,9 +170,10 @@ watch(() => props.questions.map(q => q.id), (ids) => {
   }
 })
 
-function useDraft(text: string, level: string | null = null) {
+function useDraft(text: string, level: string | null = null, meta?: DraftMeta) {
   const q = chatQuestion.value
   if (!q) return
+  recordsFor[q.id] = meta?.records ? { draft: meta.records, note: meta.memoryNote ?? null } : undefined
   if (takesExample(q)) {
     if (level && isExampleLevel(level)) levels[q.id] = level
     examples[q.id] = text
@@ -238,6 +249,7 @@ const chatBoxText = computed(() => {
           <label :id="`qs-example-${q.id}-label`" :for="`qs-example-${q.id}`" class="qs__example-label">Where did you do it?</label>
           <p class="qs__example-hint">The job or project, what you did, and the result if there was one. It is saved exactly as you write it.</p>
           <p v-if="!levels[q.id]" class="qs__example-pick">Tap Yes or Some experience above, then save.</p>
+          <p v-if="shownRecords(q)" class="qs__records-label">{{ RECORDS_DRAFT_LABEL }}</p>
           <v-textarea
             :id="`qs-example-${q.id}`"
             v-model="examples[q.id]"
@@ -273,6 +285,7 @@ const chatBoxText = computed(() => {
               Save without an example
             </v-btn>
           </div>
+          <QuestionsRecordsSources v-if="shownRecords(q)" :draft="shownRecords(q)!.draft" :memory-note="shownRecords(q)!.note" />
         </div>
       </template>
 
@@ -295,6 +308,7 @@ const chatBoxText = computed(() => {
       <!-- Written answers can run to several paragraphs and bullet lines: the box grows with them,
            Enter adds a line, and only Save sends. 4,000 characters is the server's limit. -->
       <div v-else-if="q.answerType !== 'number'" class="qs__form qs__form--text">
+        <p v-if="shownRecords(q)" class="qs__records-label">{{ RECORDS_DRAFT_LABEL }}</p>
         <v-textarea
           v-model="drafts[q.id]"
           label="Your answer"
@@ -320,6 +334,7 @@ const chatBoxText = computed(() => {
             Save
           </v-btn>
         </div>
+        <QuestionsRecordsSources v-if="shownRecords(q)" :draft="shownRecords(q)!.draft" :memory-note="shownRecords(q)!.note" />
       </div>
 
       <form v-else class="qs__form" @submit.prevent="submitText(q)">
@@ -505,6 +520,13 @@ const chatBoxText = computed(() => {
     line-height: 1.45;
     margin: 2px 0 10px;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__records-label {
+    margin: 0 0 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgb(var(--v-theme-primary));
   }
 
   &__example-pick {

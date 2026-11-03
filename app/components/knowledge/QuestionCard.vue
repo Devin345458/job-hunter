@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import type { QuestionListItem } from '#shared/types/learning'
 import { plainQuestionContext } from '#shared/utils/plain-text'
-import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS } from '~/components/questions/chat-store'
+import type { RecordsDraft } from '#shared/types/question-chat'
+import { draftsFromRecords, EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, RECORDS_DRAFT_LABEL, chatThreadKey, useQuestionChat } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
 // tap; numbers and short facts take a field; open-ended questions from the original tailoring
 // flow open a text box. The parent sends the answer and removes or moves the card.
 // A skill or experience question asks for an example after Yes or Some experience: "Where did
 // you do it?" opens under the buttons, and nothing is saved until Save or Save without an example.
+// "Draft from my records" fills the example box (or the answer box) with a draft from Devin's
+// knowledge base, GitHub, and past Claude sessions, picks the level, and lists the source of every
+// sentence under the box. It is still only a draft: nothing is saved until Save.
 
 const props = defineProps<{
   question: QuestionListItem
@@ -18,7 +22,7 @@ const props = defineProps<{
   /** This question is the one loaded in the chat panel. */
   asking?: boolean
   /** A draft from the chat's "Use this draft". Each new nonce puts its text in the answer box (or the example box); nothing is saved until Save. */
-  prefill?: { text: string; nonce: number; level?: string | null } | null
+  prefill?: { text: string; nonce: number; level?: string | null; records?: RecordsDraft | null; memoryNote?: string | null } | null
   /** The chat's suggested Yes or Some experience on a skill or experience question. Each new nonce picks it and opens the example box. */
   pick?: { level: string; nonce: number } | null
 }>()
@@ -115,12 +119,81 @@ function isChosen(opt: string) {
   return level.value ? level.value === opt : isCurrent(opt)
 }
 
+// ── Draft from my records ──
+const chat = useQuestionChat()
+/** The draft from records now in the box, with the source of each sentence. Cleared when the box closes. */
+const recordsDraft = ref<RecordsDraft | null>(null)
+const recordsNote = ref<string | null>(null)
+/** The server's sentence when there was no draft, or why it could not draft. */
+const recordsMessage = ref<string | null>(null)
+/** A draft waiting on "Replace what you typed?". */
+const pendingRecords = ref<{ draft: RecordsDraft; note: string | null } | null>(null)
+const recordsBusy = computed(() => !!chat.drafting.value[chatThreadKey(props.question.id)])
+const canDraftRecords = computed(() => {
+  if (!draftsFromRecords(props.question)) return false
+  if (props.mode === 'pending') return true
+  return props.mode === 'answered' && (takesExample.value ? answeredWithLevel.value : true)
+})
+
+/** What the box the draft would fill holds now. */
+function boxNow(): string {
+  return (takesExample.value ? exampleText.value : draft.value).trim()
+}
+
+function fillFromRecords(d: RecordsDraft, note: string | null) {
+  pendingRecords.value = null
+  if (takesExample.value) {
+    if (props.mode === 'answered' && !editing.value) {
+      if (!answeredWithLevel.value) return
+      exampleOnly.value = true
+    }
+    if (props.mode === 'pending' && d.level && isExampleLevel(d.level)) level.value = d.level
+    exampleText.value = d.text
+    exampleOpen.value = true
+  }
+  else {
+    if (props.mode === 'answered' || inputType.value === 'long') editing.value = true
+    draft.value = d.text
+  }
+  recordsDraft.value = d
+  recordsNote.value = note
+}
+
+async function draftFromRecords() {
+  if (busy.value || recordsBusy.value) return
+  recordsMessage.value = null
+  pendingRecords.value = null
+  const res = await chat.draftFromRecords(props.question.id)
+  if (!res) return
+  if (!res.ok) {
+    recordsMessage.value = res.message
+    return
+  }
+  if (!res.draft) {
+    recordsMessage.value = [res.memoryNote, res.reply].filter(Boolean).join(' ')
+    return
+  }
+  const typed = boxNow()
+  if (typed && typed !== res.draft.text.trim() && (takesExample.value ? exampleOpen.value : showInput.value)) {
+    pendingRecords.value = { draft: res.draft, note: res.memoryNote }
+    return
+  }
+  fillFromRecords(res.draft, res.memoryNote)
+}
+
+function clearRecords() {
+  recordsDraft.value = null
+  recordsNote.value = null
+  pendingRecords.value = null
+}
+
 function closeExample() {
   level.value = null
   exampleOpen.value = false
   exampleOnly.value = false
   exampleText.value = ''
   exampleAction.value = null
+  clearRecords()
 }
 
 function startEdit() {
@@ -134,6 +207,11 @@ function cancelEdit() {
   draft.value = ''
   closeExample()
 }
+
+// The draft from records goes with the box: once Devin empties it, the sources no longer describe it.
+watch(() => (takesExample.value ? exampleText.value : draft.value), (text) => {
+  if (recordsDraft.value && !text.trim()) clearRecords()
+})
 
 function send(value: string) {
   const v = value.trim()
@@ -198,6 +276,10 @@ watch(() => (exampleOpen.value ? exampleText.value : showInput.value ? draft.val
 watch(() => props.prefill?.nonce, () => {
   const text = props.prefill?.text
   if (!text || props.mode === 'skipped') return
+  recordsMessage.value = null
+  pendingRecords.value = null
+  recordsDraft.value = props.prefill?.records ?? null
+  recordsNote.value = props.prefill?.records ? props.prefill?.memoryNote ?? null : null
   if (takesExample.value) {
     if (props.mode === 'answered' && !editing.value) {
       // Answered No has no example to write.
@@ -220,6 +302,7 @@ watch(() => props.prefill?.nonce, () => {
 function useRepoSuggestion() {
   const s = props.question.repoSuggestion
   if (!s || props.mode !== 'pending' || busy.value) return
+  clearRecords()
   level.value = s.level
   exampleText.value = s.draft
   exampleOpen.value = true
@@ -372,6 +455,9 @@ watch(() => props.pick?.nonce, () => {
         <!-- Written answers can run to several paragraphs and bullet lines, so the box grows with them.
              Enter adds a line; only Save sends. 4,000 characters is the server's limit. -->
         <div v-else-if="inputType === 'text'" class="d-flex flex-column ga-2">
+          <div v-if="recordsDraft" class="question-card__records-label text-body-2">
+            <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ RECORDS_DRAFT_LABEL }}
+          </div>
           <v-textarea
             v-model="draft"
             placeholder="Your answer"
@@ -386,6 +472,7 @@ watch(() => props.pick?.nonce, () => {
           <div class="d-flex justify-end">
             <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'" height="44" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">Save</v-btn>
           </div>
+          <QuestionsRecordsSources v-if="recordsDraft" :draft="recordsDraft" :memory-note="recordsNote" />
         </div>
 
         <template v-else>
@@ -399,6 +486,9 @@ watch(() => props.pick?.nonce, () => {
             Write an answer
           </v-btn>
           <div v-if="editing" class="d-flex flex-column ga-2">
+            <div v-if="recordsDraft" class="question-card__records-label text-body-2">
+              <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ RECORDS_DRAFT_LABEL }}
+            </div>
             <v-textarea
               v-model="draft"
               placeholder="Answer in your own words. It is stored exactly as you write it."
@@ -413,6 +503,7 @@ watch(() => props.pick?.nonce, () => {
               <v-btn variant="text" height="44" :disabled="busy" @click="cancelEdit">Cancel</v-btn>
               <v-btn :color="draft.trim() ? 'primary' : undefined" :variant="draft.trim() ? 'flat' : 'tonal'"  height="44" :loading="busy" :disabled="!draft.trim()" @click="send(draft)">Save answer</v-btn>
             </div>
+            <QuestionsRecordsSources v-if="recordsDraft" :draft="recordsDraft" :memory-note="recordsNote" />
           </div>
         </template>
       </div>
@@ -428,6 +519,9 @@ watch(() => props.pick?.nonce, () => {
         <p v-if="!level && !exampleOnly" class="question-card__example-pick text-body-2">
           Tap Yes or Some experience above, then save.
         </p>
+        <div v-if="recordsDraft" class="question-card__records-label text-body-2">
+          <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ RECORDS_DRAFT_LABEL }}
+        </div>
         <v-textarea
           :id="exampleBoxId"
           v-model="exampleText"
@@ -464,7 +558,21 @@ watch(() => props.pick?.nonce, () => {
           </v-btn>
           <v-btn v-else variant="text" height="44" :disabled="busy" @click="closeExample">Cancel</v-btn>
         </div>
+        <QuestionsRecordsSources v-if="recordsDraft" :draft="recordsDraft" :memory-note="recordsNote" />
       </div>
+
+      <!-- Draft from my records: replace what he typed, or why there is no draft -->
+      <div v-if="pendingRecords" class="question-card__records-confirm" role="alert">
+        <span class="text-body-2">The draft from your records is ready. Replace what you typed with it?</span>
+        <div class="question-card__records-actions">
+          <v-btn color="primary" variant="flat" height="44" @click="fillFromRecords(pendingRecords.draft, pendingRecords.note)">Replace</v-btn>
+          <v-btn variant="text" height="44" @click="pendingRecords = null">Keep mine</v-btn>
+        </div>
+      </div>
+      <p v-if="recordsMessage" class="question-card__records-message text-body-2" role="status">
+        <v-icon icon="mdi-information-outline" size="16" />
+        <span>{{ recordsMessage }}</span>
+      </p>
     </v-card-text>
 
     <v-card-actions v-if="mode === 'pending' || mode === 'skipped' || (mode === 'answered' && !(editing && inputType === 'long'))" class="px-4 pb-3 pt-0 question-card__actions">
@@ -478,6 +586,22 @@ watch(() => props.pick?.nonce, () => {
         @click="emit('ask')"
       >
         Ask about this
+      </v-btn>
+      <v-btn
+        v-if="canDraftRecords"
+        variant="text"
+        size="small"
+        color="primary"
+        prepend-icon="mdi-file-document-edit-outline"
+        class="question-card__records-btn"
+        :loading="recordsBusy"
+        :disabled="busy"
+        @click="draftFromRecords"
+      >
+        Draft from my records
+        <template #loader>
+          <v-progress-circular indeterminate size="16" width="2" class="mr-2" />Searching your records
+        </template>
       </v-btn>
       <v-spacer />
       <v-btn v-if="mode === 'pending'" variant="text" size="small" prepend-icon="mdi-skip-next" :disabled="busy" @click="emit('skip')">
@@ -635,6 +759,56 @@ watch(() => props.pick?.nonce, () => {
   &__example-pick {
     margin: -4px 0 12px;
     color: rgb(var(--v-theme-warning));
+  }
+
+  &__records-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 8px;
+    color: rgb(var(--v-theme-primary));
+    font-weight: 500;
+  }
+
+  &__records-btn {
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  &__records-confirm {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
+  }
+
+  &__records-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    :deep(.v-btn) {
+      text-transform: none;
+      letter-spacing: normal;
+    }
+  }
+
+  &__records-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 12px;
+    line-height: 1.45;
+
+    .v-icon {
+      margin-top: 2px;
+      flex: 0 0 auto;
+      color: rgb(var(--v-theme-info));
+    }
   }
 
   &__example-actions {

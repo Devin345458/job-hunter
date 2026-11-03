@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
 import type { JobRescoreResult, QuestionView, SkillClaimAnswer, SkillClaimPreview, SkillClaimResult, SkillClaimSource } from '#shared/types/pipeline'
-import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, type ChatQuestion } from '~/components/questions/chat-store'
+import type { RecordsDraft } from '#shared/types/question-chat'
+import { EXAMPLE_LEVELS, EXAMPLE_MAX_CHARS, RECORDS_DRAFT_LABEL, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Tap a Missing skill or a requirement that is not Have, and say whether you have it.
 // The panel shows what the knowledge base says today, asks the same Yes, Some experience, or No
@@ -47,6 +48,9 @@ const loadError = ref<string | null>(null)
 const level = ref<SkillClaimAnswer | null>(null)
 const exampleOpen = ref(false)
 const exampleText = ref('')
+/** A draft from Devin's records in the example box, with the source of each sentence. */
+const records = ref<{ draft: RecordsDraft; note: string | null } | null>(null)
+const shownRecords = computed(() => (records.value && exampleText.value.trim() ? records.value : null))
 const saving = ref<'save' | 'without' | 'no' | 'known' | null>(null)
 const saveError = ref<string | null>(null)
 const result = ref<SkillClaimResult | null>(null)
@@ -76,6 +80,7 @@ function reset() {
   level.value = null
   exampleOpen.value = false
   exampleText.value = ''
+  records.value = null
   saving.value = null
   saveError.value = null
   result.value = null
@@ -135,6 +140,7 @@ function useRepoSuggestion() {
   const s = preview.value?.question.repoSuggestion
   if (!s || busy.value) return
   saveError.value = null
+  records.value = null
   level.value = s.level
   exampleText.value = s.draft
   exampleOpen.value = true
@@ -324,7 +330,8 @@ function answerFromChat(value: string) {
 }
 
 /** "Use this draft": the example goes into the box, and on a pending question its level is picked too. */
-function useDraft(text: string, draftLevel: string | null = null) {
+function useDraft(text: string, draftLevel: string | null = null, meta?: DraftMeta) {
+  records.value = meta?.records ? { draft: meta.records, note: meta.memoryNote ?? null } : null
   if (isExampleLevel(draftLevel)) level.value = draftLevel
   else if (!level.value && isExampleLevel(previousAnswer.value)) level.value = previousAnswer.value
   exampleText.value = text
@@ -477,6 +484,7 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
             <div v-if="exampleOpen" class="sc__example" role="group" aria-labelledby="sc-example-label">
               <label id="sc-example-label" for="sc-example" class="sc__example-label">Where did you do it?</label>
               <p class="sc__example-hint">The job or project, what you did, and the result if there was one. It is saved exactly as you write it.</p>
+              <p v-if="shownRecords" class="sc__records-label">{{ RECORDS_DRAFT_LABEL }}</p>
               <v-textarea
                 id="sc-example"
                 v-model="exampleText"
@@ -512,6 +520,7 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
                   Save without an example
                 </v-btn>
               </div>
+              <QuestionsRecordsSources v-if="shownRecords" :draft="shownRecords.draft" :memory-note="shownRecords.note" />
             </div>
             <p v-if="saveError" class="sc__save-error" role="alert">{{ saveError }}</p>
           </section>
@@ -784,6 +793,13 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
     font-size: 0.9375rem;
     font-weight: 600;
     line-height: 1.4;
+  }
+
+  &__records-label {
+    margin: 0 0 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgb(var(--v-theme-primary));
   }
 
   &__example-hint {

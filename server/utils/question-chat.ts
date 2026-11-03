@@ -318,7 +318,7 @@ The draft field (a written answer Devin can paste into the answer box and edit):
 - List the entries the draft uses in draftSources, written as [category/key].
 - Write it in the first person as Devin, plain and specific, with no dashes. Keep it to the length this field suits: two to four sentences and under ${limit} characters.
 - If the knowledge base and the conversation give too little for an honest answer, or Devin asks for more than they support, leave draft null and ask him one short follow-up question in the reply instead (for example "Which AI tools do you use day to day?").
-- When you give a draft, the reply is one or two sentences naming the knowledge base entries it draws on. Do not repeat the draft in the reply.`
+- When you give a draft, the reply is one or two sentences naming the knowledge base entries it draws on. Do not repeat the draft in the reply.${RECORDS_DRAFT_RULE}`
 }
 
 function exampleDraftRules(limit: number): string {
@@ -330,7 +330,7 @@ The draft field (an example Devin can put in the "Where did you do it?" box unde
 - Once his messages say where and what, write the draft in the first person as Devin: one to three plain sentences, under ${limit} characters, no dashes. Keep his own words where you can. Name no employer, product, event, audience, number, date, or result that he did not type here, and never make it stronger than what he said.
 - Add no outcome, effect, benefit, or adjective he did not give ("so nothing was lost", "instead of being lost", "which saved time", "successfully", "key"). Keep each of his facts about the same subject he gave it.
 - If he gave no result and none of your replies has asked about the result yet, ask once before drafting. Otherwise write the draft without a result. Never ask about the result more than once.
-- When you give a draft, the reply is one short sentence saying it uses only what he told you here. Do not repeat the draft in the reply.`
+- When you give a draft, the reply is one short sentence saying it uses only what he told you here. Do not repeat the draft in the reply.${RECORDS_DRAFT_RULE}`
 }
 
 // ── Leads from Devin's past Claude sessions ─────────────────
@@ -505,11 +505,11 @@ const GLUE_WORDS = new Set([
   'projects', 'role', 'what', 'here', 'your', 'mine', 'myself', 'these', 'those', 'like', 'once', 'being', 'does', 'done',
 ])
 
-function stemWord(w: string): string {
+export function stemWord(w: string): string {
   return w.replace(/(?:ing|ed|es|ly|s)$/, '')
 }
 
-function contentWords(s: string): string[] {
+export function contentWords(s: string): string[] {
   return (s.toLowerCase().replace(/[‘’']/g, '').match(/[a-z]{4,}/g) ?? []).filter(w => !GLUE_WORDS.has(w))
 }
 
@@ -528,6 +528,20 @@ export function detailsFromLeads(draft: string, source: string, leadText: string
   }
   return [...out]
 }
+
+/** The heading the panel puts before a draft from his records when it sends that reply back (chat-store.ts toTurn). */
+export const RECORDS_DRAFT_HEADING = 'Draft from your records I gave you:'
+
+/** The drafts from his records that earlier replies gave, as the panel sent them back. */
+function recordsDraftsIn(messages: QuestionChatTurn[]): string {
+  return messages
+    .filter(m => m.role === 'assistant' && m.content.includes(RECORDS_DRAFT_HEADING))
+    .map(m => m.content.slice(m.content.indexOf(RECORDS_DRAFT_HEADING) + RECORDS_DRAFT_HEADING.length).trim())
+    .join('\n')
+}
+
+const RECORDS_DRAFT_RULE = `
+- An earlier reply may hold "${RECORDS_DRAFT_HEADING}": a draft the app built from his records and checked sentence by sentence. When he asks to change that draft, you may keep what it says (shorter, reordered, reworded), but add nothing it does not say.`
 
 /** Text of Devin's own messages, which an example draft may draw on. */
 function devinsWords(messages: QuestionChatTurn[]): string {
@@ -690,12 +704,12 @@ function dashCount(text: string | null | undefined): number {
   return (text ?? '').match(/[\u2013\u2014]/g)?.length ?? 0
 }
 
-function stop(kind: QuestionChatStop, message: string): QuestionChatResponse {
+function stop(kind: QuestionChatStop, message: string): Extract<QuestionChatResponse, { ok: false }> {
   return { ok: false, stop: kind, message }
 }
 
 /** One plain sentence for the panel when Claude cannot answer. */
-function stopFor(e: unknown): QuestionChatResponse {
+export function stopFor(e: unknown): Extract<QuestionChatResponse, { ok: false }> {
   if (e instanceof AiCreditExhausted) {
     return stop('credit', 'Claude is out of credit, so the chat cannot answer until credit is added to the Anthropic account (Console, Plans & Billing).')
   }
@@ -802,7 +816,10 @@ export async function questionChatReply(input: { questionId?: number | null; mes
     // from a past session (a client, a coworker) reaches a draft unless he typed it.
     // Logs carry counts only: the names could come from his past sessions.
     if (ctx && draft) {
-      const said = devinsWords(input.messages)
+      // A draft from his records (draft-from-records.ts) was checked sentence by sentence against
+      // his records before he saw it, so changing it ("make it shorter") may keep what it says.
+      const fromRecords = recordsDraftsIn(input.messages)
+      const said = `${devinsWords(input.messages)}${fromRecords ? `\n${fromRecords}` : ''}`
       const source = ctx.draftKind === 'example' ? said : `${said}\n${entries.map(e => `${e.key} ${e.value}`).join('\n')}`
       const numbers = unsupportedNumbers(draft, source)
       // GitHub findings are leads too, in this reply or an earlier one (the panel sends earlier

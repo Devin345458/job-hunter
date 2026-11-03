@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useDisplay } from 'vuetify'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
-import { EXAMPLE_LEVELS, saveChatQuestionId, savedChatQuestionId } from '~/components/questions/chat-store'
+import type { RecordsDraft } from '#shared/types/question-chat'
+import { EXAMPLE_LEVELS, saveChatQuestionId, savedChatQuestionId, type DraftMeta } from '~/components/questions/chat-store'
 
 definePageMeta({ layout: 'default' })
 
@@ -47,7 +48,7 @@ const chatQuestionId = ref<number | null>(null)
 const chatOpen = ref(false)
 const chatPanel = ref<{ focus: () => void } | null>(null)
 /** Drafts sent to a card's answer box by "Use this draft", keyed by question id. */
-const prefills = ref<Record<number, { text: string; nonce: number; level?: string | null }>>({})
+const prefills = ref<Record<number, { text: string; nonce: number; level?: string | null; records?: RecordsDraft | null; memoryNote?: string | null }>>({})
 /** What each card's open answer box holds, so "Use this draft" asks before replacing typed text. */
 const boxTexts = ref<Record<number, string>>({})
 /** The chat's "Answer: Yes" on a skill or experience question, keyed by question id: the card picks it and opens the example box. */
@@ -94,19 +95,20 @@ function answerFromChat(value: string) {
   answer(q, value)
 }
 
-function useDraft(text: string, level: string | null = null) {
+function useDraft(text: string, level: string | null = null, meta?: DraftMeta) {
   const q = chatQuestion.value
   if (!q) return
-  prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now(), level } }
+  prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now(), level, records: meta?.records ?? null, memoryNote: meta?.memoryNote ?? null } }
   chatOpen.value = false
   if (q.status === 'answered') {
     showAnswered.value = true
     if (onlyMissing.value && !missingExample.value.some(x => x.id === q.id)) onlyMissing.value = false
   }
   scrollToCard(q.id)
+  const what = meta?.records ? 'draft from your records' : 'draft'
   snackbar.info(q.takesExample && !q.legacy
-    ? `${level ? `${level} is picked and the` : 'The'} draft is in the example box. Edit it, then press Save.`
-    : 'The draft is in the answer box. Edit it, then press Save.')
+    ? `${level ? `${level} is picked and the` : 'The'} ${what} is in the example box. Edit it, then press Save.`
+    : `The ${what} is in the answer box. Edit it, then press Save.`)
 }
 
 async function load() {

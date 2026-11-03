@@ -1,5 +1,5 @@
 import type { QuestionListItem } from '#shared/types/learning'
-import type { QuestionChatResponse, QuestionChatTurn } from '#shared/types/question-chat'
+import type { QuestionChatResponse, QuestionChatTurn, RecordsDraft, RecordsDraftResponse } from '#shared/types/question-chat'
 import type { ChatMemoryUse } from '#shared/types/memory'
 import type { GithubChatSearch } from '#shared/types/repos'
 
@@ -39,6 +39,38 @@ export interface ChatMessage {
   kind?: 'memory_unreachable'
   /** What the reply's GitHub search found, listed under it as "Found in your GitHub". */
   github?: GithubChatSearch | null
+  /** A draft from Devin's records ("Draft from my records"): every sentence with the records it rests on. */
+  records?: RecordsDraft | null
+}
+
+/** What "Use this draft" hands the card along with the text and level: the records behind a draft from his records. */
+export interface DraftMeta {
+  records?: RecordsDraft | null
+  /** Why memory was left out, when it was ("Your laptop's memory is not reachable right now, so..."). */
+  memoryNote?: string | null
+}
+
+/** The label on a box filled from his records. */
+export const RECORDS_DRAFT_LABEL = 'Draft from your records; edit before saving'
+
+/**
+ * A question the records draft can write for: a skill or experience question's example, or a
+ * written answer (recordsDraftBox() in server/utils/draft-from-records.ts decides the same).
+ */
+export function draftsFromRecords(q: ChatQuestion | null | undefined): boolean {
+  if (!q || q.status === 'skipped') return false
+  if (takesExample(q)) return !(q.status === 'answered' && (q.answer ?? '').trim().toLowerCase() === 'no')
+  if (q.legacy) return true
+  return q.answerType === 'text' && (q.kind === 'knows' || q.kind === 'has_done' || q.kind === 'other')
+}
+
+/** Typed asks that mean "draft it from my records" rather than a question about the draft. */
+const RECORDS_ASK = /\b(from|use|using|with|in) my (records|history|memory|past sessions|sessions|github|commits)\b|\byou should be able to (answer|write|draft)\b|\b(draft|write) (it|this|one|the example|an answer|my answer)( for me)?\b|\bhelp me (answer|write)\b/i
+/** Asks to change a draft already given, which the regular chat handles. */
+const REVISION_ASK = /\b(shorter|longer|shorten|change|remove|drop|rephrase|reword|instead|tweak|fix|less|more formal|casual|add)\b/i
+
+export function asksForRecordsDraft(text: string): boolean {
+  return RECORDS_ASK.test(text) && !REVISION_ASK.test(text)
 }
 
 /** Said once per conversation when the memory server cannot be reached; the chat carries on without it. */
@@ -72,13 +104,16 @@ function toTurn(m: ChatMessage): QuestionChatTurn {
   if (m.role !== 'assistant') return { role: m.role as QuestionChatTurn['role'], content: m.content }
   const parts = [m.content]
   if (m.github) parts.push(githubNote(m.github))
-  if (m.draft) parts.push(`Draft I gave you:\n${m.draft}`)
+  if (m.records) parts.push(`Draft from your records I gave you:\n${m.records.text}`)
+  else if (m.draft) parts.push(`Draft I gave you:\n${m.draft}`)
   return { role: 'assistant', content: parts.join('\n\n') }
 }
 
 export function useQuestionChat() {
   const threads = useState<Record<string, ChatMessage[]>>('question-chat-threads', () => ({}))
   const sending = useState<Record<string, boolean>>('question-chat-sending', () => ({}))
+  /** Threads waiting on a draft from records (a longer wait than a reply: it searches first). */
+  const drafting = useState<Record<string, boolean>>('question-chat-drafting', () => ({}))
   const restored = useState('question-chat-restored', () => false)
 
   function persist() {
@@ -140,6 +175,49 @@ export function useQuestionChat() {
     }
   }
 
+  /**
+   * "Draft from my records": the server drafts from his knowledge base, his GitHub, his past Claude
+   * sessions, and what he typed here. The thread shows the ask and the draft with its sources; the
+   * response comes back so a card can fill its box directly. `typed` is a message he typed that
+   * asked for it, shown as his turn and counted as something he said.
+   */
+  async function draftFromRecords(questionId: number, typed?: string): Promise<RecordsDraftResponse | null> {
+    const key = chatThreadKey(questionId)
+    if (sending.value[key]) return null
+    const ask = typed?.trim() || 'Draft from my records'
+    push(key, { id: newId(), role: 'user', content: ask })
+    sending.value = { ...sending.value, [key]: true }
+    drafting.value = { ...drafting.value, [key]: true }
+    try {
+      // Only what he typed counts as "you said", never the button's own words.
+      const said = (threads.value[key] ?? []).filter(m => m.role === 'user' && m.content !== 'Draft from my records').map(m => m.content)
+      const res = await $fetch<RecordsDraftResponse>(`/api/questions/${questionId}/draft`, { method: 'POST', body: { said } })
+      if (res.ok) {
+        if (res.memoryNote) push(key, { id: newId(), role: 'notice', content: res.memoryNote })
+        push(key, {
+          id: newId(),
+          role: 'assistant',
+          content: res.reply,
+          draft: res.draft?.text ?? null,
+          suggestedAnswer: res.draft?.level ?? null,
+          records: res.draft,
+          memory: null,
+        })
+      }
+      else push(key, { id: newId(), role: 'notice', content: res.message })
+      return res
+    }
+    catch (e: any) {
+      const message = e?.data?.statusMessage || 'Could not reach the server to draft from your records. Check your connection and try again.'
+      push(key, { id: newId(), role: 'notice', content: message })
+      return { ok: false, stop: 'unavailable', message }
+    }
+    finally {
+      sending.value = { ...sending.value, [key]: false }
+      drafting.value = { ...drafting.value, [key]: false }
+    }
+  }
+
   function clear(questionId: number | null) {
     const next = { ...threads.value }
     delete next[chatThreadKey(questionId)]
@@ -147,7 +225,7 @@ export function useQuestionChat() {
     persist()
   }
 
-  return { threads, sending, restore, send, clear }
+  return { threads, sending, drafting, restore, send, draftFromRecords, clear }
 }
 
 /** A yes or no question about a skill or past work: Yes and Some experience open the example box. */
