@@ -170,6 +170,19 @@ export function primaryModel(): string {
   return useRuntimeConfig().aiModel || MODEL
 }
 
+/**
+ * The model for one step (ai_calls.purpose), from NUXT_AI_STEP_MODELS ("enrich=claude-sonnet-5-5,
+ * match=claude-haiku-5-5"). Null when the step is not listed, so the call uses primaryModel().
+ */
+export function stepModel(purpose: string): string | null {
+  const raw = String(useRuntimeConfig().aiStepModels ?? '')
+  for (const pair of raw.split(',')) {
+    const [step, model] = pair.split('=').map(s => s.trim())
+    if (step && model && step === purpose) return model
+  }
+  return null
+}
+
 export function fallbackModel(): string {
   return useRuntimeConfig().aiFallbackModel || FALLBACK_MODEL
 }
@@ -212,7 +225,8 @@ async function withModel<T extends { usage?: any; model?: string; stop_reason?: 
   assertAiBudget()
   // After a credit or key refusal, fail fast for ten minutes instead of sending requests that will be refused.
   if (Date.now() < accountStop.until) throw accountStop.kind === 'key' ? new AiKeyRejected() : new AiCreditExhausted()
-  const first = preferredModel && !(preferredModel === primaryModel() && Date.now() < primaryUnavailableUntil) ? preferredModel : activeModel()
+  const preferred = preferredModel || stepModel(opts.purpose) || undefined
+  const first = preferred && !(preferred === primaryModel() && Date.now() < primaryUnavailableUntil) ? preferred : activeModel()
   const models = [...new Set([first, fallbackModel()])]
   let lastError: any
   for (const model of models) {

@@ -40,6 +40,7 @@
   - `NUXT_SANDBOX_TOKEN` (16+ chars; enables the throwaway employer form at `/sandbox/apply/<token>`)
   - `NUXT_PUBLIC_BASE_URL` (e.g. `https://job-hunter.devinsmini.com`)
   - `NUXT_AI_MODEL` (default `claude-opus-5-5`), `NUXT_AI_FALLBACK_MODEL` (default `claude-haiku-4-5`)
+  - `NUXT_AI_STEP_MODELS` (per-step overrides, `purpose=model` pairs, comma separated; production since 2026-11-03: `enrich=claude-sonnet-5-5,match=claude-haiku-5-5,gap_candidates=claude-sonnet-5-5,gap_decisions=claude-sonnet-5-5`, from the evaluation in scripts/eval)
   - `NUXT_DAILY_AI_BUDGET_USD` (default 10)
   - `NUXT_GITHUB_TOKEN` (push access for demo repos and the resume site; used only on approve)
   - `NUXT_GITHUB_READ_TOKENS` (comma separated read-only fine-grained tokens for GitHub evidence, one per owner, with Contents, Metadata, and Pull requests read access) or `NUXT_GITHUB_READ_TOKEN` (one token). With neither set, GitHub evidence reads with `NUXT_GITHUB_TOKEN`.
