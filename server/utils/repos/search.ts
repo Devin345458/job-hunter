@@ -404,12 +404,18 @@ const SUBJECT_STOP = new Set([
   'views', 'themes', 'plugins', 'config', 'src', 'tracking', 'experiments', 'variants', 'structured', 'schema',
 ])
 
-/** The subject's own words: its parts split on "or", "and", commas, and slashes, without stop words. */
+/**
+ * The subject's own words: its parts split on "or", "and", commas, and slashes, without stop words.
+ * Only SUBJECT_STOP filters them: a subject named by a word that is noise as a Claude term
+ * ("Webhooks", "Authentication") still anchors on its own name.
+ */
 export function subjectParts(subject: string): string[] {
   return subject.split(/,|\/|\(|\)|\bor\b|\band\b|&/i)
     .map(p => p.replace(/\b(proficient in|experience with|knowledge of|using)\b/gi, ' ').replace(/\s+/g, ' ').trim())
     .filter(p => p.length >= 2 && p.split(' ').length <= 3)
-    .filter(p => !p.split(' ').every(w => SUBJECT_STOP.has(w.toLowerCase()) || GENERIC_CODE.has(w.toLowerCase())))
+    .filter(p => !p.split(' ').every(w => SUBJECT_STOP.has(w.toLowerCase())))
+    // A one-word plural also matches its singular: "Webhooks" finds "webhook".
+    .flatMap(p => (/^[a-z]{4,}s$/i.test(p) && !/ss$/i.test(p) ? [p, p.slice(0, -1)] : [p]))
 }
 
 function squash(s: string) {
@@ -423,10 +429,10 @@ function squash(s: string) {
 function namedIn(term: string, text: string, parts: string[]): boolean {
   const t = term.replace(/^[./]+|\/+$/g, '').trim()
   if (t.length < 2) return false
-  if (SUBJECT_STOP.has(t.toLowerCase()) || GENERIC_CODE.has(t.toLowerCase())) return false
-  if (new RegExp(anchorPattern(t), 'i').test(text)) return true
   const sq = squash(t)
-  return sq.length >= 3 && parts.some(p => squash(p) === sq)
+  if (sq.length >= 3 && parts.some(p => squash(p) === sq)) return true
+  if (SUBJECT_STOP.has(t.toLowerCase()) || GENERIC_CODE.has(t.toLowerCase())) return false
+  return new RegExp(anchorPattern(t), 'i').test(text)
 }
 
 /**
