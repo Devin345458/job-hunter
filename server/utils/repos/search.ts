@@ -335,14 +335,15 @@ const SIGNATURES: Signature[] = [
     terms: { code: ['LLM', 'LLMs', 'agentic', 'tool_use', 'RAG', 'embeddings', 'OpenAI', 'Anthropic API', 'Claude API', 'Claude Code', 'subagent', 'subagents', 'autonomous', 'langchain', 'prompt caching'], paths: ['/agents/', '/llm/'], packages: ['@anthropic-ai/sdk', 'anthropic', 'openai', 'langchain', 'llamaindex', '@ai-sdk/anthropic'] },
   },
   {
-    // Agentic and AI tooling work, found by what it touches: Claude Code config and skills, agent
+    // Agentic and AI tooling work, found by what it touches: Claude Code config, skills, and
     // hooks, MCP servers, Orca, and the AI SDKs. Not for AEO or AI-powered search subjects.
     when: /\bai[- ]native\b|\bagentic\b|\bcoding (agents?|assistants?|tools?)\b|\bagents?\b.*\b(ai|llm|platforms?)\b|\b(internal|ai) agents?\b|\bai tool(s|ing)?\b|\bllms?\b.*\bintegrat|\bclaude code\b|\bcopilot\b/i,
     terms: {
       code: [],
       // Claude Code's own config folders, not all of .claude/: every app repo keeps its docs in
-      // .claude/context/, and those roadmap edits are not AI tooling work.
-      paths: ['.claude/agents/', '.claude/commands/', '.claude/skills/', '.claude/hooks/', '.claude/settings.json', 'claude.md', 'agents.md', 'skill.md', 'skills/', 'hooks/', '.mcp.json', 'mcp/', 'orca.yaml'],
+      // .claude/context/, and those roadmap edits are not AI tooling work. No CLAUDE.md (feature
+      // commits edit it in passing) and no bare hooks/ (React keeps its hooks in src/hooks/).
+      paths: ['.claude/agents/', '.claude/commands/', '.claude/skills/', '.claude/hooks/', '.claude/settings.json', 'agents.md', 'skill.md', 'skills/', '.mcp.json', 'mcp/', 'orca.yaml'],
       packages: ['@anthropic-ai/sdk', '@anthropic-ai/claude-agent-sdk', '@anthropic-ai/claude-code', 'openai', 'langchain', '@modelcontextprotocol/sdk'],
     },
   },
