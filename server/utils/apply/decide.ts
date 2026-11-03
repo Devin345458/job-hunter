@@ -4,6 +4,7 @@ import { applications, jobs } from '../../db/schema'
 import type { FormAnswer, FormSnapshot, GapAnalysis } from '#shared/types/pipeline'
 import { AiBudgetExceeded } from '../ai'
 import { analyzeGaps } from '../demo/gaps'
+import { askGapQuestions, scoredGap } from '../skills-judge'
 import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { nowSql, parseJson } from '../review'
 import { ATS_LABELS, atsFromUrl, requiresAccount } from './ats'
@@ -63,10 +64,16 @@ export function decideRowDone(app: Pick<AppRow, 'gapAnalysisJson' | 'formSnapsho
   return !!app.gapAnalysisJson && (!!app.formSnapshotJson || !!app.formError)
 }
 
-/** to_decide rows a run or a budget stop cut off before their gap plan or form read was stored. */
+/**
+ * to_decide rows a run or a budget stop cut off before their gap plan or form read was stored.
+ * A row whose job closed or dropped under the threshold since waits: its card is not shown.
+ */
 export function unfinishedDecideRows(limit = MAX_FORM_READS_PER_RUN): AppRow[] {
-  return useDb().select().from(applications).where(eq(applications.status, 'to_decide')).all()
-    .filter(a => !decideRowDone(a))
+  return useDb().select({ app: applications, job: jobs }).from(applications)
+    .innerJoin(jobs, eq(applications.jobId, jobs.id))
+    .where(eq(applications.status, 'to_decide')).all()
+    .filter(r => !decideRowDone(r.app) && decideCardVisible(r.job))
+    .map(r => r.app)
     .slice(0, limit)
 }
 
@@ -125,6 +132,12 @@ export async function readForDecision(app: AppRow, log: (m: string) => void = ()
   const base = { applicationId: app.id, jobId: job.id }
 
   if (!app.gapAnalysisJson) {
+    // A job scored since decide-first carries its gap plan from the scoring call: copied here, with
+    // its open questions asked now that the job has a Decide card. Older scores get one here.
+    const scored = scoredGap(job)
+    if (scored) update(app.id, { gapAnalysisJson: JSON.stringify(askGapQuestions(scored, { applicationId: app.id, job })) })
+  }
+  if (!db.select({ g: applications.gapAnalysisJson }).from(applications).where(eq(applications.id, app.id)).get()?.g) {
     update(app.id, { statusDetail: 'Checking the gaps against your knowledge base' })
     try {
       const gap = await analyzeGaps(app.id)

@@ -4,6 +4,7 @@ import { applications, jobs, questions } from '../../db/schema'
 import type { FormAnswer, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
 import { AiBudgetExceeded } from '../ai'
 import { analyzeGaps } from '../demo/gaps'
+import { askGapQuestions, scoredGap } from '../skills-judge'
 import { candidateContact, loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { dataPath } from '../paths'
 import { saveCoverLetterPdf, saveResumePdf } from '../pdf'
@@ -191,9 +192,13 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
     const letter = await writeCoverLetter(job, entries, tailored.resume, ref)
     await saveCoverLetterPdf(letter.text, name, contact, coverLetterPdfPath(app.id))
     const notes = `${tailored.notes}\n\n${letter.notes}`
-    // The gap plan was made before Devin decided (stage 1, server/utils/apply/decide.ts). Only an
-    // application from before decide-first, or one whose plan is missing, gets one here.
-    if (!existing?.gapAnalysisJson) {
+    // The gap plan was made before Devin decided (stage 1, server/utils/apply/decide.ts), or by the
+    // scoring call. Only an application from before decide-first with neither gets one here.
+    const scored = existing?.gapAnalysisJson ? null : scoredGap(job)
+    if (scored) {
+      update(app.id, { coverLetter: letter.text, tailoringNotes: notes, gapAnalysisJson: JSON.stringify(askGapQuestions(scored, { applicationId: app.id, job })) })
+    }
+    else if (!existing?.gapAnalysisJson) {
       update(app.id, { coverLetter: letter.text, tailoringNotes: notes, statusDetail: 'Analyzing gaps' })
       try {
         const gap = await analyzeGaps(app.id)

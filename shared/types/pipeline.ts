@@ -81,6 +81,13 @@ export interface Requirement {
   status: 'have' | 'partial' | 'lack' | 'unknown'
   /** Knowledge base entry that supports a have or partial status. */
   evidence: string | null
+  /**
+   * Set by scoring (decide-first): have because real experience in the cited entry covers it,
+   * though the entry does not name it. Counted as have in the score and the Matched chips.
+   */
+  reframed?: boolean
+  /** Why: the reframe's one sentence, or the answer Devin gave about it. */
+  note?: string | null
 }
 
 export interface ScoreComponent {
@@ -99,6 +106,13 @@ export interface ScoreBreakdown {
     missing: string[]
     /** The parts the skills score is summed from: must-haves 0 to 45, stack 0 to 25, seniority 0 to 20, domain 0 to 10. */
     parts?: { mustHaves: number; stack: number; seniority: number; domain: number }
+    /**
+     * The gap plan made in the same scoring call (decide-first). Kept inside skills so a rescore in
+     * code (learned rules, pay preferences) keeps it. Absent on jobs scored before the merge.
+     */
+    gap?: GapAnalysis
+    /** True when mustHaves was computed in code from the final requirement statuses. */
+    mustHavesFromStatuses?: boolean
   }
   compensation: {
     score: number | null
@@ -224,6 +238,12 @@ export interface GapItem {
   rationale: string
   demoIdea?: { title: string; summary: string; stack: string[]; scopeHours: number } | null
   questionId?: number | null
+  /** The knowledge base entry a reframe rests on ("skill/Laravel"), or the one a status came from. */
+  evidence?: string | null
+  /** The skill or experience in a few words ("Go"), which questions dedupe on. */
+  subject?: string
+  /** An ask not asked yet: the question the read-forms step asks once the job has a Decide card. */
+  ask?: { kind: 'knows' | 'has_done'; question: string; codeShowable: boolean } | null
 }
 
 export interface GapAnalysis {
