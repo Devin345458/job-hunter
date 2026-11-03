@@ -13,6 +13,11 @@ const prepareFailed = computed(() => /^prepare_failed/.test(props.item.form.erro
 const prepareAttempt = computed(() => Number(/^prepare_failed attempt=(\d+)/.exec(props.item.form.error ?? '')?.[1] ?? 0))
 const prepareReason = computed(() => plainError(props.item.form.error))
 const detailText = computed(() => plainError(props.item.statusDetail))
+/** "writing the cover letter": the status detail the preparation keeps current, lower case after "Preparing:". */
+const preparingStep = computed(() => {
+  const t = (detailText.value || 'Waiting in the queue to prepare').replace(/\.$/, '')
+  return /^[A-Z][a-z]/.test(t) ? t.charAt(0).toLowerCase() + t.slice(1) : t
+})
 const submitErrorText = computed(() => {
   const t = plainError(props.item.submitError)
   return t && t !== detailText.value ? t : ''
@@ -58,7 +63,7 @@ const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/
       <p class="prog__panel-text">{{ prepareReason || 'The preparation stopped with an error.' }}</p>
       <p class="prog__panel-hint">
         <template v-if="prepareAttempt < 3">
-          Nothing was written for this application yet. The next scheduled run retries it automatically (attempt {{ prepareAttempt }} of 3 so far), or prepare it again now.
+          Nothing was written for this application yet. The next scheduled run continues it (attempt {{ prepareAttempt }} of 3 so far), or prepare it again now.
         </template>
         <template v-else>
           Three attempts failed, so the scheduled runs stop retrying it. Prepare it again once the cause is fixed.
@@ -74,14 +79,13 @@ const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/
       </div>
     </div>
 
-    <!-- Preparing again (started from this card) -->
+    <!-- Preparing after Apply, or Prepare again: the step it is on now -->
     <div v-else-if="item.status === 'preparing'" class="prog__panel prog__panel--info prog__panel--first" role="status">
       <div class="prog__panel-title">
         <v-progress-circular indeterminate size="16" width="2" />
-        Preparing again
+        Preparing: {{ preparingStep }}
       </div>
-      <p class="prog__panel-text">{{ detailText || 'Tailoring the resume' }}</p>
-      <p class="prog__panel-hint">It comes back to the review queue when the resume, cover letter, and form are ready.</p>
+      <p class="prog__panel-hint">This card moves to Ready to send when the resume, cover letter, and form answers are written and the form is filled. Nothing is sent until you approve it.</p>
     </div>
 
     <ol v-else class="prog__steps" aria-label="Progress after approve">

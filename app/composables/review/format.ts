@@ -7,7 +7,11 @@ import { properName } from '#shared/utils/names'
 
 // ── Status vocabulary shared by every review component ──────
 
-export type ReviewGroup = 'decide' | 'attention' | 'sending' | 'sent' | 'closed'
+/**
+ * decide: stage 1, Apply or Reject before anything is written. preparing: Apply was tapped and the
+ * resume, letter, and form are being written. send: stage 2, prepared, Approve or Reject.
+ */
+export type ReviewGroup = 'decide' | 'preparing' | 'send' | 'attention' | 'sending' | 'sent' | 'closed'
 
 export interface StatusMeta {
   label: string
@@ -17,8 +21,10 @@ export interface StatusMeta {
 }
 
 export const REVIEW_STATUS: Partial<Record<ApplicationStatus, StatusMeta>> = {
-  proposed: { label: 'Ready to decide', color: 'primary', icon: 'mdi-inbox-arrow-down-outline', group: 'decide' },
-  needs_input: { label: 'Needs your answer', color: 'warning', icon: 'mdi-comment-question-outline', group: 'decide' },
+  to_decide: { label: 'Apply or reject', color: 'primary', icon: 'mdi-help-rhombus-outline', group: 'decide' },
+  preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock', group: 'preparing' },
+  proposed: { label: 'Ready to send', color: 'primary', icon: 'mdi-inbox-arrow-down-outline', group: 'send' },
+  needs_input: { label: 'Needs your answer', color: 'warning', icon: 'mdi-comment-question-outline', group: 'send' },
   approved: { label: 'Approved', color: 'primary', icon: 'mdi-check', group: 'sending' },
   publishing: { label: 'Publishing demo', color: 'primary', icon: 'mdi-source-branch', group: 'sending' },
   submitting: { label: 'Submitting', color: 'primary', icon: 'mdi-send-outline', group: 'sending' },
@@ -26,13 +32,13 @@ export const REVIEW_STATUS: Partial<Record<ApplicationStatus, StatusMeta>> = {
   submit_failed: { label: 'Submit failed', color: 'error', icon: 'mdi-alert-octagon-outline', group: 'attention' },
   needs_manual: { label: 'Submit by hand', color: 'warning', icon: 'mdi-hand-pointing-right', group: 'attention' },
   declined: { label: 'Rejected', color: 'secondary', icon: 'mdi-close', group: 'closed' },
-  // Not in the review queue; shown on a card whose preparation was started again from it.
-  preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock', group: 'closed' },
 }
 
 /** Group names, the same on the review queue and the Applications page. */
 export const GROUP_LABEL: Record<ReviewGroup, string> = {
   decide: 'To decide',
+  preparing: 'Preparing',
+  send: 'Ready to send',
   attention: 'Needs you',
   sending: 'Sending',
   sent: 'Submitted',
@@ -48,6 +54,21 @@ export function statusMeta(status: ApplicationStatus): StatusMeta {
   return REVIEW_STATUS[status] ?? { label: status.replace(/_/g, ' '), color: 'secondary', icon: 'mdi-circle-small', group: 'closed' }
 }
 
+/**
+ * Question ids the employer form's fields wait on: a field's needsQuestionId, or an optional field
+ * asked without blocking ("Optional: asked you as question #12"). The card's other open questions
+ * come from the gap plan (skills and experience to confirm).
+ */
+export function formQuestionIds(item: Pick<ReviewItem, 'form'>): Set<number> {
+  const ids = new Set<number>()
+  for (const a of item.form.answers) {
+    if (typeof a.needsQuestionId === 'number') ids.add(a.needsQuestionId)
+    const m = /^Optional: asked you as question #(\d+)/.exec(a.sourceDetail ?? '')
+    if (m) ids.add(Number(m[1]))
+  }
+  return ids
+}
+
 /** Preparation threw before anything was written (form_error starts with prepare_failed). */
 export function prepareFailed(item: Pick<ReviewItem, 'status' | 'form'>): boolean {
   return item.status === 'needs_manual' && /^prepare_failed/.test(item.form.error ?? '')
@@ -61,8 +82,12 @@ export function itemStatusMeta(item: Pick<ReviewItem, 'status' | 'form'>): Statu
 
 /** States the server is still working through after approve. The dashboard polls these. */
 export const IN_FLIGHT: ApplicationStatus[] = ['approved', 'publishing', 'submitting']
+/** Being prepared after Apply (or Prepare again). The review queue polls these until they are ready to send. */
+export const PREPARING: ApplicationStatus[] = ['preparing']
+/** Stage 1: Apply queues the preparation. Approve is never offered here. */
+export const CAN_APPLY: ApplicationStatus[] = ['to_decide']
 export const CAN_APPROVE: ApplicationStatus[] = ['proposed', 'submit_failed']
-export const CAN_REJECT: ApplicationStatus[] = ['proposed', 'needs_input', 'submit_failed', 'needs_manual']
+export const CAN_REJECT: ApplicationStatus[] = ['to_decide', 'proposed', 'needs_input', 'submit_failed', 'needs_manual']
 
 // ── Formatting ───────────────────────────────────────────────
 

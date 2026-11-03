@@ -90,7 +90,7 @@ async function logout() {
 }
 
 function badgeFor(item: NavItem): number {
-  if (item.to === '/') return health.stats.value?.review.toDecide ?? 0
+  if (item.to === '/') return (health.stats.value?.review.toDecide ?? 0) + (health.stats.value?.review.toSend ?? 0)
   if (item.to === '/questions') return health.stats.value?.questions.pending ?? 0
   return 0
 }

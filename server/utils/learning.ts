@@ -310,7 +310,7 @@ function whatDevinDid(ev: Evidence): string {
   const parts: string[] = []
   const sorted = [...ev.reasons].sort((a, b) => b[1].size - a[1].size)
   for (const [code, set] of sorted) {
-    if (code === 'approve') parts.push(`approved ${plural(set.size, 'job')}`)
+    if (code === 'approve') parts.push(`applied to ${plural(set.size, 'job')}`)
     else parts.push(`rejected ${plural(set.size, 'job')} as ${reasonLabel(code)}`)
   }
   return `You ${parts.join(' and ')}`
@@ -638,11 +638,34 @@ export interface RecomputeResult {
  * A sandbox decision counts only when its job is a sandbox job, and then it makes sandbox rules,
  * which apply to sandbox jobs only and never to search. Test data never shapes the real search.
  */
+/**
+ * The decisions learning reads: Apply (stage 1) and Approve (stage 2) are both the positive
+ * signal, counted once per application as decision 'approve'; a Reject is the negative one. When
+ * Devin applied and then rejected the same application at stage 2, the reject is his last word
+ * and the positive is dropped. Employer outcomes (decision 'outcome') are left out.
+ */
+export function learningDecisions(): DecisionRow[] {
+  const all = useDb().select().from(decisions).where(inArray(decisions.decision, ['apply', 'approve', 'reject'])).orderBy(decisions.id).all()
+  const rejected = new Map<number, number>()
+  for (const d of all) if (d.decision === 'reject') rejected.set(d.applicationId, d.id)
+  const positive = new Set<number>()
+  const out: DecisionRow[] = []
+  for (const d of all) {
+    if (d.decision === 'reject') { out.push(d); continue }
+    if (positive.has(d.applicationId)) continue
+    if ((rejected.get(d.applicationId) ?? 0) > d.id) continue
+    positive.add(d.applicationId)
+    out.push(d.decision === 'apply' ? { ...d, decision: 'approve' } : d)
+  }
+  return out
+}
+
 export function recomputeRules(): RecomputeResult {
   const db = useDb()
-  // Approve and reject only. Employer outcomes are decisions rows too (decision 'outcome'), and
-  // deriveRules reads anything that is not an approve as a rejection; outcomes never move a score.
-  const all = db.select().from(decisions).where(inArray(decisions.decision, ['approve', 'reject'])).orderBy(decisions.id).all()
+  // Apply, approve, and reject only (learningDecisions). Employer outcomes are decisions rows too
+  // (decision 'outcome'), and deriveRules reads anything that is not an approve as a rejection;
+  // outcomes never move a score.
+  const all = learningDecisions()
   const jobIds = [...new Set(all.map(d => d.jobId))]
   const sandboxJobs = new Set(
     jobIds.length
@@ -758,7 +781,7 @@ export function listRuleViews(): LearnedRuleView[] {
       weight: r.weight,
       evidenceCount: r.evidenceCount,
       reasonCode: r.reasonCode,
-      reasonLabel: r.reasonCode === 'approve' ? 'Approved' : reasonLabel(r.reasonCode),
+      reasonLabel: r.reasonCode === 'approve' ? 'Applied' : reasonLabel(r.reasonCode),
       explanation: r.explanation,
       active: r.active,
       isSandbox: r.isSandbox,
@@ -769,8 +792,7 @@ export function listRuleViews(): LearnedRuleView[] {
 }
 
 export function decisionCounts(): DecisionCounts {
-  const rows = useDb().select({ decision: decisions.decision, reasonCode: decisions.reasonCode, isSandbox: decisions.isSandbox })
-    .from(decisions).where(inArray(decisions.decision, ['approve', 'reject'])).all()
+  const rows = learningDecisions()
   const byReason = new Map<string, number>()
   for (const r of rows) if (r.decision === 'reject') byReason.set(r.reasonCode || 'other', (byReason.get(r.reasonCode || 'other') ?? 0) + 1)
   return {

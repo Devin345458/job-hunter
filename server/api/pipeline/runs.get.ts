@@ -55,6 +55,7 @@ function describe(r: RunRow): PipelineRunView {
 // and the latest one is returned on its own. The latest daily run is returned on its own too, so
 // the health line never depends on how many rows fit in the list. `queue` is the job queue: what
 // runs now, what waits, and the last day's interrupted, failed, canceled, and resumed items.
+// `aiStages` is the AI spend by stage (before Devin decides, after Apply), today and over 7 days.
 export default defineEventHandler((event) => {
   const query = getQuery(event)
   const limit = Math.min(Number(query.limit) || 50, 200)
@@ -71,6 +72,7 @@ export default defineEventHandler((event) => {
     lastHeartbeat: lastHeartbeatRow ? view(lastHeartbeatRow) : null,
     aiSpentToday: aiSpentToday(),
     aiBudget: aiBudget(),
+    aiStages: aiStageCosts(),
     aiProblem: aiAccountProblem(),
     queue: queueSnapshot(),
   }

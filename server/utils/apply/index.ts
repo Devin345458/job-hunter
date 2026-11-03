@@ -5,7 +5,8 @@ import { refreshStoredAnswers } from './answers'
 // blockers, and flips needs_input to proposed when nothing blocks. Call it for every
 // needs_input application whose answers reference the answered question id.
 // The rest of the engine is imported from its own module:
-//   prepare.ts  prepareApplication, refillApplicationForm, pickJobsToPrepare, refreshAllNeedsInput
+//   prepare.ts  prepareApplication, refillApplicationForm, refreshAllNeedsInput
+//   decide.ts   stage 1: pickJobsToDecide, readForDecision (gap plan and form read before Apply)
 //   submit.ts   submitApplication (only runApproval calls it)
 //   answers.ts  deriveAnswers (personal facts come from server/utils/facts.ts)
 //   ats.ts      atsFromUrl, requiresAccount, ATS_LABELS
