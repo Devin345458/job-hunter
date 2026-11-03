@@ -749,6 +749,8 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   const canSearch = githubSearchAvailable()
   const skillQuestion = !!ctx && (ctx.question.kind === 'knows' || ctx.question.kind === 'has_done')
   const searchContext = [ctx?.question.subject, ctx?.question.question, latest].filter(Boolean).join('\n')
+  // Signatures (search.ts) follow the subject and what Devin typed, not the question text.
+  const searchOpts = { subject: ctx?.question.subject ?? null, signatureText: [ctx?.question.subject || ctx?.question.question, latest].filter(Boolean).join('\n') }
   const searchLog = (m: string) => console.info(`[question-chat] github: ${m}`)
   let github: GithubChatSearch | null = null
   /** He asked for a search but nothing says what to look for, so there was none to run. */
@@ -768,7 +770,7 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   }) as Promise<ChatOut>
   try {
     if (canSearch && asksGithub(latest)) {
-      github = await githubChatSearch(await chatSearchTerms(ctx, input.messages), searchContext, searchLog)
+      github = await githubChatSearch(await chatSearchTerms(ctx, input.messages), searchContext, searchLog, searchOpts)
       if (!github.terms.length) {
         github = null
         askWhat = true
@@ -777,7 +779,7 @@ export async function questionChatReply(input: { questionId?: number | null; mes
     let out = await ask(canSearch && !github)
     if (!github && hasTerms(out.githubSearch)) {
       // Claude called the search: run it, then ask again with what it found.
-      github = await githubChatSearch(cleanTerms(out.githubSearch, 12), searchContext, searchLog)
+      github = await githubChatSearch(cleanTerms(out.githubSearch, 12), searchContext, searchLog, searchOpts)
       if (!github.terms.length) {
         github = null
         askWhat = true

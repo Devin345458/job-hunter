@@ -4,7 +4,7 @@ import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/s
 import type { RepoEvidence } from '#shared/types/repos'
 import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../ai'
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
-import { cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
+import { SEARCH_RULES, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 
 // repos:suggest. For each pending knows or has_done question: one cheap Claude call turns the
@@ -91,6 +91,17 @@ Rules:
 - evidence: one to five listed commits that best show it, by sha, each with one plain factual line about what that commit did ("Added WebAuthn registration and login endpoints"). Never cite a sha that is not listed.
 - Prefer commits that changed code or configuration. A commit that only edited notes, docs, or a task list is weaker. Cite it only when nothing better shows the point.
 - draft: the example only, for a box under the question that asks "Where did you do it?". The level is picked separately, so never start with Yes, No, or the level. First person as Devin, one to three plain sentences, under ${DRAFT_MAX} characters. Say which repo, what he built or did, and when (month and year from the commit dates). Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes. Empty when level is None.`
+}
+
+/** The search rules version a stored result was made under; 1 before versions were recorded. */
+export function rulesOf(termsJson: string | null | undefined): number {
+  try {
+    const n = Number(JSON.parse(termsJson ?? '{}')?.rules)
+    return Number.isInteger(n) && n > 0 ? n : 1
+  }
+  catch {
+    return 1
+  }
 }
 
 function shortSha(sha: string) {
@@ -200,10 +211,12 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         t = { searchable: out.searchable, terms: cleanTerms({ code: out.code, paths: specificPaths(out.paths, subject), packages: out.packages }) }
         termsBySubject.set(subject.toLowerCase(), t)
       }
-      const termsJson = JSON.stringify(t)
+      // The rules version rides along in terms_json, so a hit set found under newer rules is judged again.
+      const termsJson = JSON.stringify({ searchable: t.searchable, terms: t.terms, rules: SEARCH_RULES })
       // Files, folders, and packages only this subject produces (schema.graphql, shopify.app.toml)
       // are searched whatever Claude gave, so path evidence never depends on it naming them.
-      const searchTerms = withSignatures(t.searchable ? t.terms : { code: [], paths: [], packages: [] }, `${subject}\n${q.question}`)
+      // Signatures follow the subject alone: words in the question text name other technologies too.
+      const searchTerms = withSignatures(t.searchable ? t.terms : { code: [], paths: [], packages: [] }, subject)
       const empty = !searchTerms.code.length && !searchTerms.paths.length && !searchTerms.packages.length
       if (empty) {
         upsert(q.id, { status: 'none', subject, termsJson, level: null, draft: null, evidenceJson: null, commitShasJson: '[]', error: null })
@@ -211,7 +224,8 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         stats.results.push({ questionId: q.id, subject, outcome: 'not searchable in code' })
         continue
       }
-      const found = await searchEvidence(searchTerms, log)
+      // Only the subject's own words, named terms, and signatures make a hit (subjectAnchors).
+      const found = await searchEvidence(searchTerms, log, { anchors: { subject, text: `${subject}\n${q.question}` } })
       stats.errors.push(...found.errors)
       const hitShas = found.hits.map(h => h.sha).sort()
       if (!hitShas.length) {
@@ -221,10 +235,17 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         continue
       }
       // Keep a standing suggestion while every commit it cites is still found. Judge again otherwise.
+      // A result from older search rules stands only while the hit set is exactly the same: the old
+      // rules let generic words in, so a changed set is judged again even when its citations survive.
       if (!opts.force && prev && prev.subject === subject) {
         const cited = parseEvidence(prev.evidenceJson).map(e => e.sha)
         const sameSet = JSON.stringify(hitShas) === (prev.commitShasJson ?? '')
-        if ((prev.status === 'suggested' && cited.length && cited.every(s => hitShas.includes(s))) || (prev.status === 'none' && sameSet)) {
+        const sameRules = rulesOf(prev.termsJson) === SEARCH_RULES
+        const keep = sameRules
+          ? (prev.status === 'suggested' && cited.length && cited.every(s => hitShas.includes(s))) || (prev.status === 'none' && sameSet)
+          : (prev.status === 'suggested' || prev.status === 'none') && sameSet
+        if (keep) {
+          if (!sameRules) db.update(repoSuggestions).set({ termsJson }).where(eq(repoSuggestions.questionId, q.id)).run()
           stats.unchanged++
           stats.results.push({ questionId: q.id, subject, outcome: 'unchanged', hits: hitShas.length })
           continue

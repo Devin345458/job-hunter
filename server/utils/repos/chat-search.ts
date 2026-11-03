@@ -2,7 +2,7 @@ import { eq, inArray } from 'drizzle-orm'
 import { repoCommits, repoSources } from '../../db/schema'
 import type { GithubChatSearch, GithubFinding } from '#shared/types/repos'
 import { CodeSearchLimited, GithubApiError, isSsoError, isSsoSkip, readTokens, searchCode, tokenAccounts, tokenAt } from './github'
-import { cleanTerms, pathMatches, searchEvidence, termPattern, withSignatures, type TermSet } from './search'
+import { anchorPattern, cleanTerms, messageBody, pathMatches, searchEvidence, withSignatures, type TermSet } from './search'
 import { currentIdentities, isAppRepo, savedIdentities, storedFind, type RepoRow } from './settings'
 
 // The question chat's GitHub search (server/utils/question-chat.ts), in order:
@@ -59,10 +59,14 @@ function repoCommitCount(r: RepoRow, found: Record<string, number> | null): numb
 
 /**
  * Searches Devin's GitHub for the terms (Claude's, plus the file and package signatures of what
- * `context` names). Never throws for GitHub trouble: what could not be searched is in coverage.
+ * `context` names). opts.subject is the question's subject: with `context`, it decides which terms
+ * can make a commit a hit (subjectAnchors in search.ts). Never throws for GitHub trouble: what
+ * could not be searched is in coverage.
  */
-export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}): Promise<GithubChatSearch> {
-  const terms = withSignatures(cleanTerms(rawTerms, 20), context)
+export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}, opts: { subject?: string | null; signatureText?: string } = {}): Promise<GithubChatSearch> {
+  // Signatures follow the subject and Devin's own message (opts.signatureText), never the question text.
+  const signatureText = opts.signatureText ?? (opts.subject?.trim() || context)
+  const terms = withSignatures(cleanTerms(rawTerms, 20), signatureText)
   const db = useDb()
   // This app's own repo names every skill as data, so it is never searched (isAppRepo).
   const included = db.select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
@@ -85,7 +89,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   }
 
   // 1 and 2: his indexed commits (messages and paths) and the repo facts.
-  const evidence = await searchEvidence(terms, log, { diffs: false })
+  const evidence = await searchEvidence(terms, log, { diffs: false, anchors: { subject: opts.subject ?? null, text: context, signatureText } })
   // Strongest first, taken in turn from each repo so one busy repo does not fill the list.
   const byRepo = new Map<string, typeof evidence.hits>()
   for (const h of evidence.hits) byRepo.set(h.repo, [...(byRepo.get(h.repo) ?? []), h])
@@ -93,7 +97,8 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   const messages = shown.length
     ? new Map(db.select({ sha: repoCommits.sha, message: repoCommits.message }).from(repoCommits).where(inArray(repoCommits.sha, shown.map(h => h.sha))).all().map(r => [r.sha, r.message] as const))
     : new Map<string, string>()
-  const textTerms = [...terms.code, ...terms.packages]
+  // A commit is a hit through an anchor, so the panel names the anchor that matched.
+  const textTerms = [...evidence.anchors.code, ...evidence.anchors.packages]
   const commits: GithubFinding[] = shown.map(h => ({
     kind: 'commit',
     repo: h.repo,
@@ -102,9 +107,9 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
     date: h.date,
     detail: h.reasons.includes('path') && h.paths.length
       ? `files: ${h.paths.slice(0, 3).join(', ')}${h.paths.length > 3 ? ` and ${h.paths.length - 3} more` : ''}`
-      : messageMatch(messages.get(h.sha) ?? h.subject, textTerms),
+      : messageMatch(messageBody(messages.get(h.sha) ?? h.subject), textTerms),
   }))
-  result.pathSummaries = pathSummaries(indexed.map(r => r.fullName), terms.paths)
+  result.pathSummaries = pathSummaries(indexed.map(r => r.fullName), evidence.anchors.paths)
   const dependencies: GithubFinding[] = evidence.dependencies.slice(0, CHAT_SEARCH_LIMITS.dependencies).map(d => ({
     kind: 'dependency',
     repo: d.repo,
@@ -124,7 +129,8 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
 
   // 3: code search, only in switched-on repos that hold his commits (or are his own), most commits first.
   const files: GithubFinding[] = []
-  const words = codeSearchWords(terms, context)
+  // Code search looks only for anchors (subject words, named terms, signatures), like the commit hits.
+  const words = codeSearchWords(evidence.anchors, context)
   let personal = new Set<string>()
   try {
     // Saved logins first: listing every repo of every token after a restart takes seconds.
@@ -203,7 +209,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
 /** Which search word a commit message holds, as the panel shows it: 'message has "GraphQL"'. */
 function messageMatch(message: string, words: string[]): string {
   for (const w of words) {
-    const m = new RegExp(termPattern(w), 'i').exec(message)
+    const m = new RegExp(anchorPattern(w), 'i').exec(message)
     if (m) return `message has "${m[0]}"`
   }
   return 'commit message'
