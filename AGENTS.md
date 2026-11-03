@@ -48,6 +48,7 @@
   - `NUXT_ADZUNA_APP_ID`
   - `NUXT_ADZUNA_API_KEY`
   - `NUXT_DATABASE_PATH` (defaults to `./data/job-hunter.db`)
+  - `NUXT_DEMOS_ENABLED` (`false` switches demo builds and demo publishing off; production since 2026-11-03)
   - `NUXT_SCHEDULER_ENABLED` (`false` turns off the cron schedule; every Orca worktree sets it; production leaves it unset)
   - `NUXT_MEMORY_MCP_URL` (Devin's claude-self-reflect memory server, e.g. `http://127.0.0.1:7391/mcp`; production reaches it over Tailscale; empty turns memory leads off)
   - `NUXT_MEMORY_MCP_HOST_HEADER` (default `127.0.0.1:7391`; sent as the Host header when the memory URL's host is not local, because the daemon rejects any other Host)

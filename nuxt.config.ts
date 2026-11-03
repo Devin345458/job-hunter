@@ -188,6 +188,8 @@ export default defineNuxtConfig({
     resumeRepo: 'Devin345458/resume',
     // Demo project builder (server/utils/demo). Model to try first; empty uses aiModel, and
     // aiFallbackModel still applies when the key cannot call it.
+    // 'false' switches demo builds and demo publishing off (server/utils/demo/enabled.ts)
+    demosEnabled: 'true',
     demoModel: '',
     // Hard limits per demos:build run and per demo build
     demoMaxPerRun: '1',

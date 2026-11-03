@@ -1,3 +1,4 @@
+import { DEMOS_OFF_MESSAGE, demosEnabled } from '~~/server/utils/demo/enabled'
 import { startRebuild } from '~~/server/utils/demo/build'
 import { isDemoBuilding, isPreviewBuilding } from '~~/server/utils/demo/progress'
 import { getAppWithJob, getDemo, toDemoDetail } from '~~/server/utils/demo/store'
@@ -10,6 +11,7 @@ export default defineEventHandler((event) => {
   const id = Number(getRouterParam(event, 'id'))
   const demo = Number.isInteger(id) ? getDemo(id) : null
   if (!demo) throw createError({ statusCode: 404, statusMessage: 'Demo not found' })
+  if (!demosEnabled()) throw createError({ statusCode: 409, statusMessage: DEMOS_OFF_MESSAGE })
   if (isDemoBuilding(id) || isPreviewBuilding(id)) {
     throw createError({ statusCode: 409, statusMessage: 'This demo is already building' })
   }

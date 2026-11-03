@@ -1,3 +1,4 @@
+import { DEMOS_OFF_MESSAGE, demosEnabled } from './enabled'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { and, desc, eq, inArray } from 'drizzle-orm'
@@ -612,6 +613,10 @@ export interface DemoRunOptions {
 
 export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => void) {
   const db = useDb()
+  if (!demosEnabled()) {
+    log(DEMOS_OFF_MESSAGE)
+    return { candidates: 0, analyzed: 0, recommended: 0, built: 0, failed: 0, skipped: 0, interrupted: 0, budgetStopped: false, costUsd: 0, demos: [], note: DEMOS_OFF_MESSAGE }
+  }
   const max = Math.max(0, Number(opts.max ?? useRuntimeConfig().demoMaxPerRun) || 1)
 
   // A demo left in building by a server restart is not building anymore.

@@ -1,3 +1,4 @@
+import { demosEnabled } from '../demo/enabled'
 import type { FormSnapshot } from '#shared/types/pipeline'
 import { isOwnSandbox } from '../sandbox'
 import { ATS_LABELS, requiresAccount } from './ats'
@@ -28,7 +29,7 @@ function parse<T>(raw: string | null): T | null {
  */
 export function approveEffect(app: AppLike, job: JobLike, demoStatus: string | null | undefined): ApproveEffect {
   const config = useRuntimeConfig()
-  const demoBlocked = demoStatus === 'built' && !String(config.githubToken || '')
+  const demoBlocked = demosEnabled() && demoStatus === 'built' && !String(config.githubToken || '')
     ? 'The demo project cannot be published because the GitHub token is not set'
     : null
   const snapshot = parse<FormSnapshot>(app.formSnapshotJson)
@@ -38,7 +39,7 @@ export function approveEffect(app: AppLike, job: JobLike, demoStatus: string | n
 
   if (job.atsType && requiresAccount(job.atsType as any)) return manual(`${ATS_LABELS[job.atsType as keyof typeof ATS_LABELS] ?? job.atsType} needs an applicant account, which the pipeline never creates`)
   if (!job.applyUrl) return manual('the listing has no application link')
-  if (!sandbox && config.realSubmitEnabled !== 'true') return manual('automated submits to real employers are switched off')
+  if (!sandbox && String(config.realSubmitEnabled) !== 'true') return manual('automated submits to real employers are switched off')
   if (!snapshot || snapshot.fields.length === 0) return manual('there is no filled form to submit from')
   const stopping = snapshot.blockers.find(b => /^(login wall|closed posting|account required|no form|file upload)/.test(b))
   if (stopping) return manual(stopping.replace(/^[a-z ]+:\s*/, ''))
