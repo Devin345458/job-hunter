@@ -3,7 +3,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import { z } from 'zod'
 import { applications, jobs, questions, scoreHistory } from '../db/schema'
 import type { CompensationBreakdown, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
-import { aiSpentToday, aiStructured, AiBudgetExceeded } from './ai'
+import { aiSpentToday, aiStructured, AiBudgetExceeded, cachedPrompt } from './ai'
 import { askCompQuestions, type CompPreferences, type CompScore, FLOOR_SUBJECT, HEALTH_SUBJECT, loadCompPreferences, scoreCompensation } from './compensation'
 import { type KnowledgeEntry, loadKnowledge } from './knowledge'
 import { learnedAdjustment } from './learned-score'
@@ -93,8 +93,26 @@ function askedLines(rows: Array<{ status: string; kind: string | null; subject: 
  * gap_decisions prompts: stored statuses are re-checked, years are compared with the profile
  * entry, and the gap leave-out list applies.
  */
-export function skillsPrompt(job: Pick<JobRow, 'title' | 'company' | 'location'>, postingText: string, reqs: Requirement[], entries: KnowledgeEntry[], asked: Parameters<typeof askedLines>[0] = []): string {
-  return `Judge how well this candidate's skills and experience fit this job: first every requirement, then three parts of the fit.
+export function skillsPrompt(job: Pick<JobRow, 'title' | 'company' | 'location'>, postingText: string, reqs: Requirement[], entries: KnowledgeEntry[], asked: Parameters<typeof askedLines>[0] = []) {
+  // Cached blocks, most stable first: the instructions, the knowledge base (changes when Devin
+  // saves an answer), the questions already asked (change when one is asked or answered), then
+  // this job's requirements and posting.
+  return cachedPrompt([
+    SKILLS_INSTRUCTIONS,
+    `\n\n## Candidate knowledge base\n${knowledgeBlock(entries)}`,
+    `\n\n## Questions already asked\n${askedLines(asked)}`,
+  ], `\n\n## Requirements
+${requirementLines(reqs)}
+
+## Job
+Title: ${job.title}
+Company: ${job.company}
+Location: ${job.location ?? 'not stated'}
+
+${postingText.slice(0, 8000)}`)
+}
+
+const SKILLS_INSTRUCTIONS = `Judge how well this candidate's skills and experience fit this job: first every requirement, then three parts of the fit.
 
 Use only the candidate knowledge base and the candidate's answered questions below. Do not assume skills they do not list.
 The stored statuses below came from an earlier step and can be wrong. Judge every requirement again: before you say have or reframe, check that a knowledge base entry shows it. Compare every years requirement with profile/Years of Experience yourself: a requirement for more years than that entry states is lack, whatever its stored status says.
@@ -119,24 +137,7 @@ Use any whole number inside each range, not only round numbers.
 - domain (0 to 10): the industry or product domain against work the candidate has done. 10 = the same domain, 5 = nearby, 0 = unrelated or highly specialized (for example kernel, chip, or quantitative trading work).
 - mustHaves (0 to 45): only used when no requirements are listed. 45 = all of the must-haves, 22 = half, 0 = none; a partial match counts as half.
 
-Plain American English. No dashes. Quote the knowledge base as written; never add years, numbers, or facts about the candidate that it does not state.
-
-## Requirements
-${requirementLines(reqs)}
-
-## Questions already asked
-${askedLines(asked)}
-
-## Candidate knowledge base
-${knowledgeBlock(entries)}
-
-## Job
-Title: ${job.title}
-Company: ${job.company}
-Location: ${job.location ?? 'not stated'}
-
-${postingText.slice(0, 8000)}`
-}
+Plain American English. No dashes. Quote the knowledge base as written; never add years, numbers, or facts about the candidate that it does not state.`
 
 /**
  * The skills score and the gap plan from one Claude call, with the posting requirements as their

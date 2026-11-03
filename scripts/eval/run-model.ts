@@ -53,7 +53,7 @@ const config = {
 await setupGlobals(config)
 
 const { useAI, aiSpentToday } = await import('../../server/utils/ai')
-const { PRICES, priceOf } = await import('../../server/utils/model')
+const { PRICES, usageCost } = await import('../../server/utils/model')
 const { extractPosting } = await import('../../server/utils/enrich/extract')
 const { buildCompensation } = await import('../../server/utils/compensation')
 const { scoreJobs } = await import('../../server/utils/scoring')
@@ -93,10 +93,7 @@ interface CallRecord {
 const calls: CallRecord[] = []
 
 function costOf(m: string, u: any): number {
-  if (!u) return 0
-  const p = priceOf(m)
-  return ((u.input_tokens ?? 0) * p.input + (u.output_tokens ?? 0) * p.output
-    + (u.cache_read_input_tokens ?? 0) * p.cacheRead + (u.cache_creation_input_tokens ?? 0) * p.input * 1.25) / 1_000_000
+  return u ? usageCost(m, u) : 0
 }
 
 const client = useAI() as any

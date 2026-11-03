@@ -160,8 +160,10 @@ function skippedFor(subject: string, rows: QuestionRow[]): boolean {
 
 /** Knows and has_done questions in every state, loaded once per scoring call. */
 export function skillQuestions(): QuestionRow[] {
+  // Ordered by id, so the scoring prompt lists them in the same order every time (prompt caching).
   return useDb().select().from(questions)
     .where(and(inArray(questions.kind, ['has_done', 'knows']), inArray(questions.status, ['pending', 'answered', 'skipped'])))
+    .orderBy(questions.id)
     .all()
 }
 

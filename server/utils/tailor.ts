@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { InferSelectModel } from 'drizzle-orm'
 import type { jobs } from '../db/schema'
 import type { TailoredResume } from '#shared/types/pipeline'
-import { aiStructured } from './ai'
+import { aiStructured, cachedPrompt } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { htmlToText } from './review'
 import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims, type ClaimLine, type ClaimOutcome } from './apply/evidence'
@@ -108,14 +108,15 @@ export async function tailorResumeForJob(job: JobRow, entries: KnowledgeEntry[],
     effort: 'high',
     maxTokens: 6000,
     ref,
-    prompt: `KNOWLEDGE BASE
+    // The knowledge base and its keys are a cached prefix; the posting follows.
+    prompt: cachedPrompt([`KNOWLEDGE BASE
 ${knowledgeForPrompt(entries)}
 
 EXPERIENCE KEYS (use these exactly)
-${kbJobs.map(j => `- ${j.key}`).join('\n')}
-${projectsKb.length ? `\nPROJECT KEYS\n${projectsKb.map(p => `- ${p.key}`).join('\n')}\n` : ''}
+${kbJobs.map(j => `- ${j.key}`).join('\n')}${projectsKb.length ? `\n\nPROJECT KEYS\n${projectsKb.map(p => `- ${p.key}`).join('\n')}` : ''}`], `
+
 TARGET POSTING: ${job.title} at ${job.company}
-${posting}`,
+${posting}`),
   })
 
   // Assemble from the knowledge base structure; the model only supplies wording.

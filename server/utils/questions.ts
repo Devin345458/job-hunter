@@ -5,7 +5,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../db/schema'
 import type { FormAnswer, GapAnalysis, Requirement } from '#shared/types/pipeline'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
-import { aiStructured, fallbackModel } from './ai'
+import { aiStructured, cachedPrompt, fallbackModel } from './ai'
 import {
   ADDRESS_KNOWLEDGE_KEYS,
   addressAnswerParts,
@@ -1093,8 +1093,10 @@ export async function matchLabelsToExisting(
   if (open.length === 0) return { results, called: false, error: null }
 
   const db = useDb()
+  // Ordered by id, so the prompt lists them in the same order every time (prompt caching).
   const candidates = db.select().from(questions)
     .where(and(inArray(questions.kind, ['fact', 'form_field']), inArray(questions.status, ['pending', 'answered'])))
+    .orderBy(questions.id)
     .all()
   const profile = loadKnowledge('profile')
   const now = nowSql()
@@ -1118,14 +1120,16 @@ export async function matchLabelsToExisting(
       maxTokens: 1500,
       ref,
       system: MATCH_SYSTEM,
-      prompt: `ITEMS
-${open.map((i, n) => `L${n + 1}: ${checks[i]!.label}${checks[i]!.question && checks[i]!.question !== checks[i]!.label ? ` (asked as: ${checks[i]!.question})` : ''}${checks[i]!.selfId ? ` [this is question Q${checks[i]!.selfId}; only match an older question]` : ''}`).join('\n')}
-
-EXISTING QUESTIONS
+      // The existing questions and profile entries first (a cached prefix), then the labels to check.
+      // On claude-haiku-4-5 (the default fallback model) a prefix under 4096 tokens is not cached.
+      prompt: cachedPrompt([`EXISTING QUESTIONS
 ${candidates.map(q => `Q${q.id}: ${q.question}${q.subject && q.subject !== q.question ? ` (form label: ${q.subject})` : ''}${q.status === 'answered' ? ' [answered]' : ''}`).join('\n') || '(none)'}
 
 PROFILE ENTRIES
-${profile.map((e, n) => `K${n + 1}: ${e.key}`).join('\n') || '(none)'}`,
+${profile.map((e, n) => `K${n + 1}: ${e.key}`).join('\n') || '(none)'}`], `
+
+ITEMS
+${open.map((i, n) => `L${n + 1}: ${checks[i]!.label}${checks[i]!.question && checks[i]!.question !== checks[i]!.label ? ` (asked as: ${checks[i]!.question})` : ''}${checks[i]!.selfId ? ` [this is question Q${checks[i]!.selfId}; only match an older question]` : ''}`).join('\n')}`),
     })
   }
   catch (e: any) {

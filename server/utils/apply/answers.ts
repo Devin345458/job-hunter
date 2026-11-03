@@ -3,7 +3,7 @@ import { and, eq, inArray, like, ne } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../../db/schema'
 import type { FormAnswer, FormField, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
-import { aiStructured } from '../ai'
+import { aiStructured, cachedPrompt } from '../ai'
 import { cleanStoredAnswer, factForQuestion, factStatements, isHistoryDate, matchFact, resolveFacts, resolveField, type FactValues } from '../facts'
 import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { ADDRESS_CONTEXT, answeredValue, askOrReuse, askQuestion, canonicalQuestion, type AskInput, type AskOutcome, type QuestionRow } from '../questions'
@@ -464,11 +464,12 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext, 
       maxTokens: 8000,
       effort: 'medium',
       ref,
-      prompt: `KNOWLEDGE BASE
+      // The knowledge base and the facts drawn from it are a cached prefix; this application follows.
+      prompt: cachedPrompt([`KNOWLEDGE BASE
 ${knowledgeForPrompt(ctx.entries)}
 
 KNOWN FACTS
-${knownFacts.join('\n') || '(none)'}
+${knownFacts.join('\n') || '(none)'}`], `
 
 TAILORED RESUME
 ${ctx.resume ? `${ctx.resume.summary}\n${ctx.resume.experience.map(e => `${e.title}, ${e.company} (${e.period}): ${e.bullets.join(' ')}`).join('\n')}` : '(none)'}
@@ -482,7 +483,7 @@ POSTING: ${ctx.job.title} at ${ctx.job.company}
 ${posting}
 
 FIELDS
-${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'}${f.maxLength ? ` | max ${f.maxLength} characters` : ''} | ${f.label}${f.options?.length ? `\n  options: ${f.options.slice(0, 120).map(o => `"${o}"`).join(', ')}` : ''}`).join('\n')}`,
+${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'}${f.maxLength ? ` | max ${f.maxLength} characters` : ''} | ${f.label}${f.options?.length ? `\n  options: ${f.options.slice(0, 120).map(o => `"${o}"`).join(', ')}` : ''}`).join('\n')}`),
     })
 
     const sourceText = `${knowledgeText(ctx.entries)}\n${ctx.coverLetter ?? ''}\n${posting}\n${knownFacts.join('\n')}`

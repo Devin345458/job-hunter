@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { InferSelectModel } from 'drizzle-orm'
 import type { jobs } from '../db/schema'
 import type { TailoredResume } from '#shared/types/pipeline'
-import { aiStructured } from './ai'
+import { aiStructured, cachedPrompt } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { profileValue } from './knowledge'
 import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, verifyClaims, type ClaimOutcome } from './apply/evidence'
@@ -48,15 +48,16 @@ export async function writeCoverLetter(
     effort: 'medium',
     maxTokens: 3000,
     ref,
-    prompt: `KNOWLEDGE BASE
-${knowledgeForPrompt(entries)}
+    // The knowledge base is a cached prefix; this job's resume and posting follow.
+    prompt: cachedPrompt([`KNOWLEDGE BASE
+${knowledgeForPrompt(entries)}`], `
 
 TAILORED RESUME (already checked against the knowledge base)
 Summary: ${resume.summary}
 ${resume.experience.map(e => `${e.title}, ${e.company} (${e.period})\n${e.bullets.map(b => `- ${b}`).join('\n')}`).join('\n')}
 
 POSTING: ${job.title} at ${job.company}
-${posting}`,
+${posting}`),
   })
 
   const paragraphs = draft.paragraphs.map(p => splitSentences(scrubDashes(p.trim()))).filter(p => p.length > 0)

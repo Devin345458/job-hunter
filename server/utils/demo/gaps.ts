@@ -76,8 +76,10 @@ function wasSkipped(subject: string): boolean {
 }
 
 function knownQuestions() {
+  // Ordered by id, so the prompt lists them in the same order every time (prompt caching).
   return useDb().select().from(questions)
     .where(and(inArray(questions.kind, ['has_done', 'knows']), inArray(questions.status, ['pending', 'answered', 'skipped'])))
+    .orderBy(questions.id)
     .all()
 }
 
@@ -109,15 +111,17 @@ export async function analyzeGaps(applicationId: number): Promise<GapAnalysis> {
     maxTokens: 8000,
     ref: { type: 'application', id: applicationId },
     system: 'You compare a job posting with a candidate\'s knowledge base and list what the knowledge base does not clearly cover. You judge only from the knowledge base and the candidate\'s answered questions. You never guess what the candidate has or has not done.',
-    prompt: `Candidate: Devin Hollister-Graham.
+    // The rules stay after the job's requirements, where they were tuned ("Leave out" below is
+    // named from the requirements block); the cached prefix is the knowledge base and the questions.
+    prompt: cachedPrompt([`Candidate: Devin Hollister-Graham.
 
 <knowledge_base>
 ${kb}
-</knowledge_base>
+</knowledge_base>`, `
 
 <questions_already_asked>
 ${askedText}
-</questions_already_asked>
+</questions_already_asked>`], `
 
 ${reqText
   ? `<requirements>\n${reqText}\n</requirements>\n\nThese requirements were already judged against the knowledge base. List every one whose status is not "have", except the kinds under "Leave out" below.`
@@ -131,7 +135,7 @@ Leave out:
 - Anything the knowledge base names directly, even when the posting asks for more years, bigger data, or more depth than the entry states. Those are not gaps a project can close.
 - Soft skills and attitudes (communication, language fluency, reliability, adaptability, ownership, openness to or curiosity about a tool), leadership, years of experience, education, work authorization, and location.
 When a question was already asked about the same thing, reuse its exact subject text.
-Write the question so Devin can answer yes or no in one tap. Plain American English, no dashes.`,
+Write the question so Devin can answer yes or no in one tap. Plain American English, no dashes.`),
   })
 
   // ── Step 2: apply answers, ask when silent ──
@@ -215,21 +219,8 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
       maxTokens: 8000,
       ref: { type: 'application', id: applicationId },
       system: 'You advise a senior web developer on how to handle the gaps between his record and a job posting. You are careful about anything published under his name.',
-      prompt: `Job: ${job.title} at ${job.company}.
-
-<posting>
-${posting.slice(0, 12000)}
-</posting>
-
-<knowledge_base>
-${kb}
-</knowledge_base>
-
-<gaps>
-${gapText}
-</gaps>
-
-For each gap choose one decision:
+      // Instructions and knowledge base first (the same for every application), then this job.
+      prompt: cachedPrompt([`For each gap choose one decision:
 - demo: build a small public project that shows the skill. Choose it only when all of these hold:
   * A small, credible, self-contained project of about four hours of focused work would show the skill directly (the project is written in that language or uses that tool as its core).
   * Devin could own it in an interview: it is published on his GitHub under his name, so it must be something a senior web developer could read end to end and explain.
@@ -243,7 +234,21 @@ Hard rules for demo:
 - Never choose demo when the evidence shows Devin already uses the skill; choose reframe.
 - Never choose demo when the project would need a database server, message broker, or cloud service to run.
 Recommend at most one demo. Keep demo ideas modest and concrete (for example a webhook receiver with signature checks and retries, not a platform).
-Plain American English. No dashes. Quote the knowledge base as written; never add years, numbers, or facts about Devin that it does not state.`,
+Plain American English. No dashes. Quote the knowledge base as written; never add years, numbers, or facts about Devin that it does not state.`, `
+
+<knowledge_base>
+${kb}
+</knowledge_base>`], `
+
+Job: ${job.title} at ${job.company}.
+
+<posting>
+${posting.slice(0, 12000)}
+</posting>
+
+<gaps>
+${gapText}
+</gaps>`),
     })
 
     for (let i = 0; i < confirmed.length; i++) {

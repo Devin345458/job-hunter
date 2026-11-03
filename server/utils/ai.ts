@@ -3,7 +3,7 @@ import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { z } from 'zod'
 import { and, gte, sql } from 'drizzle-orm'
 import { aiCalls } from '../db/schema'
-import { FALLBACK_MODEL, MODEL, priceOf, profileOf, type Effort } from './model'
+import { FALLBACK_MODEL, MODEL, profileOf, usageCost, type Effort } from './model'
 import { BULK_TASKS, currentQueueContext, getItem } from './queue'
 import type { TailoredResume } from '#shared/types/pipeline'
 
@@ -170,15 +170,6 @@ export function aiStopError(): AiBudgetExceeded | null {
   return null
 }
 
-function costOf(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) {
-  const price = priceOf(model)
-  // Cache writes (5 minute TTL) bill at 1.25x the input price.
-  return ((usage.input_tokens ?? 0) * price.input
-    + (usage.output_tokens ?? 0) * price.output
-    + (usage.cache_read_input_tokens ?? 0) * price.cacheRead
-    + (usage.cache_creation_input_tokens ?? 0) * price.input * 1.25) / 1_000_000
-}
-
 function logCall(purpose: string, model: string, usage: any, ref?: { type: string; id: number }, error?: string) {
   try {
     useDb().insert(aiCalls).values({
@@ -187,7 +178,8 @@ function logCall(purpose: string, model: string, usage: any, ref?: { type: strin
       inputTokens: usage?.input_tokens ?? 0,
       outputTokens: usage?.output_tokens ?? 0,
       cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-      costUsd: usage ? costOf(model, usage) : 0,
+      cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
+      costUsd: usage ? usageCost(model, usage) : 0,
       refType: ref?.type ?? null,
       refId: ref?.id ?? null,
       error: error ?? null,
@@ -198,10 +190,57 @@ function logCall(purpose: string, model: string, usage: any, ref?: { type: strin
   }
 }
 
+// ── Prompt caching ──
+// Caching is a prefix match: the request up to a breakpoint (system, then the user message's
+// blocks in order) is stored for 5 minutes, and a later request that starts with the same bytes
+// reads it at a tenth of the input price (a twentieth on Opus 5.5); the write costs 1.25x. So a
+// prompt puts what repeats first (instructions, then the knowledge base) and the per-job text
+// last. A prefix under 512 tokens (4096 on claude-haiku-4-5) is never cached, and a request
+// allows 4 breakpoints. usage.cache_read_input_tokens and cache_creation_input_tokens, stored as
+// ai_calls.cache_read_tokens and cache_write_tokens, show whether it hits.
+
+const MAX_BREAKPOINTS = 4
+const EPHEMERAL = { type: 'ephemeral' } as const
+
+/**
+ * A user prompt as text blocks: each stable part ends at a cache breakpoint, and the varying part
+ * (the posting, the job, the lines to check) follows unmarked. Claude reads the parts in order, so
+ * the parts joined are the prompt; a part after the first starts with its own separator ("\n\n").
+ * Empty parts are left out.
+ */
+export function cachedPrompt(stable: string[], varying: string): Anthropic.Beta.BetaTextBlockParam[] {
+  const blocks: Anthropic.Beta.BetaTextBlockParam[] = stable.filter(s => s.trim())
+    .map(text => ({ type: 'text', text, cache_control: EPHEMERAL }))
+  if (varying.trim()) blocks.push({ type: 'text', text: varying })
+  return blocks
+}
+
+/** A system prompt as one text block with a cache breakpoint after it. */
+export function cachedSystem(text: string): Anthropic.Beta.BetaTextBlockParam[] {
+  return [{ type: 'text', text, cache_control: EPHEMERAL }]
+}
+
+/** Keeps the last MAX_BREAKPOINTS cache breakpoints of a request (system first, then the prompt) and drops earlier ones. */
+function limitBreakpoints<T extends { cache_control?: unknown }>(blocks: T[]): T[] {
+  let keep = MAX_BREAKPOINTS
+  const out = [...blocks]
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (!out[i]!.cache_control) continue
+    if (keep > 0) keep--
+    else {
+      const { cache_control: _, ...rest } = out[i]!
+      out[i] = rest as T
+    }
+  }
+  return out
+}
+
 export interface AiCallOptions {
   /** Short label stored with the usage row, e.g. "match", "tailor", "form_answers". */
   purpose: string
-  system?: string
+  /** A string, or blocks from cachedSystem() when the system prompt alone is worth caching. */
+  system?: string | Anthropic.Beta.BetaTextBlockParam[]
+  /** A string, or blocks from cachedPrompt() so the stable start of the prompt is cached. */
   prompt: string | Anthropic.Beta.BetaContentBlockParam[]
   effort?: Effort
   maxTokens?: number
@@ -251,12 +290,16 @@ function buildParams(model: string, opts: AiCallOptions, format?: unknown) {
   const outputConfig: Record<string, unknown> = {}
   if (profile.effort) outputConfig.effort = opts.effort ?? 'medium'
   if (format) outputConfig.format = format
+  // At most four breakpoints across system and prompt; the latest ones are kept.
+  const system = Array.isArray(opts.system) ? opts.system : null
+  const prompt = Array.isArray(opts.prompt) ? opts.prompt : null
+  const marked = limitBreakpoints([...(system ?? []), ...(prompt ?? [])] as Array<{ cache_control?: unknown }>)
   return {
     model,
     max_tokens: opts.maxTokens ?? 16000,
     ...(profile.fallbacks ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' } : {}),
-    ...(opts.system ? { system: opts.system } : {}),
-    messages: [{ role: 'user', content: opts.prompt }],
+    ...(opts.system ? { system: system ? marked.slice(0, system.length) : opts.system } : {}),
+    messages: [{ role: 'user', content: prompt ? marked.slice(system?.length ?? 0) : opts.prompt }],
     ...(Object.keys(outputConfig).length ? { output_config: outputConfig } : {}),
   } as any
 }
@@ -414,15 +457,15 @@ export async function scoreJobMatch(jobDescription: string, knowledgeBase: Recor
     purpose: 'match',
     effort: 'low',
     maxTokens: 4000,
-    prompt: `You are a job matching assistant. Score how well this candidate matches the job description.
+    prompt: cachedPrompt([`You are a job matching assistant. Score how well this candidate matches the job description.
 
 ## Candidate Profile
-${formatKnowledge(knowledgeBase)}
+${formatKnowledge(knowledgeBase)}`], `
 
 ## Job Description
 ${jobDescription}
 
-Focus on role level match, tech stack overlap, and experience relevance. Be realistic and do not inflate scores.`,
+Focus on role level match, tech stack overlap, and experience relevance. Be realistic and do not inflate scores.`),
   })
 }
 

@@ -15,6 +15,8 @@ import {
   aiBudget,
   aiSpentToday,
   aiStructured,
+  cachedPrompt,
+  cachedSystem,
   fallbackModel,
 } from './ai'
 import { scrubDashes, unsupportedNumbers } from './apply/text'
@@ -600,7 +602,12 @@ function transcript(messages: QuestionChatTurn[]): string {
   return history.map(m => `${m.role === 'user' ? 'Devin' : 'You'}: ${m.content.trim()}`).join('\n\n')
 }
 
-function buildPrompt(ctx: QuestionChatContext | null, entries: KnowledgeEntry[], messages: QuestionChatTurn[], excerpts: ChatExcerpt[] = [], github: GithubChatSearch | null = null): string {
+/**
+ * The chat prompt as cached blocks, most stable first: the knowledge base (the same for every
+ * chat), then the question and its posting (the same for every turn about that question), then
+ * what changes each turn.
+ */
+function buildPrompt(ctx: QuestionChatContext | null, entries: KnowledgeEntry[], messages: QuestionChatTurn[], excerpts: ChatExcerpt[] = [], github: GithubChatSearch | null = null) {
   const latest = messages[messages.length - 1]!.content.trim()
   const parts = [
     ctx
@@ -608,17 +615,28 @@ function buildPrompt(ctx: QuestionChatContext | null, entries: KnowledgeEntry[],
       : '## The question Devin is looking at\nNone. Devin is asking a general question, not about a specific question card.',
   ]
   if (ctx?.posting) parts.push(`## Job posting excerpt\n"""\n${ctx.posting}\n"""`)
+  const turn: string[] = []
   if (!ctx) {
     // Newest message first, so its terms win when the conversation names more than five.
     const mentions = postingMentions(messages.filter(m => m.role === 'user').map(m => m.content).reverse().join('\n'))
-    if (mentions) parts.push(`## Where these terms appear in Devin's saved job postings\n${mentions}`)
+    if (mentions) turn.push(`## Where these terms appear in Devin's saved job postings\n${mentions}`)
   }
-  parts.push(`## Devin's knowledge base (the only facts about him)\n${knowledgeLines(entries)}`)
-  if (excerpts.length) parts.push(memorySection(excerpts))
-  if (github) parts.push(`## What the GitHub search found\n${githubPromptSection(github)}`)
-  parts.push(`## Conversation so far\n${transcript(messages)}`)
-  parts.push(`## Devin's new message\n${latest}`)
-  return parts.join('\n\n')
+  if (excerpts.length) turn.push(memorySection(excerpts))
+  if (github) turn.push(`## What the GitHub search found\n${githubPromptSection(github)}`)
+  turn.push(`## Conversation so far\n${transcript(messages)}`)
+  turn.push(`## Devin's new message\n${latest}`)
+  return cachedPrompt([
+    `## Devin's knowledge base (the only facts about him)\n${knowledgeLines(entries)}`,
+    `\n\n${parts.join('\n\n')}`,
+  ], `\n\n${turn.join('\n\n')}`)
+}
+
+/**
+ * The chat system prompt: BASE_SYSTEM as its own cached block (the same for every chat call),
+ * then the rules for this question and this call, which change with the question and the search.
+ */
+function chatSystem(rules: string) {
+  return rules ? [...cachedSystem(BASE_SYSTEM), { type: 'text' as const, text: rules }] : cachedSystem(BASE_SYSTEM)
 }
 
 function schemaFor(ctx: QuestionChatContext | null, githubTool = false) {
@@ -738,11 +756,11 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   type ChatOut = { reply: string; suggestedAnswer?: string | null; suggestionEvidence?: string | null; draft?: string | null; githubSearch?: TermSet | null }
   const ask = (githubTool: boolean) => aiStructured(schemaFor(ctx, githubTool), {
     purpose: 'question_chat',
-    system: BASE_SYSTEM + extras
+    system: chatSystem(extras
       + (githubTool ? githubToolRules(skillQuestion) : '')
       + (github ? GITHUB_RESULT_RULES : '')
       + (askWhat ? GITHUB_ASK_WHAT : '')
-      + (!canSearch ? GITHUB_UNAVAILABLE : ''),
+      + (!canSearch ? GITHUB_UNAVAILABLE : '')),
     prompt: buildPrompt(ctx, entries, input.messages, memory.excerpts, github),
     effort: 'low',
     maxTokens: 2000,

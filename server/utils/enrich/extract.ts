@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { Requirement } from '#shared/types/pipeline'
-import { aiStructured } from '../ai'
+import { aiStructured, cachedPrompt } from '../ai'
 import { type CompExtraction, CompExtractionSchema } from '../compensation'
 import type { KnowledgeEntry } from '../knowledge'
 
@@ -44,8 +44,20 @@ export function knowledgeBlock(entries: KnowledgeEntry[]): string {
 
 const SYSTEM = 'You read job postings for a job seeker\'s automated pipeline. You copy facts exactly as written. You never invent a number, and you never say the candidate has a skill unless a knowledge base entry shows it.'
 
-export function extractionPrompt(job: { title: string; company: string; location: string | null }, postingText: string, entries: KnowledgeEntry[]): string {
-  return `Read the job posting below and do two things.
+/**
+ * The enrich prompt as cached blocks: the instructions and the knowledge base are the same for
+ * every job and end at cache breakpoints; the posting follows.
+ */
+export function extractionPrompt(job: { title: string; company: string; location: string | null }, postingText: string, entries: KnowledgeEntry[]) {
+  return cachedPrompt([EXTRACTION_INSTRUCTIONS, `\n\n## Candidate knowledge base\n${knowledgeBlock(entries)}`], `\n\n## Job posting
+Title: ${job.title}
+Company: ${job.company}
+Location: ${job.location ?? 'not stated'}
+
+${postingText.slice(0, PROMPT_TEXT_LIMIT)}`)
+}
+
+const EXTRACTION_INSTRUCTIONS = `Read the job posting below and do two things.
 
 1. Compensation. Copy pay figures exactly as the posting writes them.
 - base: the base salary or hourly rate. min and max as plain numbers (165000 for "$165,000" or "$165K"). period is year, month, or hour as the posting says, or null if it does not say. If several ranges are listed (by location, zone, tier, or level), take ONE range exactly as the posting lists it: the range for remote work in the United States if the posting names one; otherwise the range for locations the posting does not name individually (such as "all other locations"); otherwise the first US range listed. Never join the minimum of one range to the maximum of another. The quote is the line that states both of its figures. List the other ranges in notes.
@@ -63,18 +75,7 @@ export function extractionPrompt(job: { title: string; company: string; location
   - partial: an entry shows something close (a related technology, fewer years, a nearby domain).
   - lack: an entry contradicts it (for example the posting asks for 10+ years and the profile says 6+).
   - unknown: the knowledge base does not mention it. Use unknown rather than guessing.
-- evidence: for have, partial, or lack, the key of the entry that shows it, copied exactly from inside the square brackets (for example skill/Laravel). Null for unknown.
-
-## Candidate knowledge base
-${knowledgeBlock(entries)}
-
-## Job posting
-Title: ${job.title}
-Company: ${job.company}
-Location: ${job.location ?? 'not stated'}
-
-${postingText.slice(0, PROMPT_TEXT_LIMIT)}`
-}
+- evidence: for have, partial, or lack, the key of the entry that shows it, copied exactly from inside the square brackets (for example skill/Laravel). Null for unknown.`
 
 /** Keeps only requirements whose evidence names a real knowledge base entry; the rest become unknown. */
 export function validateRequirements(raw: PostingExtraction['requirements'], entries: KnowledgeEntry[]): Requirement[] {

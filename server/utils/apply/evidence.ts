@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { aiStructured } from '../ai'
+import { aiStructured, cachedPrompt } from '../ai'
 import type { KnowledgeEntry } from '../knowledge'
 import { numbersIn, rewriteProblem, scrubDashes, unsupportedNumbers } from './text'
 
@@ -67,18 +67,24 @@ Return one check for every line id, in order.`
 
 export type Check = z.infer<typeof CheckSchema>['checks'][number]
 
-async function runChecks(lines: ClaimLine[], sources: string, purpose: string, ref?: { type: string; id: number }) {
+/**
+ * One check call. The sources are cached blocks: the knowledge base (the same for the resume,
+ * letter, and form answer checks of every application) and the posting (the same for a check and
+ * its rechecks); the lines follow.
+ */
+async function runChecks(lines: ClaimLine[], sources: string[], purpose: string, ref?: { type: string; id: number }) {
+  const [kb = '', ...rest] = sources
   const result = await aiStructured(CheckSchema, {
     purpose,
     system: CHECK_SYSTEM,
     maxTokens: 12000,
     effort: 'medium',
     ref,
-    prompt: `SOURCES
-${sources}
+    prompt: cachedPrompt([`SOURCES
+${kb}`, ...rest], `
 
 LINES
-${lines.map(l => `${l.id}: ${l.text}`).join('\n')}`,
+${lines.map(l => `${l.id}: ${l.text}`).join('\n')}`),
   })
   return new Map(result.checks.map(c => [c.id.trim(), c]))
 }
@@ -157,7 +163,8 @@ export async function verifyClaims(
   if (lines.length === 0) return []
   const kb = knowledgeForPrompt(opts.entries)
   const posting = opts.posting ? opts.posting.slice(0, 12000) : null
-  const sources = `KNOWLEDGE BASE (facts about Devin)\n${kb}${posting ? `\n\nPOSTING (facts about the employer and the role)\n${posting}` : ''}`
+  // Joined, these read "KNOWLEDGE BASE ...\n\nPOSTING ..."; split so each is its own cached block.
+  const sources = [`KNOWLEDGE BASE (facts about Devin)\n${kb}`, posting ? `\n\nPOSTING (facts about the employer and the role)\n${posting}` : '']
   const numberSource = `${knowledgeText(opts.entries)}\n${opts.posting ?? ''}`
   const g: Grounding = {
     entries: opts.entries,

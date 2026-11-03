@@ -2,7 +2,7 @@ import { and, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/schema'
 import type { RepoEvidence } from '#shared/types/repos'
-import { AiBudgetExceeded, aiStructured, fallbackModel } from '../ai'
+import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../ai'
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
 import { cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
@@ -232,7 +232,8 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       }
       const verdict = await aiStructured(JudgeSchema, {
         purpose: 'repo_judge',
-        system: judgeSystem(),
+        // The rules are the same for every question (587 tokens on Opus 5.5, over the 512 minimum), so they are cached.
+        system: cachedSystem(judgeSystem()),
         prompt: judgePrompt(q, searchTerms, found),
         maxTokens: 1500,
         effort: 'low',

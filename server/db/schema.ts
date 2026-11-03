@@ -253,6 +253,8 @@ export const aiCalls = sqliteTable('ai_calls', {
   inputTokens: integer('input_tokens').notNull().default(0),
   outputTokens: integer('output_tokens').notNull().default(0),
   cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
+  // Migration 0007: tokens written to the prompt cache (usage.cache_creation_input_tokens).
+  cacheWriteTokens: integer('cache_write_tokens').notNull().default(0),
   costUsd: real('cost_usd').notNull().default(0),
   refType: text('ref_type'),
   refId: integer('ref_id'),
