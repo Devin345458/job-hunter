@@ -116,6 +116,10 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- 2026-11-02 19:00, final desktop walk (qa-walker on a local server with the 17-card pre-reset snapshot, build 29811cc): estimated 4.9 minutes for a person to decide all 17 (5.7 with hovering truncated chips); an estimate, not a measurement. Not yet ticked. Fixes in `final-polish`: full chip names, a scroll-to-question button, a repeated paragraph in Ramp's cover letter, non-skill and soft-skill chips, the stale Missing panel, job page counts, step order, demo card wording, sandbox low pay, memory timeouts.
+- 2026-11-02 19:00, production checks by the control session (the walker would not open production): Settings GitHub evidence shows token 1 (classic, 19 owners) and token 2 (no repos), 7,249 commits in 90 repos, 30 of 59 indexed, 436 repos hidden behind Show all repos; Questions shows "Found in your GitHub" with 4 commit links on the Infisical open-source question (opening in a new tab); the Infisical card renders with Card 1 of 1 and the blocking question; console and page errors clean. Memory read Not reachable at 7:00 PM (4 second limit while the laptop daemon was busy); reachable on other checks.
+- 2026-11-02: production's daily AI budget is $100 (Coolify NUXT_DAILY_AI_BUDGET_USD=100); the code default is $10.
+
 - [x] 2026-11-02 18:00, first scheduled run after the reset (pipeline_runs 192, trigger schedule, container 3aaaa9562ea2 on 2218602): every step succeeded. repos:index searched GitHub for his commits (90 repos, 16 owners, 7,249 commits in 328 s) and indexed 27 of the 59 repos switched on (30 per run, 0 failed, 1 oversized); search found 331 new listings; 40 enriched and 40 scored with 0 failures; 3 skill questions; 1 application prepared (needs his answer). Only 1 of 40 scored 70 or more (19 scored 60 to 69): his 44 answers and the learned rules were wiped, so skills he had confirmed read as unknown until he answers again. AI cost $0.71.
 - [x] 2026-11-02: memory:leads ran before the run's questions existed, so it stored no leads; it now runs last (29811cc, live).
 
