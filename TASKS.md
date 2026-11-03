@@ -117,6 +117,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [x] 2026-11-03 11:40, Devin's answers: years of experience 8+ (12 knowledge rows changed through PATCH /api/knowledge: Years of Experience, Professional Summary "over 8 years", PHP and JavaScript "8+ years"; 0 rows still say 6); re-read the 160 jobs read with the old prompts (queued as one jobs:enrich run, queue item 7, about $10 on Sonnet); the reframe rule stays partial (REFRAME_STATUS). The resume site (~/PhpstormProjects/resume/index.html lines 7 and 975) still says 6+ years; changing it needs a push to the public resume repo, so it waits on Devin.
+
 - [x] 2026-11-03, `model-eval` (merged eb0f6df, live in e928fbc): most errors came from the instructions and stored statuses, not the models (14 error groups shared by 3 or 4 models). Prompt fixes for enrich, match, and gaps cut pay errors from 17 to 2 across three models and Haiku 5.5 match errors from 13 to 4; judge agreement 85 to 86%. Opus is not worth its price on these steps once fixed: Sonnet 5.5 for enrich and gaps, Haiku 5.5 for match, about $6.44 per 100 jobs against $16.70 on Opus. Spend $11.49 of $15.
 - [x] 2026-11-03, per-step models (`NUXT_AI_STEP_MODELS`, 80be047, live): production runs enrich and gap analysis on Sonnet 5.5 and match on Haiku 5.5; everything else stays on Opus (tailor, letter, form answers, checks, chat: not evaluated, employer-facing, and only on Apply after `decide-first`). Checked on a production copy: one enrich on claude-sonnet-5-5 ($0.0251), its match on claude-haiku-5-5 ($0.0011).
 - [x] 2026-11-03, enrich and match one queue item per job with no per-run cap (in `task-queue`; locally 140 queued, stopped at the budget, finished the rest).
