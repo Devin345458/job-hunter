@@ -2,6 +2,8 @@ services:
   app:
     build: .
     restart: unless-stopped
+    # The job queue worker gets 25 seconds to finish its item on SIGTERM (server/plugins/queue.ts).
+    stop_grace_period: 35s
     ports:
       - "${NUXT_PORT:-3000}:3000"
     volumes:

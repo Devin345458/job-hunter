@@ -16,6 +16,7 @@ import { runQueueItem } from '../utils/queue-run'
 const HEARTBEAT_CRON = '*/15 * * * *'
 const GRACE_MS = 25_000
 const TICK_MS = 2_000
+const PRUNE_EVERY_MS = 3600_000
 
 export default defineNitroPlugin((nitroApp) => {
   if (import.meta.prerender) return
@@ -75,6 +76,16 @@ function createWorker() {
   let stopping = false
   let ticking = false
   let timer: ReturnType<typeof setInterval> | null = null
+  let pruner: ReturnType<typeof setInterval> | null = null
+  const prune = () => {
+    try {
+      const n = pruneQueue()
+      if (n) console.log(`[queue] pruned ${n} finished item(s)`)
+    }
+    catch (e) {
+      console.warn('[queue] could not prune finished items', e)
+    }
+  }
   const busy = (lane: Running['lane']) => [...running.values()].filter(r => r.lane === lane).length
   const wake = () => setImmediate(tick)
 
@@ -143,8 +154,10 @@ function createWorker() {
       catch (e) {
         console.error('[queue] recovery at start failed', e)
       }
+      prune()
       queueEvents.on('enqueued', wake)
       timer = setInterval(tick, TICK_MS)
+      pruner = setInterval(prune, PRUNE_EVERY_MS)
       console.log(`[queue] worker ${owner} started, ${slots} at a time`)
       wake()
     },
@@ -152,6 +165,7 @@ function createWorker() {
     async stop(graceMs: number) {
       stopping = true
       if (timer) clearInterval(timer)
+      if (pruner) clearInterval(pruner)
       queueEvents.off('enqueued', wake)
       if (!running.size) return
       const ids = [...running.keys()]

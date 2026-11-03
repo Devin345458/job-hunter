@@ -1,4 +1,5 @@
 import { detachDemoFromResume } from '~~/server/utils/demo/attach'
+import { demoBusy } from '~~/server/utils/demo/progress'
 import { appendBuildLog, getDemo, toDemoDetail, updateDemo } from '~~/server/utils/demo/store'
 
 // POST /api/demos/:id/discard: drop a demo that has not been published. It comes off the
@@ -11,6 +12,8 @@ export default defineEventHandler(async (event) => {
   if (['building', 'publishing', 'published'].includes(demo.status)) {
     throw createError({ statusCode: 409, statusMessage: `A ${demo.status} demo cannot be discarded` })
   }
+  // A rebuild or preview waiting in the job queue would build it again after the discard.
+  if (demoBusy(id, demo.status)) throw createError({ statusCode: 409, statusMessage: 'This demo is building or waiting in the queue to build; discard it once that ends' })
   updateDemo(id, { status: 'discarded' })
   const detached = await detachDemoFromResume(id)
   appendBuildLog(id, `discarded${detached.updated ? '; removed from the tailored resume and regenerated the PDF' : ''}`)

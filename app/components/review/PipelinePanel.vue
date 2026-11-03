@@ -70,7 +70,8 @@ async function start(task: TaskDef) {
   try {
     const res = await $fetch<{ queued: boolean }>('/api/pipeline/run', { method: 'POST', body: { task: task.id } })
     snackbar.info(res.queued ? `Queued: ${task.label}` : `${task.label} is already in the queue`)
-    await follow()
+    // Not awaited: the buttons free up at once, so more runs can be queued while this one waits.
+    void follow()
   }
   catch (e: any) {
     snackbar.notify(`${task.label} was not queued: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })

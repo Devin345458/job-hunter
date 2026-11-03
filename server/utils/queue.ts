@@ -599,6 +599,21 @@ export function waitingText(): string {
   return running ? `Waiting in the queue behind ${queueItemLabel(running)}` : 'Waiting in the queue'
 }
 
+/**
+ * Keeps the table small: finished heartbeats after a day, every other finished item after 30
+ * days (their pipeline_runs rows stay). Returns how many rows went.
+ */
+export function pruneQueue(): number {
+  const db = useDb()
+  const dayAgo = sqlTime(new Date(Date.now() - 24 * 3600_000))
+  const monthAgo = sqlTime(new Date(Date.now() - 30 * 24 * 3600_000))
+  const heartbeats = db.delete(taskQueue).where(and(eq(taskQueue.task, HEARTBEAT_TASK), inArray(taskQueue.status, TERMINAL), sql`${taskQueue.finishedAt} < ${dayAgo}`)).run().changes
+  // A daily run's steps go with it, never before it.
+  const old = db.delete(taskQueue).where(and(inArray(taskQueue.status, TERMINAL), sql`${taskQueue.finishedAt} < ${monthAgo}`, isNull(taskQueue.parentId))).run().changes
+  const orphans = db.delete(taskQueue).where(and(sql`${taskQueue.parentId} is not null`, sql`${taskQueue.parentId} not in (select id from task_queue)`)).run().changes
+  return heartbeats + old + orphans
+}
+
 /** Queued and running counts, for /api/health. */
 export function queueDepth(): { queued: number; running: number } {
   const rows = useDb().select({ status: taskQueue.status, n: sql<number>`count(*)` }).from(taskQueue)

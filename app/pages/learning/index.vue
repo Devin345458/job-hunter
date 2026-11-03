@@ -109,7 +109,7 @@ async function runNow() {
       if (run) break
     }
     await load()
-    if (!run) snackbar.warning('Learning is still running. Reload in a minute to see the result.')
+    if (!run) snackbar.warning('Learning is waiting in the queue or still running. Reload in a minute to see the result.')
     else if (run.status === 'failed') snackbar.error(`Learning failed: ${(run.error || '').split('\n')[0]}`)
     else snackbar.success(`Learning ran. ${run.stats?.rescored ?? 0} jobs rescored.`)
   }
