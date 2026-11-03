@@ -37,7 +37,7 @@ const SkillsSchema = z.object({
   stack: z.number().describe('0 to 25: how close the main languages and frameworks are to the candidate\'s primary stack.'),
   seniority: z.number().describe('0 to 20: role level against the candidate\'s target role and years of experience.'),
   domain: z.number().describe('0 to 10: how close the industry or product domain is to work the candidate has done.'),
-  reasoning: z.string().describe('Two or three plain sentences naming the biggest strengths and gaps. Address the job seeker as "you" ("You have Laravel and Vue; you have not used Go."). Never refer to the job seeker as he, she, or they.'),
+  reasoning: z.string().describe('Two or three plain sentences naming the biggest strengths and gaps. Address the job seeker as "you" ("You have Laravel and Vue; you have not used Go."). Never refer to the job seeker as he, she, or they. Plain American English with no dashes.'),
   matched: z.array(z.string()).describe('Short names of requirements the candidate has.'),
   missing: z.array(z.string()).describe('Short names of must-have requirements the candidate lacks or that the knowledge base does not mention.'),
 })
@@ -54,6 +54,7 @@ export function skillsPrompt(job: Pick<JobRow, 'title' | 'company' | 'location'>
 
 Use only the candidate knowledge base below. Do not assume skills it does not list.
 Requirements marked unknown are not in the knowledge base. Count them as gaps, never as skills the candidate has.
+The statuses below came from an earlier step and can be wrong. Before you list a requirement as matched, check that a knowledge base entry shows it. Compare every years requirement with profile/Years of Experience yourself: a requirement for more years than that entry states is not met, whatever its status says.
 Use any whole number inside each range, not only round numbers.
 
 - mustHaves (0 to 45): the share of must-have requirements the candidate has. 45 = all of them, 34 = three quarters, 22 = half, 11 = a quarter, 0 = none. A partial match counts as half.
