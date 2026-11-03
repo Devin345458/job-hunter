@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { SourcesStatus, SourceStatusRow } from '#shared/types/sources'
+import { plainError } from '#shared/utils/plain-text'
 
 // Settings > Job sources: one line per source with its last pull time (the watermark after which
 // only newer listings are asked for) and what the last search found, passed the filters, already
@@ -55,8 +56,12 @@ const STATUS: Record<string, { text: string; color: string }> = {
   waiting: { text: 'Waiting', color: 'default' },
 }
 
+/** A board type with no boards yet (the newer systems fill only through apply links). */
+const noBoards = (row: SourceStatusRow) => !!row.boards && !row.boards.curated && !row.boards.discovered
+
 function chip(row: SourceStatusRow) {
   if (!row.selected) return { text: 'Off in your search', color: 'default' }
+  if (noBoards(row)) return { text: 'No boards yet', color: 'default' }
   if (!row.lastRun) return { text: 'Not run yet', color: 'default' }
   return STATUS[row.lastRun.status] ?? { text: row.lastRun.status, color: 'default' }
 }
@@ -76,7 +81,7 @@ function runLine(row: SourceStatusRow): string {
   const r = row.lastRun
   if (!r) return ''
   if (r.status === 'waiting') return `Last search skipped it: this source asks not to be called that often. Next pull after ${when(r.waitUntil ?? row.waitUntil)}.`
-  if (r.status === 'unavailable' || (r.status === 'failed' && !r.found)) return r.error ? `Last search: ${r.error}` : 'Last search: no listings.'
+  if (r.status === 'unavailable' || (r.status === 'failed' && !r.found)) return r.error ? `Last search: ${plainError(r.error)}` : 'Last search: no listings.'
   if (r.passed == null) return `Last search: ${n(r.found)} listings passed the filters, ${n(r.new)} new.`
   const mode = r.mode === 'incremental' ? 'only listings since the last pull' : r.mode === 'mixed' ? 'partly a full pull' : 'a full pull'
   return `Last search, ${mode}: ${n(r.found)} found, ${n(r.passed)} passed your filters, ${n(r.known)} already known, ${n(r.new)} new and queued for reading. ${n(r.requests)} ${r.requests === 1 ? 'request' : 'requests'}.`
@@ -142,8 +147,8 @@ defineExpose({ load })
               <v-chip size="x-small" variant="tonal" :color="chip(row).color" label>{{ chip(row).text }}</v-chip>
             </div>
             <div class="job-sources__detail">
-              <p v-if="row.selected" class="job-sources__line">{{ pulledLine(row) }}</p>
-              <p v-if="row.selected && runLine(row)" class="job-sources__line">{{ runLine(row) }}</p>
+              <p v-if="row.selected && !noBoards(row)" class="job-sources__line">{{ pulledLine(row) }}</p>
+              <p v-if="row.selected && !noBoards(row) && runLine(row)" class="job-sources__line">{{ runLine(row) }}</p>
               <p v-if="row.boards" class="job-sources__line">{{ boardLine(row) }}</p>
               <p v-if="!row.selected" class="job-sources__line">Not in an active search configuration. Tick it in Search Configurations to pull it.</p>
             </div>

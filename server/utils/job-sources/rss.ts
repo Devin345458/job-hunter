@@ -12,7 +12,9 @@ function text(raw: string): string {
 
 export function parseRss(xml: string): RssItem[] {
   const items: RssItem[] = []
-  for (const block of xml.match(/<item\b[\s\S]*?<\/item>/gi) ?? []) {
+  for (const match of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)) {
+    // Only the item's inner XML, so the outer <item> element is not read as one big child.
+    const block = match[1] ?? ''
     const item: RssItem = {}
     for (const m of block.matchAll(/<([a-zA-Z][\w:.-]*)\b[^>]*>([\s\S]*?)<\/\1>/g)) {
       const key = m[1]!.toLowerCase()
