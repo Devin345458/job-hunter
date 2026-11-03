@@ -63,8 +63,10 @@ function repoCommitCount(r: RepoRow, found: Record<string, number> | null): numb
  * can make a commit a hit (subjectAnchors in search.ts). Never throws for GitHub trouble: what
  * could not be searched is in coverage.
  */
-export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}, opts: { subject?: string | null } = {}): Promise<GithubChatSearch> {
-  const terms = withSignatures(cleanTerms(rawTerms, 20), context)
+export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}, opts: { subject?: string | null; signatureText?: string } = {}): Promise<GithubChatSearch> {
+  // Signatures follow the subject and Devin's own message (opts.signatureText), never the question text.
+  const signatureText = opts.signatureText ?? (opts.subject?.trim() || context)
+  const terms = withSignatures(cleanTerms(rawTerms, 20), signatureText)
   const db = useDb()
   // This app's own repo names every skill as data, so it is never searched (isAppRepo).
   const included = db.select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
@@ -87,7 +89,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   }
 
   // 1 and 2: his indexed commits (messages and paths) and the repo facts.
-  const evidence = await searchEvidence(terms, log, { diffs: false, anchors: { subject: opts.subject ?? null, text: context } })
+  const evidence = await searchEvidence(terms, log, { diffs: false, anchors: { subject: opts.subject ?? null, text: context, signatureText } })
   // Strongest first, taken in turn from each repo so one busy repo does not fill the list.
   const byRepo = new Map<string, typeof evidence.hits>()
   for (const h of evidence.hits) byRepo.set(h.repo, [...(byRepo.get(h.repo) ?? []), h])

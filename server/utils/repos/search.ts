@@ -153,7 +153,11 @@ export function pathMatches(path: string, terms: string[]): boolean {
 // Every term here must be specific to its subject; a generic word belongs in no signature.
 
 interface Signature {
-  /** Tested against the subject, the question, and in the chat Devin's message. */
+  /**
+   * Tested against the subject alone (the question only when there is no subject), and in the
+   * chat also Devin's own message. Never the question text: "GitHub Copilot" in a question about
+   * AI tools must not pull in GitHub's workflow files.
+   */
   when: RegExp
   terms: TermSet
 }
@@ -331,6 +335,18 @@ const SIGNATURES: Signature[] = [
     terms: { code: ['LLM', 'LLMs', 'agentic', 'tool_use', 'RAG', 'embeddings', 'OpenAI', 'Anthropic API', 'Claude API', 'Claude Code', 'subagent', 'subagents', 'autonomous', 'langchain', 'prompt caching'], paths: ['/agents/', '/llm/'], packages: ['@anthropic-ai/sdk', 'anthropic', 'openai', 'langchain', 'llamaindex', '@ai-sdk/anthropic'] },
   },
   {
+    // Agentic and AI tooling work, found by what it touches: Claude Code config and skills, agent
+    // hooks, MCP servers, Orca, and the AI SDKs. Not for AEO or AI-powered search subjects.
+    when: /\bai[- ]native\b|\bagentic\b|\bcoding (agents?|assistants?|tools?)\b|\bagents?\b.*\b(ai|llm|platforms?)\b|\b(internal|ai) agents?\b|\bai tool(s|ing)?\b|\bllms?\b.*\bintegrat|\bclaude code\b|\bcopilot\b/i,
+    terms: {
+      code: [],
+      // Claude Code's own config folders, not all of .claude/: every app repo keeps its docs in
+      // .claude/context/, and those roadmap edits are not AI tooling work.
+      paths: ['.claude/agents/', '.claude/commands/', '.claude/skills/', '.claude/hooks/', '.claude/settings.json', 'claude.md', 'agents.md', 'skill.md', 'skills/', 'hooks/', '.mcp.json', 'mcp/', 'orca.yaml'],
+      packages: ['@anthropic-ai/sdk', '@anthropic-ai/claude-agent-sdk', '@anthropic-ai/claude-code', 'openai', 'langchain', '@modelcontextprotocol/sdk'],
+    },
+  },
+  {
     when: /\bsecurity\b|\bappsec\b|\bvulnerabilit|\bowasp\b/i,
     terms: { code: ['security', 'CVE', 'XSS', 'CSRF', 'SQL injection', 'vulnerability', 'vulnerable', 'pentest', 'OWASP', 'account takeover', 'privilege escalation', 'exploit'], paths: [], packages: [] },
   },
@@ -440,8 +456,8 @@ function namedIn(term: string, text: string, parts: string[]): boolean {
  * in the general chat, where only signatures and terms the text names count); text is the subject,
  * the question, and in the chat Devin's message.
  */
-export function subjectAnchors(terms: TermSet, subject: string | null, text: string): TermSet {
-  const sig = signatureTerms(text)
+export function subjectAnchors(terms: TermSet, subject: string | null, text: string, signatureText?: string): TermSet {
+  const sig = signatureTerms(signatureText ?? (subject?.trim() || text))
   const parts = subject ? subjectParts(subject) : []
   const named = (t: string) => namedIn(t, text, parts)
   return cleanTerms({
@@ -500,10 +516,10 @@ function parseDiffHits(out: string, re: RegExp): Map<string, DiffHit> {
  * hit, and a hit that also matches one of the other terms ranks higher. Without it every term is
  * an anchor.
  */
-export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void = () => {}, opts: { diffs?: boolean; anchors?: { subject: string | null; text: string } } = {}): Promise<SearchResult> {
+export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void = () => {}, opts: { diffs?: boolean; anchors?: { subject: string | null; text: string; signatureText?: string } } = {}): Promise<SearchResult> {
   // Already cleaned by whoever built them (withSignatures keeps the curated signature words); this only bounds them.
   const terms = cleanTerms(rawTerms, 80, false)
-  const anchors = opts.anchors ? subjectAnchors(terms, opts.anchors.subject, opts.anchors.text) : terms
+  const anchors = opts.anchors ? subjectAnchors(terms, opts.anchors.subject, opts.anchors.text, opts.anchors.signatureText) : terms
   const db = useDb()
   // This app's own repo names every skill as data, so it is never evidence (isAppRepo).
   const repos = db.select().from(repoSources).where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()

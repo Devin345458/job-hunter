@@ -215,7 +215,8 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       const termsJson = JSON.stringify({ searchable: t.searchable, terms: t.terms, rules: SEARCH_RULES })
       // Files, folders, and packages only this subject produces (schema.graphql, shopify.app.toml)
       // are searched whatever Claude gave, so path evidence never depends on it naming them.
-      const searchTerms = withSignatures(t.searchable ? t.terms : { code: [], paths: [], packages: [] }, `${subject}\n${q.question}`)
+      // Signatures follow the subject alone: words in the question text name other technologies too.
+      const searchTerms = withSignatures(t.searchable ? t.terms : { code: [], paths: [], packages: [] }, subject)
       const empty = !searchTerms.code.length && !searchTerms.paths.length && !searchTerms.packages.length
       if (empty) {
         upsert(q.id, { status: 'none', subject, termsJson, level: null, draft: null, evidenceJson: null, commitShasJson: '[]', error: null })

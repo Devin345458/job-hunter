@@ -38,7 +38,8 @@ for (const r of rows) {
 const out: any[] = []
 for (const c of cases) {
   const text = `${c.subject}\n${c.question}`
-  const terms = search.withSignatures(c.searchable ? c.terms : { code: [], paths: [], packages: [] }, text)
+  // As repos:suggest builds them: signatures from the subject alone.
+  const terms = search.withSignatures(c.searchable ? c.terms : { code: [], paths: [], packages: [] }, c.subject)
   if (!terms.code.length && !terms.paths.length && !terms.packages.length) {
     out.push({ ...c, hits: [], skipped: 'no terms' })
     continue
