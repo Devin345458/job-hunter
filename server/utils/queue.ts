@@ -185,11 +185,16 @@ const quoted = (list: readonly string[]) => list.map((t) => {
  * Skipped: a daily step whose earlier sibling has not finished; a task that is already running
  * (per-job items excepted: several jobs are read at once); a heavy task (form fills, demo builds)
  * while another heavy task runs. `only` and `except` pick the lane's tasks.
+ * Per-job items: a job's score comes before more reads. A waiting jobs:match-one item (the job read
+ * longest ago first) is taken before any jobs:enrich-one item, so when the budget stops background
+ * work, the money went to jobs that were read and scored, not to reads nobody can decide on yet.
+ * Reads keep their queue order, which is newest posting first.
  */
 export function claimNext(owner: string, lane: { only?: readonly string[]; except?: readonly string[] } = {}): QueueRow | null {
   const now = sqlTime()
   const heavy = quoted(HEAVY_TASKS)
   const bulk = quoted(BULK_TASKS)
+  const score = quoted([MATCH_ONE_TASK])
   const only = `${lane.only?.length ? `AND t.task IN (${quoted(lane.only)})` : ''} ${lane.except?.length ? `AND t.task NOT IN (${quoted(lane.except)})` : ''}`
   const row = sqlite().prepare(`
     UPDATE task_queue
@@ -200,7 +205,10 @@ export function claimNext(owner: string, lane: { only?: readonly string[]; excep
         AND NOT EXISTS (SELECT 1 FROM task_queue s WHERE t.parent_id IS NOT NULL AND s.parent_id = t.parent_id AND s.id < t.id AND s.status IN ('queued', 'running'))
         AND (t.task IN (${bulk}) OR NOT EXISTS (SELECT 1 FROM task_queue r WHERE r.status = 'running' AND r.task = t.task))
         AND (t.task NOT IN (${heavy}) OR NOT EXISTS (SELECT 1 FROM task_queue r WHERE r.status = 'running' AND r.task IN (${heavy})))
-      ORDER BY t.run_after, t.id
+      ORDER BY
+        CASE WHEN t.task IN (${bulk}) AND t.task NOT IN (${score}) THEN 1 ELSE 0 END,
+        CASE WHEN t.task IN (${score}) THEN (SELECT j.enriched_at FROM jobs j WHERE j.id = json_extract(t.payload_json, '$.jobId')) END,
+        t.run_after, t.id
       LIMIT 1
     )
     RETURNING id`).get({ owner, lease: secondsFromNow(LEASE_SECONDS), now }) as { id: number } | undefined
@@ -265,14 +273,16 @@ export function startDailyChain(item: QueueRow, owner: string): number {
 }
 
 /**
- * What one step reported back to the daily run: its status and, when it finished, the problems
- * its stats show (failed items, a budget or credit stop). A step that "succeeded" while every
- * Claude call failed is how the daily run used to look green over a dead pipeline.
+ * What one step reported back to the daily run: how it ended and, when it finished, the problems
+ * its stats show (failed items, a budget or credit stop). A step that finished with problems is
+ * recorded as partial, not succeeded: a step that "succeeded" while every Claude call failed, or
+ * that the budget stopped before it read a single posting, is how the daily run used to look
+ * green over a dead pipeline.
  */
 export function stepSummary(step: string, result: { status?: string; stats?: Record<string, unknown> | null; error?: string | null } | null | undefined) {
   const status = result?.status ?? 'unknown'
   const problems = runProblems({ task: step, status, stats: result?.stats ?? null })
-  return { status, problems }
+  return { status: status === 'succeeded' && problems.length ? 'partial' : status, problems }
 }
 
 function parseStats(json: string | null): Record<string, unknown> | null {
@@ -636,6 +646,11 @@ export function queueSnapshot(): QueueSnapshot {
       waiting: active.filter(i => i.task === task && i.status === 'queued').length,
     })).filter(b => b.running || b.waiting),
     recent: recent.map(i => toView(i, steps)),
+    backlog: {
+      toRead: pendingEnrichCount(),
+      toScore: pendingScoreCount(),
+      budgetStopped: aiSpentToday() >= aiBudget() * backgroundBudgetShare(),
+    },
   }
 }
 

@@ -4,7 +4,7 @@ import type { PipelineRunView, QueueItemView } from '#shared/types/pipeline'
 import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsText } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
-import { bulkText, queueItemColor, queueItemText } from '#shared/utils/queue-text'
+import { backlogText, bulkText, queueItemColor, queueItemText } from '#shared/utils/queue-text'
 
 // Settings > Pipeline: start any step by hand, watch it wait in the job queue and run, and read
 // the recent run log. Every trigger goes through POST /api/pipeline/run, which adds the task to
@@ -66,6 +66,8 @@ const queueDaily = computed<QueueItemView[]>(() => queue.value?.runs ?? [])
 const queueRecent = computed<QueueItemView[]>(() => queue.value?.recent ?? [])
 const queueBulk = computed(() => queue.value?.bulk ?? [])
 const queueEmpty = computed(() => !queueRunning.value.length && !queueWaiting.value.length && !queueDaily.value.length && !queueBulk.value.length)
+/** "Waiting: 254 jobs to read, 1,424 to score; resumes when the budget allows." Empty when none wait. */
+const backlog = computed(() => backlogText(queue.value?.backlog))
 
 /** 'running' or 'waiting' when this task is in the queue (a full run counts while its steps run). */
 function queued(task: string): 'running' | 'waiting' | null {
@@ -223,9 +225,10 @@ onMounted(() => {
       <h3 class="pp__h">Queue</h3>
     </div>
     <p class="pp__queue-help">
-      The worker runs one item at a time, oldest first, and reads and scores up to four jobs at once beside it. A restart or deploy pauses it; the items it was on start again when the server is back.
+      The worker runs one item at a time, oldest first, and reads and scores up to four jobs at once beside it. A job it has read is scored before it reads another posting. A restart or deploy pauses it; the items it was on start again when the server is back.
     </p>
-    <p v-if="queueEmpty" class="pp__empty">Nothing is waiting.</p>
+    <p v-if="backlog" class="pp__backlog">{{ backlog }}</p>
+    <p v-if="queueEmpty" class="pp__empty">Nothing is in the queue.</p>
     <ul v-else class="pp__queue" aria-label="Job queue">
       <li v-for="i in queueDaily" :key="`run-${i.id}`" class="pp__qitem">
         <span class="pp__dot bg-info" />
@@ -519,6 +522,12 @@ onMounted(() => {
     margin: 0 0 6px;
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__backlog {
+    margin: 0 0 6px;
+    font-size: 0.875rem;
+    font-weight: 600;
   }
 
   &__queue {

@@ -65,6 +65,20 @@ const BULK_VERB: Record<string, string> = {
   'jobs:match-one': 'Scoring jobs',
 }
 
+/**
+ * The jobs still waiting to be read or scored, in one line: "Waiting: 254 jobs to read, 1,424 to
+ * score; resumes when the budget allows." Empty when nothing waits.
+ */
+export function backlogText(b: QueueSnapshot['backlog'] | null | undefined): string {
+  if (!b || (!b.toRead && !b.toScore)) return ''
+  const n = (v: number) => v.toLocaleString('en-US')
+  const jobs = (v: number) => (v === 1 ? 'job' : 'jobs')
+  const parts: string[] = []
+  if (b.toRead) parts.push(`${n(b.toRead)} ${jobs(b.toRead)} to read`)
+  if (b.toScore) parts.push(b.toRead ? `${n(b.toScore)} to score` : `${n(b.toScore)} ${jobs(b.toScore)} to score`)
+  return `Waiting: ${parts.join(', ')}${b.budgetStopped ? '; resumes when the budget allows' : ''}.`
+}
+
 /** Per-job items in one line: "Reading postings: 4 now, 37 waiting". */
 export function bulkText(b: QueueSnapshot['bulk'][number]): string {
   const verb = BULK_VERB[b.task] ?? b.label

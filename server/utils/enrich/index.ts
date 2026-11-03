@@ -1,4 +1,4 @@
-import { eq, inArray, isNull, like, or } from 'drizzle-orm'
+import { eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { jobs, searchConfigs } from '../../db/schema'
 import { AiBudgetExceeded, aiSpentToday } from '../ai'
@@ -126,10 +126,15 @@ export function needsEnrich(job: Pick<JobRow, 'enrichedAt' | 'enrichError'>): bo
 }
 
 /** Jobs still waiting to be read (enriched_at not set, or refused for lack of credit before credit errors became budget stops). */
+const pendingEnrichWhere = () => or(isNull(jobs.enrichedAt), like(jobs.enrichError, '%credit balance is too low%'), like(jobs.enrichError, '%invalid x-api-key%'))
+
 export function pendingEnrichJobs(): JobRow[] {
-  return useDb().select().from(jobs)
-    .where(or(isNull(jobs.enrichedAt), like(jobs.enrichError, '%credit balance is too low%'), like(jobs.enrichError, '%invalid x-api-key%')))
-    .all()
+  return useDb().select().from(jobs).where(pendingEnrichWhere()).all()
+}
+
+/** How many jobs pendingEnrichJobs() returns, without loading them (the backlog line in Settings). */
+export function pendingEnrichCount(): number {
+  return useDb().select({ n: sql<number>`count(*)` }).from(jobs).where(pendingEnrichWhere()).get()?.n ?? 0
 }
 
 /**

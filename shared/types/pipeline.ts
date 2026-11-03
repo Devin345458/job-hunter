@@ -624,6 +624,12 @@ export interface QueueSnapshot {
   bulk: Array<{ task: string; label: string; running: number; waiting: number }>
   /** The last day's interrupted, failed, canceled, and resumed items, newest first. */
   recent: QueueItemView[]
+  /**
+   * Jobs still waiting to be read or scored, queued or not (the counts the jobs:enrich and
+   * jobs:match steps call pending). budgetStopped: background work has reached its share of
+   * today's budget, so they wait for the budget to reset.
+   */
+  backlog: { toRead: number; toScore: number; budgetStopped: boolean }
 }
 
 // ── Skill claims: tap a Missing skill to say you have it ─────

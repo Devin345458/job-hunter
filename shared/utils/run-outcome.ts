@@ -47,6 +47,31 @@ interface RunLike {
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
+export type BudgetStop = 'key' | 'credit' | 'background' | 'budget'
+
+/** How a run that stopped at the AI budget says so. The run reads partial, in amber. */
+export const STOP_TEXT: Record<BudgetStop, string> = {
+  key: 'stopped: Anthropic rejected the API key',
+  credit: 'stopped: out of credit',
+  background: 'stopped: background share of today\'s AI budget reached, continues tomorrow',
+  budget: 'stopped: daily AI budget reached',
+}
+
+/**
+ * Why a run stopped at the AI budget, or null when it did not. Steps flag it (budgetStopped or
+ * budgetStop) and withRun() adds the stopReason; a run that only recorded the budget error itself
+ * is read from that error's wording (AiBudgetExceeded and AiBackgroundBudgetReached in ai.ts).
+ */
+export function budgetStop(stats: Record<string, unknown>): BudgetStop | null {
+  const errors = Array.isArray(stats.errors) ? stats.errors.filter((e): e is string => typeof e === 'string') : []
+  const flagged = stats.budgetStop === true || stats.budgetStopped === true
+  const background = errors.some(e => e.startsWith('Background work stopped at'))
+  if (!flagged && !background && !errors.some(e => e.startsWith('Daily AI budget reached'))) return null
+  const reason = stats.stopReason
+  if (reason === 'key' || reason === 'credit' || reason === 'background' || reason === 'budget') return reason
+  return background ? 'background' : 'budget'
+}
+
 /** True when most of a run's recorded errors are Anthropic credit refusals. */
 function creditErrors(stats: Record<string, unknown>): boolean {
   const errors: string[] = []
@@ -72,7 +97,8 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
     const out: string[] = []
     if (recorded && typeof recorded === 'object') {
       for (const [step, list] of Object.entries(recorded)) {
-        for (const p of Array.isArray(list) ? list : []) out.push(`${taskLabel(step)}: ${p}`)
+        // Runs recorded before the wording named today's budget read the same as new ones.
+        for (const p of Array.isArray(list) ? list : []) out.push(`${taskLabel(step)}: ${String(p).replace('background share of the AI budget', 'background share of today\'s AI budget')}`)
       }
     }
     else {
@@ -91,12 +117,8 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
   const out: string[] = []
   const failed = num(stats.failed)
   if (failed > 0) out.push(creditErrors(stats) ? `${failed} failed, Claude is out of credit` : `${failed} failed`)
-  if (stats.budgetStop === true || stats.budgetStopped === true) {
-    out.push(stats.stopReason === 'key'
-      ? 'stopped: Anthropic rejected the API key'
-      : stats.stopReason === 'credit' ? 'stopped: out of credit'
-        : stats.stopReason === 'background' ? 'stopped: background share of the AI budget reached, continues tomorrow' : 'stopped: daily AI budget reached')
-  }
+  const stop = budgetStop(stats)
+  if (stop) out.push(STOP_TEXT[stop])
   if (num(stats.noteErrors) > 0) out.push(`${num(stats.noteErrors)} rejection note${num(stats.noteErrors) === 1 ? '' : 's'} not read`)
   if (num(stats.interrupted) > 0) out.push(`${num(stats.interrupted)} interrupted`)
   const sources = stats.sources as Record<string, { status?: string; overdue?: boolean }> | undefined

@@ -273,15 +273,22 @@ export interface ScoreOneResult extends Record<string, unknown> {
 }
 
 /** Enriched jobs with no skills score yet, or whose posting was read again after the last score. Newest posting first. */
+const pendingScoreWhere = () => and(
+  isNotNull(jobs.enrichedAt),
+  or(isNull(jobs.enrichError), sql`${jobs.enrichError} NOT LIKE 'Skipped by prefilter:%'`),
+  sql`${jobs.status} != 'expired'`,
+  or(isNull(jobs.skillsScore), isNull(jobs.scoredAt), lt(jobs.scoredAt, jobs.enrichedAt)),
+)
+
 export function pendingScoreJobs(): JobRow[] {
-  return useDb().select().from(jobs).where(and(
-    isNotNull(jobs.enrichedAt),
-    or(isNull(jobs.enrichError), sql`${jobs.enrichError} NOT LIKE 'Skipped by prefilter:%'`),
-    sql`${jobs.status} != 'expired'`,
-    or(isNull(jobs.skillsScore), isNull(jobs.scoredAt), lt(jobs.scoredAt, jobs.enrichedAt)),
-  )).all()
+  return useDb().select().from(jobs).where(pendingScoreWhere()).all()
     .filter(j => !isPrefilterSkip(j.enrichError))
     .sort((a, b) => (b.postedAt ?? b.foundAt).localeCompare(a.postedAt ?? a.foundAt) || b.id - a.id)
+}
+
+/** How many read jobs wait for a score, without loading them (the backlog line in Settings). */
+export function pendingScoreCount(): number {
+  return useDb().select({ n: sql<number>`count(*)` }).from(jobs).where(pendingScoreWhere()).get()?.n ?? 0
 }
 
 /**
