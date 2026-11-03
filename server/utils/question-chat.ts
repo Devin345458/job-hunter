@@ -750,7 +750,7 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   }) as Promise<ChatOut>
   try {
     if (canSearch && asksGithub(latest)) {
-      github = await githubChatSearch(await chatSearchTerms(ctx, input.messages), searchContext, searchLog)
+      github = await githubChatSearch(await chatSearchTerms(ctx, input.messages), searchContext, searchLog, { subject: ctx?.question.subject ?? null })
       if (!github.terms.length) {
         github = null
         askWhat = true
@@ -759,7 +759,7 @@ export async function questionChatReply(input: { questionId?: number | null; mes
     let out = await ask(canSearch && !github)
     if (!github && hasTerms(out.githubSearch)) {
       // Claude called the search: run it, then ask again with what it found.
-      github = await githubChatSearch(cleanTerms(out.githubSearch, 12), searchContext, searchLog)
+      github = await githubChatSearch(cleanTerms(out.githubSearch, 12), searchContext, searchLog, { subject: ctx?.question.subject ?? null })
       if (!github.terms.length) {
         github = null
         askWhat = true
