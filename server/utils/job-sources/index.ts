@@ -253,7 +253,15 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
         salaryMin: config.salaryMin ?? undefined,
         salaryCurrency: config.salaryCurrency ?? 'USD',
       }
-      const hash = filterHash(params)
+      // Only the config's own fields: learned keywords change often, a new keyword gets its own
+      // scope (and so its own full pull) anyway, and learned exclusions only ever remove listings.
+      const hash = filterHash({
+        keywords: parseList(config.keywords) ?? [],
+        excludedKeywords: parseList(config.excludedKeywords) ?? [],
+        locations: params.locations,
+        remoteOnly: params.remoteOnly,
+        salaryMin: params.salaryMin,
+      })
       const chosen = parseList(config.jobSources) ?? Object.keys(AGGREGATOR_ADAPTERS)
       const names = [...new Set([...chosen, ...Object.keys(BOARD_ADAPTERS)])]
       const startedAt = nowIso()
