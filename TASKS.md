@@ -117,6 +117,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [ ] Around 2026-11-17 (Devin: "circle back in like two weeks"): measure the knowledge base size on production and decide whether calls should query it with a tool instead of receiving all of it. Baseline 2026-11-03: about 1,800 tokens, under 2% of a Sonnet enrich call's cost with caching; a lookup tool only pays off past roughly 30,000 tokens.
+
 - [ ] 2026-11-03, `draft-from-records`: Devin changed the chat rule ("you should be able to answer this question"): the question chat drafts a first-person answer from his records (knowledge base, GitHub evidence, live Claude session memory), every sentence with its source, no invented numbers or outcomes, client names generic, nothing saved until he presses Save.
 
 - 2026-11-03, first day pulling every source (production): $72.31 spent, background work stopped at $70.14 as designed. 1,767 jobs read (enrich on Sonnet, $49.96, about $0.028 a job) but only 343 scored (match_gaps, $12.75), so 1,426 wait read but unscored; 254 wait to be read; 257 skipped as duplicates or by the title filter; 24 Decide cards. The 3:00 PM search found 8,555 listings, 446 passed the filters, 405 new, 151 duplicates. Caching deployed at 14:12 but no call has run since (budget), so production cache rates are unconfirmed until the 6:00 AM run. Two faults found: the queue read far ahead of scoring, and the budget-stopped 3:00 PM run read "succeeded"; both sent to `score-first`.
