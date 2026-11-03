@@ -52,7 +52,7 @@ export interface JobsResponse {
 export interface JobSearchResult {
   runId: number | null
   status: 'succeeded' | 'failed' | 'skipped' | 'queued'
-  /** True when the search still waits in the job queue (or still runs) after two minutes; message says so. */
+  /** True when the search still waits in the job queue (or still runs) after a minute; message says so. */
   queued?: boolean
   message: string
   jobsFound: number

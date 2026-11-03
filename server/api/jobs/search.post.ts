@@ -2,12 +2,12 @@ import { eq } from 'drizzle-orm'
 import { pipelineRuns, searchConfigs } from '~~/server/db/schema'
 import type { SearchRunStats } from '~~/server/utils/job-sources'
 
-/** How long the request waits for the search before answering that it is still queued. */
-const WAIT_MS = 120_000
+/** How long the request waits for the search before answering that it is still queued. Under Cloudflare's 100 second limit. */
+const WAIT_MS = 60_000
 
 // "Search now" on the jobs page. Adds the jobs:search task to the job queue (trigger manual), so the
-// run lands in pipeline_runs (Settings, Recent runs) like every other run, and waits up to two
-// minutes for it so the page can say how many new jobs it found. Behind a long item in the queue,
+// run lands in pipeline_runs (Settings, Recent runs) like every other run, and waits up to a
+// minute for it so the page can say how many new jobs it found. Behind a long item in the queue,
 // it answers 202 with queued: true and a sentence saying so; the jobs show up when it runs.
 export default defineEventHandler(async (event) => {
   const active = useDb().select({ id: searchConfigs.id }).from(searchConfigs).where(eq(searchConfigs.isActive, true)).all()
