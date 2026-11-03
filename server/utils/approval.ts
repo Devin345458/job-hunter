@@ -1,17 +1,22 @@
 import { demosEnabled } from './demo/enabled'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { applications, demoProjects } from '../db/schema'
 import { submitApplication } from './apply/submit'
 import { publishDemo } from './demo/publish'
 
 const inFlight = new Set<number>()
 
+/** The status detail an approval stopped by a restart during the submit leaves. Devin asked for these words. */
+export const SUBMIT_INTERRUPTED = 'Interrupted while submitting; check the employer\'s site before you submit again'
+
 /**
  * Everything that happens after Devin taps approve, in order:
  * 1. publish the demo project, if one was built for this application
  * 2. submit the employer form
- * Runs in the background; the dashboard follows the application's status and status_detail.
- * This is the only code path that calls submitApplication or publishDemo.
+ * Runs as a queue item (applications:approve, server/utils/queue-run.ts); the dashboard follows
+ * the application's status and status_detail. This is the only code path that calls
+ * submitApplication or publishDemo. A restart in the middle never runs it again (the form may
+ * have gone through); markApprovalInterrupted says what to check instead.
  */
 export async function runApproval(applicationId: number): Promise<void> {
   if (inFlight.has(applicationId)) return
@@ -54,4 +59,28 @@ export async function runApproval(applicationId: number): Promise<void> {
   finally {
     inFlight.delete(applicationId)
   }
+}
+
+/**
+ * An approval item was cut off by a restart (server/utils/queue.ts, recoverExpired). It is never
+ * run again. The application goes to submit_failed, so approve can retry it once Devin has looked,
+ * with a status detail that says how far it got. A demo left in publishing goes back to built, so
+ * a retry publishes it again; publishing reuses the repo that has this history and skips a resume
+ * card that is already there. Returns the message for the queue item.
+ */
+export function markApprovalInterrupted(applicationId: number): string {
+  const db = useDb()
+  const app = db.select().from(applications).where(eq(applications.id, applicationId)).get()
+  if (!app) return 'Interrupted by a restart.'
+  db.update(demoProjects).set({ status: 'built' })
+    .where(and(eq(demoProjects.applicationId, applicationId), eq(demoProjects.status, 'publishing'))).run()
+  const message = app.status === 'submitting'
+    ? SUBMIT_INTERRUPTED
+    : app.status === 'publishing'
+      ? 'Interrupted while publishing the demo; nothing was submitted. Approve again to retry.'
+      : 'Interrupted before submitting; nothing was sent. Approve again to retry.'
+  if (['approved', 'publishing', 'submitting'].includes(app.status)) {
+    setApplicationStatus(applicationId, 'submit_failed', message, { submitError: message })
+  }
+  return message
 }

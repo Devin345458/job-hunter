@@ -8,8 +8,6 @@ import { dirname } from 'path'
 import type { TDocumentDefinitions, Content } from 'pdfmake/interfaces'
 import type { TailoredResume } from '#shared/types/pipeline'
 
-const require = createRequire(import.meta.url)
-
 export interface ContactInfo {
   email?: string
   phone?: string
@@ -20,6 +18,12 @@ export interface ContactInfo {
 
 function getPrinter() {
   const PdfPrinter = (PdfPrinterModule as any).default || PdfPrinterModule
+  // Made here, when a PDF is made, never at module load. The production build turns
+  // import.meta.url into a global that .output/server/index.mjs sets in its body, after every
+  // import has run. When this file lands in a chunk that loads at startup (the job queue's worker
+  // plugin imports it), a require made at module load would resolve from "/_entry.js" and miss
+  // .output/server/node_modules ("Cannot find module 'pdfmake/fonts/Roboto/Roboto-Regular.ttf'").
+  const require = createRequire(import.meta.url)
   const fonts = {
     Roboto: {
       normal: require.resolve('pdfmake/fonts/Roboto/Roboto-Regular.ttf'),

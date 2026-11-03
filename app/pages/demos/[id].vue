@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
                 <p class="text-body-2 text-medium-emphasis mb-3">
                   Running now. The newest lines are below; the full log is saved when the build ends.
                 </p>
-                <pre class="demo-detail__code demo-detail__code--boxed mb-4">{{ demo.progress.recent.join('\n') || 'Starting...' }}</pre>
+                <pre class="demo-detail__code demo-detail__code--boxed mb-4">{{ demo.progress.recent.join('\n') || demo.progress.waiting || 'Starting...' }}</pre>
               </template>
               <pre v-if="demo.buildLog" class="demo-detail__code demo-detail__code--boxed">{{ demo.buildLog }}</pre>
               <p v-else class="text-body-2 text-medium-emphasis">

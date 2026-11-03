@@ -205,9 +205,11 @@ export function outcomeOf(r: PipelineRunView): RunOutcome {
 /** One line for a run's outcome: "succeeded", "38 failed, Claude is out of credit", "3 problems". */
 export function outcomeText(r: PipelineRunView): string {
   const o = outcomeOf(r)
-  if (o !== 'partial') return OUTCOME[o].label
+  // A run the job queue carried on after the server restarted mid-run says so.
+  const resumed = r.stats?.resumedAfterRestart ? ', resumed after a restart' : ''
+  if (o !== 'partial') return `${OUTCOME[o].label}${resumed}`
   const p = r.problems ?? []
-  return p.length === 1 ? p[0]! : `${p.length} problems`
+  return `${p.length === 1 ? p[0]! : `${p.length} problems`}${resumed}`
 }
 
 const STAT_LABEL: Record<string, string> = {
@@ -252,7 +254,7 @@ const STAT_LABEL: Record<string, string> = {
   pruned: 'old rows removed',
 }
 
-const STAT_HIDDEN = new Set(['tz', 'local', 'outcome', 'stopReason'])
+const STAT_HIDDEN = new Set(['tz', 'local', 'outcome', 'stopReason', 'resumedAfterRestart'])
 
 export interface RunDemo { id: number; name: string; state: string }
 

@@ -65,6 +65,8 @@ export interface FactDef {
   types?: string[]
   /** Labels that look like this fact but are not. */
   exclude?: RegExp
+  /** Fields that look like this fact but are not, judged from the fields around them on the form. */
+  contextExclude?: (field: FieldLike, siblings: FieldLike[]) => boolean
   /** The value that answers the label as written, or null. */
   value: (v: FactValues) => FactValue | null
   /** For choice fields: values to try against the options, in order. Defaults to [value]. */
@@ -571,6 +573,8 @@ const WORK_FACTS: Array<FactDef & { kb: string[] }> = [
     group: 'work',
     label: 'start date',
     matchRaw: /start date|when (can|could|would) you (start|begin)|earliest (possible )?(date|start)|available to start|availability to start|notice period|date available/i,
+    // Greenhouse's education block ("Start date month" next to School and Degree) is not this.
+    contextExclude: (field, siblings) => isHistoryDate(field, siblings),
     value: valueOf('work.start_date'),
     statement: v => v['work.start_date'] ? `Asked when he could start, Devin answered: ${v['work.start_date'].value}` : null,
     ask: { kind: 'fact', subject: 'start date', question: 'When could you start a new job, or how much notice do you need to give?', knowledgeKey: 'preference:Earliest Start Date', answerType: 'text', category: 'technical' },
@@ -808,15 +812,53 @@ export interface FieldLike {
   label: string
   type: string
   isEeo?: boolean
+  section?: string | null
 }
 
-/** The fact a form field asks for, or null when it is not a personal fact. */
-export function matchFact(field: FieldLike): FactDef | null {
+/** Wording that can only mean when Devin could start a new job. */
+const AVAILABILITY_WORDING = /\bwhen (can|could|would) you\b|\bearliest\b|\bavailab|\bnotice\b|\b(desired|anticipated|expected|preferred|possible) start\b|\bable to (start|begin|join)\b/
+/** A date split into parts: "Start date month", "Start date year". */
+const DATE_PART = /\b(month|year|day|mm|yyyy|yy)\b/
+/** The fields of a school or a job in an education or work history group. */
+const HISTORY_FIELD = /\b(school|university|college|institution|degree|discipline|major|minor|field of study|gpa|graduat\w*|employer|(job|position) title|currently (work|attend|study)\w*( here)?)\b|^(company|company name|title)$/
+const HISTORY_SECTION = /\b(education|employment|work history|work experience|experience|previous (jobs?|employers?|positions?))\b/
+/** How far a neighbor may sit from the date and still be in its group. */
+const HISTORY_REACH = 4
+
+/**
+ * A start date that belongs to a school or a job in the applicant's history, not to when Devin
+ * could start a new job. Greenhouse's education block reads School, Degree, Discipline, Start date
+ * month, Start date year, End date month, End date year. A label worded as availability ("earliest
+ * start date", "when could you start") is never history.
+ */
+export function isHistoryDate(field: FieldLike, siblings: FieldLike[] = []): boolean {
+  const text = labelText(field.label)
+  if (!/\bstart(ed|ing)? date\b|\bdate started\b/.test(text) || AVAILABILITY_WORDING.test(text)) return false
+  if (DATE_PART.test(text)) return true
+  if (field.section && HISTORY_SECTION.test(labelText(field.section))) return true
+  let at = siblings.indexOf(field)
+  if (at < 0) at = siblings.findIndex(s => s.label === field.label)
+  if (at < 0) return false
+  const near = siblings.slice(Math.max(0, at - HISTORY_REACH), at + HISTORY_REACH + 1).filter(s => s !== siblings[at])
+  return near.some((s) => {
+    const t = labelText(s.label)
+    return HISTORY_FIELD.test(t) || /^(end|ended|ending) date\b|\bdate (ended|left)\b/.test(t)
+  })
+}
+
+/**
+ * The fact a form field asks for, or null when it is not a personal fact. `siblings` are every
+ * field of the form in order (the field among them), so a label can be read in its group.
+ */
+export function matchFact(field: FieldLike, siblings: FieldLike[] = []): FactDef | null {
   if (field.isEeo || field.type === 'file') return null
   const text = labelText(field.label)
   for (const def of PERSONAL_FACTS) {
     if (def.exclude?.test(text)) continue
-    if (def.matchRaw?.test(field.label) || def.match?.test(text)) return def
+    if (def.matchRaw?.test(field.label) || def.match?.test(text)) {
+      if (def.contextExclude?.(field, siblings)) continue
+      return def
+    }
   }
   // An email or phone input is the email address or phone number whatever its label says.
   for (const def of PERSONAL_FACTS) {

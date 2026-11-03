@@ -4,7 +4,7 @@ import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/s
 import type { RepoEvidence } from '#shared/types/repos'
 import { AiBudgetExceeded, aiStructured, fallbackModel } from '../ai'
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
-import { cleanTerms, searchEvidence, type CommitHit, type SearchResult, type TermSet } from './search'
+import { cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 
 // repos:suggest. For each pending knows or has_done question: one cheap Claude call turns the
@@ -19,7 +19,7 @@ const DRAFT_MAX = 600
 const TermsSchema = z.object({
   searchable: z.boolean().describe('False when commits cannot show this: soft skills, talks, events, people management, or anything outside code.'),
   code: z.array(z.string()).describe('Up to 10 specific identifiers, API names, or words that would appear in his code, diffs, or commit messages. At least 3 characters each. Never generic words like auth, api, data, test, config, user.'),
-  paths: z.array(z.string()).describe('Up to 6 file extensions with a leading dot (".cs") or path fragments ("/scim/") that only this subject would produce. Empty when none are specific.'),
+  paths: z.array(z.string()).describe('Up to 6 file extensions with a leading dot (".cs"), file names ("schema.graphql", "shopify.app.toml"), or folder names ("graphql/", "/scim/") that only this subject would produce. Empty when none are specific.'),
   packages: z.array(z.string()).describe('Up to 8 package names a project using this would declare (npm, composer, pip, go, gem, cargo, nuget), exactly as published, e.g. "@simplewebauthn/server".'),
 })
 
@@ -74,6 +74,7 @@ Subject: ${q.subject ?? q.question}
 The app will search his own git commits (messages, changed file paths, diff lines) and the package manifests of his repos for evidence. Give the search terms that would find work on exactly this subject.
 - Prefer distinctive terms: library and package names, API names, protocol names, class or function names, config keys, URL paths. For passkeys: webauthn, navigator.credentials, publicKeyCredential, @simplewebauthn/server, FIDO2, passkey. For SCIM: scim, /scim/v2, ServiceProviderConfig, urn:ietf:params:scim.
 - A programming language is best found by file extension (paths) and its package manager, not by its name.
+- Changed file paths count even when the commit message never names the subject: give the file names and folders only this subject creates (GraphQL: .graphql, schema.graphql, graphql/; a Shopify app: shopify.app.toml, .liquid).
 - Leave out words that would match unrelated code.
 - searchable is false, with empty lists, when commits cannot show it (communication, demos at events, writing for people, management).`
 }
@@ -200,14 +201,17 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         termsBySubject.set(subject.toLowerCase(), t)
       }
       const termsJson = JSON.stringify(t)
-      const empty = !t.searchable || (!t.terms.code.length && !t.terms.paths.length && !t.terms.packages.length)
+      // Files, folders, and packages only this subject produces (schema.graphql, shopify.app.toml)
+      // are searched whatever Claude gave, so path evidence never depends on it naming them.
+      const searchTerms = withSignatures(t.searchable ? t.terms : { code: [], paths: [], packages: [] }, `${subject}\n${q.question}`)
+      const empty = !searchTerms.code.length && !searchTerms.paths.length && !searchTerms.packages.length
       if (empty) {
         upsert(q.id, { status: 'none', subject, termsJson, level: null, draft: null, evidenceJson: null, commitShasJson: '[]', error: null })
         stats.notSearchable++
         stats.results.push({ questionId: q.id, subject, outcome: 'not searchable in code' })
         continue
       }
-      const found = await searchEvidence(t.terms, log)
+      const found = await searchEvidence(searchTerms, log)
       stats.errors.push(...found.errors)
       const hitShas = found.hits.map(h => h.sha).sort()
       if (!hitShas.length) {
@@ -229,7 +233,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       const verdict = await aiStructured(JudgeSchema, {
         purpose: 'repo_judge',
         system: judgeSystem(),
-        prompt: judgePrompt(q, t.terms, found),
+        prompt: judgePrompt(q, searchTerms, found),
         maxTokens: 1500,
         effort: 'low',
         ref: { type: 'question', id: q.id },

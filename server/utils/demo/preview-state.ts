@@ -3,7 +3,7 @@ import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readF
 import { join } from 'node:path'
 import type { DemoPreview, DemoTestCase } from '#shared/types/pipeline'
 import { confinedPath } from './exec'
-import { isPreviewBuilding } from './progress'
+import { previewBusy } from './progress'
 import type { DemoRow } from './store'
 
 // What a demo's preview is and where it lives. The builder (preview.ts) writes it; the
@@ -184,7 +184,8 @@ const HAS_CODE: DemoRow['status'][] = ['built', 'publishing', 'published']
 
 /** The preview block of GET /api/demos/:id. */
 export function previewView(demo: DemoRow): DemoPreview {
-  const building = isPreviewBuilding(demo.id)
+  // Building in the worker, or waiting in the job queue.
+  const building = previewBusy(demo.id)
   const empty: DemoPreview = { kind: 'none', tool: null, status: building ? 'building' : 'missing', url: null, builtAt: null, error: null, tests: null, note: null }
   if (!HAS_CODE.includes(demo.status) && !building) return empty
   const root = demoRoot(demo)

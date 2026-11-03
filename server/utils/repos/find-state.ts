@@ -1,5 +1,6 @@
-// In-memory state of the commit search while it runs, read by Settings to show progress. Kept
-// apart from commit-search.ts so settings.ts can read it without importing the search itself.
+// State of the commit search while it runs, read by Settings to show progress. Kept apart from
+// commit-search.ts so settings.ts can read it without importing the search itself. The worker
+// keeps it in memory and shares it on its queue item, so a web process (NUXT_ROLE=web) sees it too.
 
 export interface FindProgress {
   startedAt: string
@@ -16,9 +17,11 @@ export interface FindProgress {
 let current: FindProgress | null = null
 
 export function findProgress(): FindProgress | null {
-  return current ? { ...current } : null
+  if (current) return { ...current }
+  return runsWorker() ? null : sharedProgress<FindProgress>('find')
 }
 
 export function setFindProgress(p: FindProgress | null) {
   current = p
+  shareProgress('find', p)
 }

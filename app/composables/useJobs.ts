@@ -50,8 +50,10 @@ export interface JobsResponse {
 
 /** Result of POST /api/jobs/search: the jobs:search run it recorded in pipeline_runs. */
 export interface JobSearchResult {
-  runId: number
-  status: 'succeeded' | 'failed' | 'skipped'
+  runId: number | null
+  status: 'succeeded' | 'failed' | 'skipped' | 'queued'
+  /** True when the search still waits in the job queue (or still runs) after a minute; message says so. */
+  queued?: boolean
   message: string
   jobsFound: number
   found: number
@@ -186,7 +188,7 @@ export function useJobs() {
     }
   }
 
-  /** Runs the jobs:search task now (POST /api/jobs/search). Throws with the server's message on failure. */
+  /** Queues the jobs:search task and waits for it (POST /api/jobs/search). Throws with the server's message on failure. */
   async function triggerSearch(): Promise<JobSearchResult> {
     return await $fetch<JobSearchResult>('/api/jobs/search', { method: 'POST' })
   }

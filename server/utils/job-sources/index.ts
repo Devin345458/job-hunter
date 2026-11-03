@@ -201,7 +201,7 @@ async function pullViaSearch(adapter: JobSourceAdapter, params: SearchParams): P
  * filters and the learned search exclusions run before anything is stored, so more listings
  * read does not mean more jobs queued for enrichment. A failed pull leaves its watermark alone.
  */
-export async function runSearch(log: (msg: string) => void = console.log): Promise<SearchRunStats> {
+export async function runSearch(log: (msg: string) => void = console.log, opts: { onNewJob?: (jobId: number) => void } = {}): Promise<SearchRunStats> {
   const db = useDb()
   const configs = db.select().from(searchConfigs).where(eq(searchConfigs.isActive, true)).all()
   const stats: SearchRunStats = { configs: configs.length, found: 0, passed: 0, known: 0, new: 0, queued: 0, sources: {}, adjustments: 'not available', learnedExclusions: {}, boardsDiscovered: 0, newJobIds: [] }
@@ -340,6 +340,8 @@ export async function runSearch(log: (msg: string) => void = console.log): Promi
               stats.new++
               stats.queued++
               stats.newJobIds.push(id)
+              // The jobs:search task queues each new job for reading (task-queue unit).
+              opts.onNewJob?.(id)
             }
           }
           catch (e: any) {
