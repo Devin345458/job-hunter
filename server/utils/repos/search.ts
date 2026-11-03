@@ -328,11 +328,11 @@ const SIGNATURES: Signature[] = [
   },
   {
     when: /\bllms?\b|\bai[- ](native|powered)\b|\bagentic\b|\bagents?\b.*\b(ai|llm|platforms?)\b|\brag\b|\bembeddings?\b|\baeo\b/i,
-    terms: { code: ['LLM', 'LLMs', 'agentic', 'tool_use', 'RAG', 'embeddings', 'OpenAI', 'Anthropic API', 'Claude API', 'langchain', 'prompt caching'], paths: ['/agents/', '/llm/'], packages: ['@anthropic-ai/sdk', 'anthropic', 'openai', 'langchain', 'llamaindex', '@ai-sdk/anthropic'] },
+    terms: { code: ['LLM', 'LLMs', 'agentic', 'tool_use', 'RAG', 'embeddings', 'OpenAI', 'Anthropic API', 'Claude API', 'Claude Code', 'subagent', 'subagents', 'autonomous', 'langchain', 'prompt caching'], paths: ['/agents/', '/llm/'], packages: ['@anthropic-ai/sdk', 'anthropic', 'openai', 'langchain', 'llamaindex', '@ai-sdk/anthropic'] },
   },
   {
     when: /\bsecurity\b|\bappsec\b|\bvulnerabilit|\bowasp\b/i,
-    terms: { code: ['security', 'CVE', 'XSS', 'CSRF', 'SQL injection', 'vulnerability', 'pentest', 'OWASP'], paths: [], packages: [] },
+    terms: { code: ['security', 'CVE', 'XSS', 'CSRF', 'SQL injection', 'vulnerability', 'vulnerable', 'pentest', 'OWASP', 'account takeover', 'privilege escalation', 'exploit'], paths: [], packages: [] },
   },
   {
     when: /\bseo\b|search engine optimi[sz]ation|structured (content|data)|json-ld|schema\.org/i,
@@ -341,6 +341,15 @@ const SIGNATURES: Signature[] = [
   {
     when: /\banalytics\b|experimentation|a\/b test|conversion (optimi[sz]ation|rate)|growth marketing/i,
     terms: { code: ['analytics', 'gtag', 'GA4', 'Google Analytics', 'A/B test', 'Mixpanel', 'PostHog', 'Amplitude'], paths: [], packages: ['mixpanel', 'mixpanel-browser', 'posthog-js', '@amplitude/analytics-browser', 'vue-gtag'] },
+  },
+  {
+    // GitHub itself: workflows, Actions, the API. Its files say ".github/", its messages rarely say GitHub.
+    when: /\bgithub\b(?!\s+copilot)/i,
+    terms: { code: ['github', 'GitHub Actions', 'octokit'], paths: ['.github/'], packages: ['@octokit/rest', 'octokit', '@actions/core'] },
+  },
+  {
+    when: /\bux\b|user experience|usability|\bui polish\b/i,
+    terms: { code: ['UX', 'usability', 'mockup', 'restyle', 'polish'], paths: [], packages: [] },
   },
   {
     when: /\baccessibility\b|\ba11y\b|\bwcag\b/i,
