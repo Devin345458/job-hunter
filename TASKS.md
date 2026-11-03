@@ -117,6 +117,9 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- 2026-11-03, first day pulling every source (production): $72.31 spent, background work stopped at $70.14 as designed. 1,767 jobs read (enrich on Sonnet, $49.96, about $0.028 a job) but only 343 scored (match_gaps, $12.75), so 1,426 wait read but unscored; 254 wait to be read; 257 skipped as duplicates or by the title filter; 24 Decide cards. The 3:00 PM search found 8,555 listings, 446 passed the filters, 405 new, 151 duplicates. Caching deployed at 14:12 but no call has run since (budget), so production cache rates are unconfirmed until the 6:00 AM run. Two faults found: the queue read far ahead of scoring, and the budget-stopped 3:00 PM run read "succeeded"; both sent to `score-first`.
+- [ ] 2026-11-03, `score-first`: score items before more reads; a budget stop reads partial with the reason; a backlog line in Settings.
+
 - [x] 2026-11-03, Devin approved: resume site updated to 8+ years (Devin345458/resume 739e8da, pushed; live at resume.devinsmini.com, checked at 1280: hero line, meta description, the "Years Shipping Code" stat reads 8+, and the about paragraph; no "6+ years" left on the live page).
 - [x] 2026-11-03, `prompt-cache`: Console email said prompt caching could save up to 34% of API spend. Stable instructions and knowledge base first with cache breakpoints, cache write and read pricing in costOf, measured before and after on 20 jobs and one Apply. Live at 8127853 (migration 0007 adds ai_calls.cache_write_tokens; checked on production). Same 20 jobs before and after, prompt text unchanged: enrich $0.66 to $0.47 and match_gaps $0.79 to $0.57 (about 60% of prompt tokens read from cache, 28% cheaper), form_answers_verify $0.10 to $0.05; overall $1.95 to $1.49 for the same work. Cache writes and reads are now priced per model in usageCost(). Login sweep 68 routes, 0 unexpected.
 
