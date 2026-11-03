@@ -105,6 +105,23 @@ export function assertAiBudget() {
   if (spent >= budget) throw new AiBudgetExceeded(spent, budget)
 }
 
+/**
+ * Why no Claude call can go out right now (the daily budget is spent, or the account was refused
+ * in the last ten minutes), as the error a call would throw; null when calls can go out. Per-job
+ * queue items check it first, so a backlog stops at the budget without fetching anything.
+ */
+export function aiStopError(): AiBudgetExceeded | null {
+  try {
+    assertAiBudget()
+  }
+  catch (e) {
+    if (e instanceof AiBudgetExceeded) return e
+    throw e
+  }
+  if (Date.now() < accountStop.until) return accountStop.kind === 'key' ? new AiKeyRejected() : new AiCreditExhausted()
+  return null
+}
+
 function costOf(model: string, usage: { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) {
   const price = priceOf(model)
   // Cache writes (5 minute TTL) bill at 1.25x the input price.

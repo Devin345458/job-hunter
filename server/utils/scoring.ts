@@ -26,6 +26,7 @@ type JobRow = InferSelectModel<typeof jobs>
 
 export const SCORE_WEIGHTS = { skills: 0.6, compensation: 0.4 } as const
 /** Jobs sent to Claude for a skills score per jobs:match run. */
+/** Jobs one request scores at most (scoreJobs). The jobs:match step has no cap: it queues every unscored job. */
 export const MATCH_LIMIT = 60
 
 // Haiku collapses a single 0 to 100 score onto a few values (62 again and again), which makes
@@ -183,70 +184,101 @@ export interface MatchStats extends Record<string, unknown> {
   errors: string[]
 }
 
+/** The outcome of scoring one job. 'budget' leaves it unscored for the next day. */
+export type ScoreOutcome = 'scored' | 'reused' | 'noText' | 'failed' | 'budget' | 'already'
+
+export interface ScoreOneResult extends Record<string, unknown> {
+  jobId: number
+  outcome: ScoreOutcome
+  final?: number
+  /** Preference questions this score asked or pointed at. */
+  asked?: number[]
+  error?: string
+}
+
+/** Enriched jobs with no skills score yet, or whose posting was read again after the last score. Newest first. */
+export function pendingScoreJobs(): JobRow[] {
+  return useDb().select().from(jobs).where(and(
+    isNotNull(jobs.enrichedAt),
+    or(isNull(jobs.enrichError), sql`${jobs.enrichError} NOT LIKE 'Skipped by prefilter:%'`),
+    sql`${jobs.status} != 'expired'`,
+    or(isNull(jobs.skillsScore), isNull(jobs.scoredAt), lt(jobs.scoredAt, jobs.enrichedAt)),
+  )).all()
+    .filter(j => !isPrefilterSkip(j.enrichError))
+    .sort((a, b) => b.foundAt.localeCompare(a.foundAt))
+}
+
 /**
- * jobs:match. Scores enriched jobs that have no skills score yet, or whose posting was enriched
- * again after the last score (one Claude call each), then rescores every open job in code so
- * new preferences and learned rules apply everywhere. Pass jobIds to score specific jobs.
- * fresh asks Claude again even when the stored skills score is newer than the posting: the skill
- * panel uses it after an answer changes the knowledge base.
+ * Scores one job: one Claude call for the skills score (reused when the stored one is newer than
+ * the posting, unless fresh), then compensation and learned rules in code. A budget or credit stop
+ * leaves the job unscored, so it is scored once the budget allows.
+ */
+export async function scoreOne(job: JobRow, ctx: { entries: KnowledgeEntry[]; prefs: CompPreferences; fresh?: boolean }, log: (msg: string) => void = console.log): Promise<ScoreOneResult> {
+  const text = job.postingText || htmlToText(job.description)
+  const previous = parseJson<ScoreBreakdown | null>(job.scoreBreakdown, null)
+  const reuse = !ctx.fresh && !!previous && job.skillsScore != null && !!job.scoredAt && !!job.enrichedAt && job.scoredAt >= job.enrichedAt
+  if (!text && !reuse) return { jobId: job.id, outcome: 'noText' }
+  try {
+    const skills = reuse ? previous!.skills : await scoreSkills(job, text!, parseJson<Requirement[]>(job.requirementsJson, []), ctx.entries)
+    const comp = parseJson<CompensationBreakdown | null>(job.compJson, null)
+    const qids = askCompQuestions(ctx.prefs, comp, job.id)
+    const breakdown = composeBreakdown(skills, scoreCompensation(comp, ctx.prefs, qids), learnedAdjustment(job))
+    writeScore(job, breakdown, job.matchScore == null ? 'initial' : 'rescore')
+    log(`#${job.id} ${job.company} | ${job.title}: final ${breakdown.final} (skills ${skills.score}, comp ${breakdown.compensation.score ?? 'n/a'}, learned ${breakdown.learned.total})`)
+    return { jobId: job.id, outcome: reuse ? 'reused' : 'scored', final: breakdown.final, asked: [qids.floorQuestionId, qids.healthQuestionId].filter((id): id is number => !!id) }
+  }
+  catch (e: any) {
+    if (e instanceof AiBudgetExceeded) return { jobId: job.id, outcome: 'budget', error: e.message }
+    const message = String(e?.message || e).slice(0, 300)
+    log(`#${job.id} failed: ${message}`)
+    return { jobId: job.id, outcome: 'failed', error: message }
+  }
+}
+
+export function emptyMatchStats(): MatchStats {
+  return { pending: 0, scored: 0, reusedSkills: 0, failed: 0, noText: 0, budgetStopped: false, questionsAsked: [], rescored: 0, costUsd: 0, errors: [] }
+}
+
+/** Adds one job's result to a run's counts (scoreJobs, and the jobs:match step over its queue items). */
+export function tallyScore(stats: MatchStats, r: ScoreOneResult) {
+  if (r.outcome === 'scored') stats.scored++
+  else if (r.outcome === 'reused') { stats.scored++; stats.reusedSkills++ }
+  else if (r.outcome === 'noText') stats.noText++
+  else if (r.outcome === 'budget') {
+    stats.budgetStopped = true
+    if (r.error && !stats.errors.includes(r.error)) stats.errors.push(r.error)
+  }
+  else if (r.outcome === 'failed') {
+    stats.failed++
+    stats.errors.push(`#${r.jobId}: ${r.error ?? 'failed'}`)
+  }
+  for (const id of r.asked ?? []) if (!stats.questionsAsked.includes(id)) stats.questionsAsked.push(id)
+}
+
+/**
+ * Scores jobs inside one request (POST /api/jobs/match, the skill panel), four at a time, then
+ * rescores every open job in code when no jobIds were given. The jobs:match step does not use it
+ * anymore: it queues one jobs:match-one item per job. fresh asks Claude again even when the stored
+ * skills score is newer than the posting: the skill panel uses it after an answer changes the
+ * knowledge base.
  */
 export async function scoreJobs(opts: { jobIds?: number[]; limit?: number; fresh?: boolean; log?: (msg: string) => void } = {}): Promise<MatchStats> {
   const db = useDb()
   const log = opts.log ?? console.log
-  const stats: MatchStats = { pending: 0, scored: 0, reusedSkills: 0, failed: 0, noText: 0, budgetStopped: false, questionsAsked: [], rescored: 0, costUsd: 0, errors: [] }
+  const stats = emptyMatchStats()
 
-  const rows = opts.jobIds?.length
-    ? db.select().from(jobs).where(inArray(jobs.id, opts.jobIds)).all()
-    : db.select().from(jobs).where(and(
-        isNotNull(jobs.enrichedAt),
-        or(isNull(jobs.enrichError), sql`${jobs.enrichError} NOT LIKE 'Skipped by prefilter:%'`),
-        sql`${jobs.status} != 'expired'`,
-        or(isNull(jobs.skillsScore), isNull(jobs.scoredAt), lt(jobs.scoredAt, jobs.enrichedAt)),
-      )).all()
-  const todo = rows.filter(j => opts.jobIds?.length || !isPrefilterSkip(j.enrichError))
-    .sort((a, b) => b.foundAt.localeCompare(a.foundAt))
-    .slice(0, opts.jobIds?.length ? undefined : opts.limit ?? MATCH_LIMIT)
+  const rows = opts.jobIds?.length ? db.select().from(jobs).where(inArray(jobs.id, opts.jobIds)).all() : pendingScoreJobs()
+  const todo = opts.jobIds?.length ? rows : rows.slice(0, opts.limit ?? MATCH_LIMIT)
   stats.pending = rows.length
   log(`${rows.length} jobs need a skills score, scoring ${todo.length}`)
 
-  const entries = loadKnowledge()
-  const prefs = loadCompPreferences()
+  const ctx = { entries: loadKnowledge(), prefs: loadCompPreferences(), fresh: opts.fresh }
   const spentBefore = aiSpentToday()
-  const asked = new Set<number>()
-
   await mapPool(todo, 4, async (job) => {
     if (stats.budgetStopped) return
-    const text = job.postingText || htmlToText(job.description)
-    const previous = parseJson<ScoreBreakdown | null>(job.scoreBreakdown, null)
-    const reuse = !opts.fresh && !!previous && job.skillsScore != null && !!job.scoredAt && !!job.enrichedAt && job.scoredAt >= job.enrichedAt
-    if (!text && !reuse) {
-      stats.noText++
-      return
-    }
-    try {
-      const skills = reuse ? previous!.skills : await scoreSkills(job, text!, parseJson<Requirement[]>(job.requirementsJson, []), entries)
-      if (reuse) stats.reusedSkills++
-      const comp = parseJson<CompensationBreakdown | null>(job.compJson, null)
-      const qids = askCompQuestions(prefs, comp, job.id)
-      for (const id of [qids.floorQuestionId, qids.healthQuestionId]) if (id) asked.add(id)
-      const breakdown = composeBreakdown(skills, scoreCompensation(comp, prefs, qids), learnedAdjustment(job))
-      writeScore(job, breakdown, job.matchScore == null ? 'initial' : 'rescore')
-      stats.scored++
-      log(`#${job.id} ${job.company} | ${job.title}: final ${breakdown.final} (skills ${skills.score}, comp ${breakdown.compensation.score ?? 'n/a'}, learned ${breakdown.learned.total})`)
-    }
-    catch (e: any) {
-      if (e instanceof AiBudgetExceeded) {
-        stats.budgetStopped = true
-        stats.errors.push(e.message)
-        return
-      }
-      stats.failed++
-      stats.errors.push(`#${job.id}: ${String(e?.message || e).slice(0, 300)}`)
-      log(`#${job.id} failed: ${e?.message || e}`)
-    }
+    tallyScore(stats, await scoreOne(job, ctx, log))
   })
 
-  stats.questionsAsked = [...asked]
   if (!opts.jobIds?.length) stats.rescored = (await rescoreJobs('open', 'rescore')).rescored
   stats.costUsd = Math.round((aiSpentToday() - spentBefore) * 10000) / 10000
   stats.errors = stats.errors.slice(0, 10)

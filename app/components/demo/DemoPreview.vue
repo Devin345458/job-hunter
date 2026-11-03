@@ -15,7 +15,7 @@ const frame = ref<'desktop' | 'phone'>('desktop')
 
 const p = computed(() => props.demo.preview)
 const building = computed(() => p.value.status === 'building')
-const lastLine = computed(() => props.demo.progress?.recent.at(-1)?.trim() || null)
+const lastLine = computed(() => props.demo.progress?.waiting || props.demo.progress?.recent.at(-1)?.trim() || null)
 
 const subtitle = computed(() => {
   if (p.value.kind === 'web') return 'The demo\'s own interface, built with Vite. It runs sandboxed: no cookies, no access to this app, no network.'

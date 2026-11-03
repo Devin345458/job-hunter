@@ -102,13 +102,14 @@ function parseList(value: string | null | undefined): string[] | undefined {
   }
 }
 
-function insertIfNew(job: NormalizedJob): boolean {
+/** Inserts the listing unless source + source_id is known. Returns the new job's id, or null. */
+function insertIfNew(job: NormalizedJob): number | null {
   const db = useDb()
   const existing = db.select({ id: jobs.id }).from(jobs)
     .where(and(eq(jobs.source, job.source), eq(jobs.sourceId, job.sourceId)))
     .get()
-  if (existing) return false
-  db.insert(jobs).values({
+  if (existing) return null
+  return db.insert(jobs).values({
     source: job.source,
     sourceId: job.sourceId,
     title: job.title,
@@ -126,8 +127,7 @@ function insertIfNew(job: NormalizedJob): boolean {
     applyUrl: job.applyUrl ?? null,
     atsType: job.atsType ?? null,
     atsMeta: job.atsMeta ? JSON.stringify(job.atsMeta) : null,
-  }).run()
-  return true
+  }).returning({ id: jobs.id }).get().id
 }
 
 /**
@@ -135,7 +135,7 @@ function insertIfNew(job: NormalizedJob): boolean {
  * inserts listings not seen before (dedupe on source + source_id). Used by the jobs:search
  * task and by POST /api/jobs/search.
  */
-export async function runSearch(log: (msg: string) => void = console.log): Promise<SearchRunStats> {
+export async function runSearch(log: (msg: string) => void = console.log, opts: { onNewJob?: (jobId: number) => void } = {}): Promise<SearchRunStats> {
   const db = useDb()
   const configs = db.select().from(searchConfigs).where(eq(searchConfigs.isActive, true)).all()
   const stats: SearchRunStats = { configs: configs.length, found: 0, new: 0, sources: {}, adjustments: 'not available', learnedExclusions: {} }
@@ -201,9 +201,11 @@ export async function runSearch(log: (msg: string) => void = console.log): Promi
           continue
         }
         try {
-          if (insertIfNew(job)) {
+          const id = insertIfNew(job)
+          if (id != null) {
             stat.new++
             stats.new++
+            opts.onNewJob?.(id)
           }
         }
         catch (e: any) {

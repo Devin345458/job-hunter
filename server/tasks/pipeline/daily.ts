@@ -1,22 +1,13 @@
-import { runOutcome, runProblems } from '#shared/utils/run-outcome'
 import { DAILY_STEPS } from '#shared/utils/schedule'
 
 // The daily chain. One scheduled entry runs every step in order, so a slow search never races
 // the match step the way two fixed cron times would. The order lives in shared/utils/schedule.ts
 // (DAILY_STEPS) so Settings lists the steps in the order they run; it is re-exported here for the
 // API routes that import it from this file.
+// The steps run as queue items (server/utils/queue.ts): the worker turns a pipeline:daily item
+// into one child item per step and finishes this run's pipeline_runs row after the last one, with
+// every step's status and problems (stepSummary). Calling this task directly only queues a run.
 export { DAILY_STEPS }
-
-/**
- * What one chained step reported back to the daily run: its status and, when it finished, the
- * problems its stats show (failed items, a budget or credit stop). A step that "succeeded" while
- * every Claude call failed is how the daily run used to look green over a dead pipeline.
- */
-export function stepSummary(step: string, result: { status?: string; stats?: Record<string, unknown> | null; error?: string | null } | null | undefined) {
-  const status = result?.status ?? 'unknown'
-  const problems = runProblems({ task: step, status, stats: result?.stats ?? null })
-  return { status, problems }
-}
 
 export default defineTask({
   meta: {
@@ -25,19 +16,7 @@ export default defineTask({
   },
   async run({ payload }) {
     if (scheduleSkipped(payload as Record<string, unknown> | undefined)) return { result: { skipped: 'the schedule is off on this server (NUXT_SCHEDULER_ENABLED=false)' } }
-    const outcome = await withRun('pipeline:daily', triggerOf(payload), async (log) => {
-      const steps: Record<string, string> = {}
-      const problems: Record<string, string[]> = {}
-      for (const step of DAILY_STEPS) {
-        log(`running ${step}`)
-        const res: any = await runTask(step, { payload: { trigger: 'chained' } })
-        const summary = stepSummary(step, res?.result)
-        steps[step] = summary.status
-        if (summary.problems.length) problems[step] = summary.problems
-      }
-      const stats = { steps, problems }
-      return { ...stats, outcome: runOutcome({ task: 'pipeline:daily', status: 'succeeded', stats }, runProblems({ task: 'pipeline:daily', status: 'succeeded', stats })) }
-    })
-    return { result: outcome }
+    const { item, created } = enqueueDaily(triggerOf(payload))
+    return { result: { queued: item.id, created } }
   },
 })

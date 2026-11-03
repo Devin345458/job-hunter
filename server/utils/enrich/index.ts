@@ -13,7 +13,7 @@ import { resolvePosting } from './posting'
 
 type JobRow = InferSelectModel<typeof jobs>
 
-/** Jobs sent to Claude per run. The rest wait for the next run, best candidates first. */
+/** Jobs one request reads at most (enrichJobs). The jobs:enrich step has no cap: it queues every pending job. */
 export const ENRICH_LIMIT = 40
 const SKIP_PREFIX = 'Skipped by prefilter: '
 
@@ -106,104 +106,176 @@ export interface EnrichStats extends Record<string, unknown> {
   errors: string[]
 }
 
+/** The outcome of reading one posting. 'budget' leaves the job pending for the next day. */
+export type EnrichOutcome = 'enriched' | 'closed' | 'noPostingText' | 'failed' | 'budget' | 'skipped' | 'already'
+
+export interface EnrichOneResult extends Record<string, unknown> {
+  jobId: number
+  outcome: EnrichOutcome
+  ats?: string
+  via?: string
+  applyUrlFound?: boolean
+  compStated?: boolean
+  error?: string
+  skipReason?: string
+}
+
+/** True when the job still waits to be read (the rule pendingEnrichJobs uses). */
+export function needsEnrich(job: Pick<JobRow, 'enrichedAt' | 'enrichError'>): boolean {
+  return !job.enrichedAt || /credit balance is too low|invalid x-api-key/.test(job.enrichError ?? '')
+}
+
+/** Jobs still waiting to be read (enriched_at not set, or refused for lack of credit before credit errors became budget stops). */
+export function pendingEnrichJobs(): JobRow[] {
+  return useDb().select().from(jobs)
+    .where(or(isNull(jobs.enrichedAt), like(jobs.enrichError, '%credit balance is too low%'), like(jobs.enrichError, '%invalid x-api-key%')))
+    .all()
+}
+
 /**
- * jobs:enrich. For jobs without enriched_at: resolve the full posting and the employer form,
- * then one Claude call extracts compensation (with quotes) and requirements (against the
- * knowledge base). Every processed job gets enriched_at, including failures, so a broken
- * posting is not retried every day. Pass jobIds to enrich specific jobs regardless of the cap.
+ * Runs the prefilter over pending jobs: marks the ones it skips (enriched_at set, so they are not
+ * picked again) and returns the rest, best candidates first.
  */
-export async function enrichJobs(opts: { limit?: number; jobIds?: number[]; log?: (msg: string) => void } = {}): Promise<EnrichStats> {
+export function prefilterPending(rows: JobRow[], ctx: PrefilterContext): { ranked: Array<{ job: JobRow; score: number }>; skipped: number; skipReasons: Record<string, number> } {
   const db = useDb()
-  const log = opts.log ?? console.log
-  const limit = opts.limit ?? ENRICH_LIMIT
-  const entries = loadKnowledge()
-  const ctx = prefilterContext(entries)
-  const stats: EnrichStats = { pending: 0, skipped: 0, skipReasons: {}, selected: 0, enriched: 0, failed: 0, closed: 0, noPostingText: 0, applyUrlFound: 0, byAts: {}, byVia: {}, compStated: 0, budgetStopped: false, costUsd: 0, errors: [] }
-
-  const rows = opts.jobIds?.length
-    ? db.select().from(jobs).where(inArray(jobs.id, opts.jobIds)).all()
-    // Jobs whose enrichment was refused for lack of Anthropic credit (before credit errors became
-    // budget stops) count as pending again.
-    : db.select().from(jobs).where(or(isNull(jobs.enrichedAt), like(jobs.enrichError, '%credit balance is too low%'), like(jobs.enrichError, '%invalid x-api-key%'))).all()
-  stats.pending = rows.length
-
   const ranked: Array<{ job: JobRow; score: number }> = []
+  const skipReasons: Record<string, number> = {}
+  let skipped = 0
   for (const job of rows) {
     const p = prefilter(job, ctx)
-    if (p.skip && !opts.jobIds?.length) {
-      stats.skipped++
+    if (p.skip) {
+      skipped++
       const reason = p.skip.replace(/".*"/, '"..."')
-      stats.skipReasons[reason] = (stats.skipReasons[reason] ?? 0) + 1
+      skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
       db.update(jobs).set({ enrichedAt: nowSql(), enrichError: `${SKIP_PREFIX}${p.skip}` }).where(eq(jobs.id, job.id)).run()
       continue
     }
     ranked.push({ job, score: p.score })
   }
   ranked.sort((a, b) => b.score - a.score || b.job.foundAt.localeCompare(a.job.foundAt) || b.job.id - a.job.id)
-  const selected = opts.jobIds?.length ? ranked : roundRobinBySource(ranked, limit)
+  return { ranked, skipped, skipReasons }
+}
+
+/** Board listings are shared for ten minutes, so jobs read one by one from the same board fetch it once. */
+let boardCache: { at: number; cache: BoardCache } | null = null
+export function sharedBoardCache(): BoardCache {
+  if (!boardCache || Date.now() - boardCache.at > 10 * 60_000) boardCache = { at: Date.now(), cache: new BoardCache() }
+  return boardCache.cache
+}
+
+/**
+ * Reads one posting: resolves the full posting and the employer form, then one Claude call
+ * extracts compensation (with quotes) and requirements. Every processed job gets enriched_at,
+ * including failures, so a broken posting is not retried every day. A budget or credit stop leaves
+ * enriched_at unset, so the job is read once the budget allows.
+ */
+export async function enrichOne(job: JobRow, entries: KnowledgeEntry[], cache: BoardCache, log: (msg: string) => void = console.log): Promise<EnrichOneResult> {
+  const db = useDb()
+  try {
+    const resolved = await resolvePosting(job, cache)
+    // Sandbox jobs point at this app's own test form; never relabel them. A board listing already
+    // carries its form URL; a failed detail fetch must not erase it.
+    const keepSource = (job.isSandbox && !!job.applyUrl) || (!resolved.applyUrl && !resolved.closed && !!job.applyUrl)
+    const base: Partial<JobRow> = {
+      applyUrl: keepSource ? job.applyUrl : resolved.applyUrl,
+      atsType: keepSource ? job.atsType : resolved.atsType,
+      atsMeta: (resolved.atsMeta || resolved.notes.length) ? JSON.stringify({ ...(resolved.atsMeta ?? {}), enrichNotes: resolved.notes }) : job.atsMeta,
+      postingText: resolved.postingText,
+      ...(!job.description && resolved.descriptionHtml ? { description: resolved.descriptionHtml } : {}),
+    }
+    const common = { jobId: job.id, ats: base.atsType ?? 'unknown', via: resolved.via, applyUrlFound: !!base.applyUrl }
+
+    if (resolved.closed) {
+      db.update(jobs).set({ ...base, status: 'expired', enrichedAt: nowSql(), enrichError: resolved.notes.join(' ') }).where(eq(jobs.id, job.id)).run()
+      log(`#${job.id} closed: ${resolved.notes.join(' ')}`)
+      return { ...common, outcome: 'closed' }
+    }
+    if (!resolved.postingText || resolved.postingText.length < 150) {
+      db.update(jobs).set({ ...base, enrichedAt: nowSql(), enrichError: `No posting text to read. ${resolved.notes.join(' ')}`.trim() }).where(eq(jobs.id, job.id)).run()
+      return { ...common, outcome: 'noPostingText' }
+    }
+
+    const extraction = await extractPosting(job, resolved.postingText, entries)
+    const comp = buildCompensation(extraction.compensation, resolved.postingText)
+    db.update(jobs).set({
+      ...base,
+      compJson: JSON.stringify(comp),
+      totalCompEstimate: totalMidpoint(comp),
+      requirementsJson: JSON.stringify(extraction.requirements),
+      ...(job.salaryMin == null && job.salaryMax == null && comp.baseAnnualMin != null ? { salaryMin: comp.baseAnnualMin, salaryMax: comp.baseAnnualMax, salaryCurrency: comp.currency } : {}),
+      enrichedAt: nowSql(),
+      enrichError: null,
+    }).where(eq(jobs.id, job.id)).run()
+    log(`#${job.id} ${job.company} | ${job.title}: ${resolved.atsType} via ${resolved.via}, comp ${comp.confidence}, ${extraction.requirements.length} requirements`)
+    return { ...common, outcome: 'enriched', compStated: comp.confidence === 'stated' }
+  }
+  catch (e: any) {
+    if (e instanceof AiBudgetExceeded) {
+      // enriched_at stays null so the job is picked up after the budget resets
+      return { jobId: job.id, outcome: 'budget', error: e.message }
+    }
+    const message = String(e?.message || e).slice(0, 500)
+    db.update(jobs).set({ enrichedAt: nowSql(), enrichError: message }).where(eq(jobs.id, job.id)).run()
+    log(`#${job.id} failed: ${message}`)
+    return { jobId: job.id, outcome: 'failed', error: message }
+  }
+}
+
+/** Adds one job's result to a run's counts (enrichJobs, and the jobs:enrich step over its queue items). */
+export function tallyEnrich(stats: EnrichStats, r: EnrichOneResult) {
+  if (r.via) stats.byVia[r.via] = (stats.byVia[r.via] ?? 0) + 1
+  if (r.ats && r.outcome !== 'budget' && r.outcome !== 'skipped' && r.outcome !== 'already') stats.byAts[r.ats] = (stats.byAts[r.ats] ?? 0) + 1
+  if (r.applyUrlFound) stats.applyUrlFound++
+  if (r.compStated) stats.compStated++
+  if (r.outcome === 'enriched') stats.enriched++
+  else if (r.outcome === 'closed') stats.closed++
+  else if (r.outcome === 'noPostingText') stats.noPostingText++
+  else if (r.outcome === 'skipped') {
+    stats.skipped++
+    if (r.skipReason) stats.skipReasons[r.skipReason] = (stats.skipReasons[r.skipReason] ?? 0) + 1
+  }
+  else if (r.outcome === 'budget') {
+    stats.budgetStopped = true
+    if (r.error && !stats.errors.includes(r.error)) stats.errors.push(r.error)
+  }
+  else if (r.outcome === 'failed') {
+    stats.failed++
+    stats.errors.push(`#${r.jobId}: ${r.error ?? 'failed'}`)
+  }
+}
+
+export function emptyEnrichStats(): EnrichStats {
+  return { pending: 0, skipped: 0, skipReasons: {}, selected: 0, enriched: 0, failed: 0, closed: 0, noPostingText: 0, applyUrlFound: 0, byAts: {}, byVia: {}, compStated: 0, budgetStopped: false, costUsd: 0, errors: [] }
+}
+
+/**
+ * Reads postings inside one request (POST /api/jobs/match with jobIds), four at a time. The
+ * jobs:enrich step does not use it anymore: it queues one jobs:enrich-one item per pending job.
+ * Pass jobIds to read specific jobs regardless of the cap.
+ */
+export async function enrichJobs(opts: { limit?: number; jobIds?: number[]; log?: (msg: string) => void } = {}): Promise<EnrichStats> {
+  const db = useDb()
+  const log = opts.log ?? console.log
+  const limit = opts.limit ?? ENRICH_LIMIT
+  const entries = loadKnowledge()
+  const stats = emptyEnrichStats()
+
+  const rows = opts.jobIds?.length ? db.select().from(jobs).where(inArray(jobs.id, opts.jobIds)).all() : pendingEnrichJobs()
+  stats.pending = rows.length
+  const filtered = opts.jobIds?.length
+    ? { ranked: rows.map(job => ({ job, score: 0 })), skipped: 0, skipReasons: {} }
+    : prefilterPending(rows, prefilterContext(entries))
+  stats.skipped = filtered.skipped
+  stats.skipReasons = filtered.skipReasons
+  const selected = opts.jobIds?.length ? filtered.ranked : roundRobinBySource(filtered.ranked, limit)
   stats.selected = selected.length
   log(`${rows.length} pending, ${stats.skipped} skipped by prefilter, ${selected.length} selected (cap ${limit})`)
 
   const spentBefore = aiSpentToday()
   const cache = new BoardCache()
-
   await mapPool(selected, 4, async ({ job }) => {
     if (stats.budgetStopped) return
-    try {
-      const resolved = await resolvePosting(job, cache)
-      // Sandbox jobs point at this app's own test form; never relabel them. A board listing already
-      // carries its form URL; a failed detail fetch must not erase it.
-      const keepSource = (job.isSandbox && !!job.applyUrl) || (!resolved.applyUrl && !resolved.closed && !!job.applyUrl)
-      const base: Partial<JobRow> = {
-        applyUrl: keepSource ? job.applyUrl : resolved.applyUrl,
-        atsType: keepSource ? job.atsType : resolved.atsType,
-        atsMeta: (resolved.atsMeta || resolved.notes.length) ? JSON.stringify({ ...(resolved.atsMeta ?? {}), enrichNotes: resolved.notes }) : job.atsMeta,
-        postingText: resolved.postingText,
-        ...(!job.description && resolved.descriptionHtml ? { description: resolved.descriptionHtml } : {}),
-      }
-      stats.byVia[resolved.via] = (stats.byVia[resolved.via] ?? 0) + 1
-      stats.byAts[base.atsType ?? 'unknown'] = (stats.byAts[base.atsType ?? 'unknown'] ?? 0) + 1
-      if (base.applyUrl) stats.applyUrlFound++
-
-      if (resolved.closed) {
-        stats.closed++
-        db.update(jobs).set({ ...base, status: 'expired', enrichedAt: nowSql(), enrichError: resolved.notes.join(' ') }).where(eq(jobs.id, job.id)).run()
-        log(`#${job.id} closed: ${resolved.notes.join(' ')}`)
-        return
-      }
-      if (!resolved.postingText || resolved.postingText.length < 150) {
-        stats.noPostingText++
-        db.update(jobs).set({ ...base, enrichedAt: nowSql(), enrichError: `No posting text to read. ${resolved.notes.join(' ')}`.trim() }).where(eq(jobs.id, job.id)).run()
-        return
-      }
-
-      const extraction = await extractPosting(job, resolved.postingText, entries)
-      const comp = buildCompensation(extraction.compensation, resolved.postingText)
-      if (comp.confidence === 'stated') stats.compStated++
-      db.update(jobs).set({
-        ...base,
-        compJson: JSON.stringify(comp),
-        totalCompEstimate: totalMidpoint(comp),
-        requirementsJson: JSON.stringify(extraction.requirements),
-        ...(job.salaryMin == null && job.salaryMax == null && comp.baseAnnualMin != null ? { salaryMin: comp.baseAnnualMin, salaryMax: comp.baseAnnualMax, salaryCurrency: comp.currency } : {}),
-        enrichedAt: nowSql(),
-        enrichError: null,
-      }).where(eq(jobs.id, job.id)).run()
-      stats.enriched++
-      log(`#${job.id} ${job.company} | ${job.title}: ${resolved.atsType} via ${resolved.via}, comp ${comp.confidence}, ${extraction.requirements.length} requirements`)
-    }
-    catch (e: any) {
-      if (e instanceof AiBudgetExceeded) {
-        stats.budgetStopped = true
-        stats.errors.push(e.message)
-        return // enriched_at stays null so the job is picked up after the budget resets
-      }
-      stats.failed++
-      const message = String(e?.message || e).slice(0, 500)
-      stats.errors.push(`#${job.id}: ${message}`)
-      db.update(jobs).set({ enrichedAt: nowSql(), enrichError: message }).where(eq(jobs.id, job.id)).run()
-      log(`#${job.id} failed: ${message}`)
-    }
+    tallyEnrich(stats, await enrichOne(job, entries, cache, log))
   })
 
   stats.costUsd = Math.round((aiSpentToday() - spentBefore) * 10000) / 10000

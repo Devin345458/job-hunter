@@ -53,7 +53,8 @@ function describe(r: RunRow): PipelineRunView {
 // GET /api/pipeline/runs: recent runs, newest first, each with a derived outcome. Scheduler
 // heartbeats fire every 15 minutes, so they are left out of the list (?heartbeats=1 keeps them)
 // and the latest one is returned on its own. The latest daily run is returned on its own too, so
-// the health line never depends on how many rows fit in the list.
+// the health line never depends on how many rows fit in the list. `queue` is the job queue: what
+// runs now, what waits, and the last day's interrupted, failed, canceled, and resumed items.
 export default defineEventHandler((event) => {
   const query = getQuery(event)
   const limit = Math.min(Number(query.limit) || 50, 200)
@@ -71,5 +72,6 @@ export default defineEventHandler((event) => {
     aiSpentToday: aiSpentToday(),
     aiBudget: aiBudget(),
     aiProblem: aiAccountProblem(),
+    queue: queueSnapshot(),
   }
 })

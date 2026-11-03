@@ -25,14 +25,26 @@ export async function withRun<T extends Record<string, unknown>>(
 ): Promise<{ runId: number; status: 'succeeded' | 'failed' | 'skipped'; stats: T | null; error: string | null }> {
   const db = useDb()
   const lock = opts.lockKey ?? task
+  // The queue item being run (server/utils/queue.ts). Its first run row is tied to the item, so an
+  // attempt resumed after a restart carries the same row on instead of starting a new one.
+  const ctx = currentQueueContext()
+  const item = ctx && !ctx.bound ? ctx : null
+  if (item) item.bound = true
   if (running.has(lock)) {
     const row = db.insert(pipelineRuns).values({ task, trigger, status: 'skipped', finishedAt: now(), host: hostname(), error: 'Another run of this task is still in progress' }).returning().get()
+    if (item) linkRunToItem(item.item.id, row.id)
     return { runId: row.id, status: 'skipped', stats: null, error: row.error }
   }
   running.add(lock)
-  const row = db.insert(pipelineRuns).values({ task, trigger, status: 'running', host: hostname() }).returning().get()
+  const resumed = item?.resumed ? item.item.attempts : 0
+  const carried = resumed && item?.item.pipelineRunId
+    ? db.update(pipelineRuns).set({ status: 'running', finishedAt: null, error: null, host: hostname(), statsJson: JSON.stringify({ resumedAfterRestart: resumed }) })
+        .where(eq(pipelineRuns.id, item.item.pipelineRunId)).returning().get()
+    : undefined
+  const row = carried ?? db.insert(pipelineRuns).values({ task, trigger, status: 'running', host: hostname(), ...(resumed ? { statsJson: JSON.stringify({ resumedAfterRestart: resumed }) } : {}) }).returning().get()
+  if (item) linkRunToItem(item.item.id, row.id)
   const log = (msg: string) => console.log(`[${task}#${row.id}] ${msg}`)
-  log(`started (${trigger})`)
+  log(resumed ? `resumed after a restart (${trigger})` : `started (${trigger})`)
   try {
     const stats = await fn(log)
     // A run that stopped early at the AI budget says why: the daily budget, or an account
@@ -41,13 +53,14 @@ export async function withRun<T extends Record<string, unknown>>(
     if (s && (s.budgetStop === true || s.budgetStopped === true) && !('stopReason' in s)) {
       (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? 'budget'
     }
-    db.update(pipelineRuns).set({ status: 'succeeded', finishedAt: now(), statsJson: JSON.stringify(stats) }).where(eq(pipelineRuns.id, row.id)).run()
+    const recorded = resumed ? { ...s, resumedAfterRestart: resumed } : stats
+    db.update(pipelineRuns).set({ status: 'succeeded', finishedAt: now(), statsJson: JSON.stringify(recorded) }).where(eq(pipelineRuns.id, row.id)).run()
     log(`succeeded ${JSON.stringify(stats)}`)
     return { runId: row.id, status: 'succeeded', stats, error: null }
   }
   catch (e: any) {
     const error = e?.stack || e?.message || String(e)
-    db.update(pipelineRuns).set({ status: 'failed', finishedAt: now(), error: error.slice(0, 4000) }).where(eq(pipelineRuns.id, row.id)).run()
+    db.update(pipelineRuns).set({ status: 'failed', finishedAt: now(), error: error.slice(0, 4000), ...(resumed ? { statsJson: JSON.stringify({ resumedAfterRestart: resumed }) } : {}) }).where(eq(pipelineRuns.id, row.id)).run()
     console.error(`[${task}#${row.id}] failed`, e)
     return { runId: row.id, status: 'failed', stats: null, error }
   }
@@ -56,7 +69,6 @@ export async function withRun<T extends Record<string, unknown>>(
   }
 }
 
-/** Trigger passed through Nitro's runTask payload; scheduled runs have no payload. */
 /**
  * False when this server must not act on its cron schedule (NUXT_SCHEDULER_ENABLED=false, which
  * every Orca worktree sets). Manual and chained runs are not affected.
@@ -65,6 +77,7 @@ export function scheduleSkipped(payload: Record<string, unknown> | undefined): b
   return triggerOf(payload) === 'schedule' && String(useRuntimeConfig().schedulerEnabled) === 'false'
 }
 
+/** Trigger passed through Nitro's runTask payload; scheduled runs have no payload. */
 export function triggerOf(payload: Record<string, unknown> | undefined): RunTrigger {
   const t = payload?.trigger
   return t === 'manual' || t === 'chained' ? t : 'schedule'

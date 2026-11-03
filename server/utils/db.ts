@@ -43,6 +43,8 @@ export function useDb() {
   lockDownDataDir(dbPath)
   const sqlite = new Database(dbPath)
   sqlite.pragma('journal_mode = WAL')
+  // A web and a worker process can share this file (NUXT_ROLE); a write waits up to 5 seconds for the other.
+  sqlite.pragma('busy_timeout = 5000')
   sqlite.pragma('foreign_keys = ON')
 
   _db = drizzle(sqlite, { schema })

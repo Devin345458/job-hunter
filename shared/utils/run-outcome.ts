@@ -24,6 +24,13 @@ export const TASK_LABELS: Record<string, string> = {
   'repos:suggest': 'Suggest answers from GitHub',
   // Started from Settings > GitHub evidence, and once a day inside repos:index.
   'repos:find': 'Find repos with your commits',
+  // One application at a time, from its page or the approve button (server/utils/queue-run.ts).
+  'applications:prepare-one': 'Prepare an application',
+  'applications:refill': 'Fill a form again',
+  'applications:approve': 'Submit an approved application',
+  // One job at a time, queued by the search and by the jobs:enrich and jobs:match steps.
+  'jobs:enrich-one': 'Read a posting',
+  'jobs:match-one': 'Score a job',
   'system:heartbeat': 'Scheduler heartbeat',
 }
 

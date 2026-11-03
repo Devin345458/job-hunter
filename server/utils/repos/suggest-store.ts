@@ -1,5 +1,5 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
-import { pipelineRuns, repoCommits, repoSuggestions } from '../../db/schema'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { repoCommits, repoSuggestions, taskQueue } from '../../db/schema'
 import type { RepoEvidence, RepoSuggestionView } from '#shared/types/repos'
 
 // Reads stored GitHub suggestions for the question views, and queues a suggestion run when a new
@@ -33,45 +33,39 @@ export function repoSuggestionsFor(questionIds: number[]): Map<number, RepoSugge
 
 // ── On-ask queue ──
 
-let queued = new Set<number>()
-let timer: ReturnType<typeof setTimeout> | null = null
+/** How long a new question waits, so questions asked together share one suggestion run. */
+const GATHER_MS = 45_000
 
 /**
  * A new knows or has_done question was asked: suggest from GitHub within a minute, when any
- * repo is indexed. Off where the schedule is off (every Orca worktree), so a laptop copy never
- * calls Claude on its own. The daily run's repos:suggest step covers it there.
+ * repo is indexed. Adds a repos:suggest item to the job queue 45 seconds out, or adds the
+ * question to one that is still waiting. Off where the schedule is off (every Orca worktree), so a
+ * laptop copy never calls Claude on its own; the daily run's repos:suggest step covers it there.
+ * Questions asked inside a daily run get its last step, repos:suggest, instead.
  */
 export function queueRepoSuggest(questionId: number) {
   try {
     if (String(useRuntimeConfig().schedulerEnabled) === 'false') return
-    queued.add(questionId)
-    if (!timer) timer = setTimeout(flushQueue, 45_000)
-  }
-  catch (e) {
-    console.warn('[repos] could not queue a suggestion run', e)
-  }
-}
-
-async function flushQueue() {
-  timer = null
-  const ids = [...queued]
-  queued = new Set()
-  if (!ids.length) return
-  try {
     const db = useDb()
     const indexed = db.select({ n: sql<number>`count(*)` }).from(repoCommits).get()?.n ?? 0
     if (!indexed) return
-    // Questions asked inside the daily run get its last step, repos:suggest. Starting one now would
-    // make that step find a run in progress and record it as skipped.
-    const daily = db.select({ id: pipelineRuns.id }).from(pipelineRuns).where(and(eq(pipelineRuns.task, 'pipeline:daily'), eq(pipelineRuns.status, 'running'))).limit(1).get()
-    if (daily) return
-    const res: any = await runTask('repos:suggest', { payload: { trigger: 'chained', questionIds: ids } })
-    if (res?.result?.status === 'skipped') {
-      for (const id of ids) queued.add(id)
-      timer = setTimeout(flushQueue, 120_000)
-    }
+    if (dailyInFlight()) return
+    useDb().$client.transaction(() => {
+      const waiting = db.select().from(taskQueue)
+        .where(and(eq(taskQueue.task, 'repos:suggest'), eq(taskQueue.status, 'queued'), isNull(taskQueue.parentId)))
+        .orderBy(taskQueue.id).limit(1).get()
+      if (waiting) {
+        const p = parsePayload(waiting)
+        const ids = Array.isArray(p.questionIds) ? p.questionIds.map(Number) : []
+        if (!ids.includes(questionId)) {
+          db.update(taskQueue).set({ payloadJson: JSON.stringify({ ...p, questionIds: [...ids, questionId] }) }).where(eq(taskQueue.id, waiting.id)).run()
+        }
+        return
+      }
+      enqueue('repos:suggest', { questionIds: [questionId] }, { trigger: 'chained', runAfter: new Date(Date.now() + GATHER_MS) })
+    }).immediate()
   }
   catch (e) {
-    console.error('[repos] suggestion run for new questions failed', e)
+    console.warn('[repos] could not queue a suggestion run', e)
   }
 }
