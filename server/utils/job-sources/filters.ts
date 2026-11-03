@@ -143,6 +143,37 @@ export function payBelow(floor: number | undefined, min: number | null | undefin
   return top != null && top > 0 && top < floor
 }
 
+/** The facts the shared listing filter reads (RawListing in types.ts has these). */
+interface FilterableListing {
+  job: { title: string; salaryMin?: number; salaryMax?: number }
+  locations: string[]
+  remote: boolean
+  fullTime: boolean
+  usOnly?: boolean
+}
+
+/**
+ * The search config's filters, the same for every source, applied before anything is stored or
+ * queued for enrichment: full-time, the title matches a keyword and is a software role (not
+ * sales, support, services, or hardware), no excluded term in the title, remote when the config is
+ * remote-only, open to someone in the US (a remote listing that names no location counts), and
+ * stated pay not entirely below the floor. Returns why the listing was dropped, or null.
+ */
+export function listingRejection(
+  listing: FilterableListing,
+  params: { keywords: string[]; excludedKeywords?: string[]; remoteOnly?: boolean; salaryMin?: number },
+): string | null {
+  const title = listing.job.title
+  if (!listing.fullTime) return 'not full-time'
+  if (!titleMatchesKeywords(title, params.keywords)) return 'title matches no keyword'
+  if (!isSoftwareRoleTitle(title)) return 'not a software role'
+  if (matchesAnyTerm(title, params.excludedKeywords)) return 'excluded word in the title'
+  if (params.remoteOnly && !listing.remote) return 'not remote'
+  if (!listing.usOnly && !isUsEligible(listing.locations) && !(listing.remote && usEligibility(listing.locations) === 'unknown')) return 'not open to the US'
+  if (payBelow(params.salaryMin, listing.job.salaryMin, listing.job.salaryMax)) return 'pay below the floor'
+  return null
+}
+
 export function decodeEntities(s: string): string {
   return s
     .replace(/&lt;/g, '<')

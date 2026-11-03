@@ -49,6 +49,10 @@ const sourceOptions = [
   { title: 'Himalayas', value: 'himalayas', description: 'Remote jobs. No API key needed.' },
   { title: 'Jobicy', value: 'jobicy', description: 'Remote jobs. No API key needed.' },
   { title: 'Arbeitnow', value: 'arbeitnow', description: 'European and remote jobs. No API key needed.' },
+  { title: 'Hacker News', value: 'hackernews', description: 'Monthly "Who is hiring?" posts and YC job posts. No API key needed.' },
+  { title: 'We Work Remotely', value: 'weworkremotely', description: 'Remote programming and DevOps jobs. No API key needed.' },
+  { title: 'Working Nomads', value: 'workingnomads', description: 'Remote jobs. No API key needed.' },
+  { title: 'Workable Jobs', value: 'workablejobs', description: 'Every Workable employer, searched by keyword. No API key needed.' },
 ]
 
 /** The environment variables the API Keys card lists, with what each one is for. */
@@ -277,6 +281,9 @@ onMounted(() => {
         <SettingsMemoryStatus />
       </v-card-text>
     </v-card>
+
+    <!-- Job sources: last pull per source, and Pull everything again -->
+    <SettingsJobSources id="job-sources" class="mb-6" />
 
     <!-- Search Configurations -->
     <v-card variant="outlined" class="mb-6">
@@ -532,7 +539,7 @@ onMounted(() => {
             </div>
           </dl>
           <div class="text-caption text-medium-emphasis mt-3">
-            Set these in your <code>.env</code> file or Coolify environment settings. Free sources (Remotive, RemoteOK, Himalayas, Jobicy, Arbeitnow) work without any API keys.
+            Set these in your <code>.env</code> file or Coolify environment settings. Free sources (Remotive, RemoteOK, Himalayas, Jobicy, Arbeitnow, Hacker News, We Work Remotely, Working Nomads, Workable Jobs, and the employer boards) work without any API keys.
           </div>
         </v-alert>
       </v-card-text>

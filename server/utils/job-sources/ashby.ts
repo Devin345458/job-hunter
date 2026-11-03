@@ -1,5 +1,6 @@
-import type { JobSourceAdapter, NormalizedJob, SearchParams } from './types'
-import { searchBoards } from './board-runner'
+import type { JobSourceAdapter, NormalizedJob, PullContext, PullResult, SearchParams } from './types'
+import type { Board } from './board-discovery'
+import { type BoardPosting, pullBoards, searchBoards } from './board-runner'
 import { looksRemote, sanitizeHtml } from './filters'
 import { fetchJson } from './http'
 
@@ -48,51 +49,54 @@ function yearlySalary(job: AshbyJob) {
   }
 }
 
+async function fetchBoard(board: Board): Promise<BoardPosting[]> {
+  const data = await fetchJson<{ jobs: AshbyJob[] }>(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board.token)}?includeCompensation=true`, { cache: true })
+  return (data.jobs ?? []).filter(j => j.isListed !== false).map((j) => {
+    const location = j.location?.trim() || undefined
+    const secondary = (j.secondaryLocations ?? []).map(s => s.location).filter((l): l is string => !!l)
+    // Ashby sets isRemote on hybrid roles too (Replit: isRemote true, workplaceType Hybrid,
+    // Foster City). workplaceType wins when present; a remote secondary location still counts.
+    const remote = j.workplaceType
+      ? /remote/i.test(j.workplaceType) || looksRemote(...secondary)
+      : j.isRemote === true || looksRemote(location, ...secondary)
+    const pay = yearlySalary(j)
+    const country = j.address?.postalAddress?.addressCountry
+    return {
+      job: {
+        source: 'ashby',
+        sourceId: `${board.token}:${j.id}`,
+        title: j.title.trim(),
+        company: board.company,
+        location: [location, ...secondary].filter(Boolean).join('; ') || undefined,
+        remoteType: remote ? 'remote' : /hybrid/i.test(j.workplaceType ?? '') ? 'hybrid' : /onsite/i.test(j.workplaceType ?? '') ? 'onsite' : undefined,
+        salaryMin: pay?.min,
+        salaryMax: pay?.max,
+        salaryCurrency: pay?.currency,
+        description: sanitizeHtml(j.descriptionHtml ?? ''),
+        url: j.jobUrl,
+        applyUrl: j.applyUrl,
+        tags: [j.department, j.team].filter((t): t is string => !!t),
+        atsType: 'ashby',
+        atsMeta: {
+          board: board.token,
+          postingId: j.id,
+          compensationSummary: j.compensation?.compensationTierSummary || j.compensation?.scrapeableCompensationSalarySummary || null,
+        },
+      },
+      publishedAt: j.publishedAt ?? null,
+      // Ashby documents publishedAt as when the job was last published, so it is the change time too.
+      changedAt: j.publishedAt ?? null,
+      locations: [location, ...secondary, country === 'USA' || country === 'US' || country === 'United States' ? 'United States' : country].filter((l): l is string => !!l),
+      remote,
+      fullTime: !['Intern', 'PartTime', 'Temporary'].includes(j.employmentType ?? ''),
+    }
+  })
+}
+
 // Public Ashby posting API with compensation included.
 export const ashbyAdapter: JobSourceAdapter = {
   name: 'ashby',
-
-  search(params: SearchParams): Promise<NormalizedJob[]> {
-    return searchBoards('ashby', params, async (board) => {
-      const data = await fetchJson<{ jobs: AshbyJob[] }>(`https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board.token)}?includeCompensation=true`)
-      return (data.jobs ?? []).filter(j => j.isListed !== false).map((j) => {
-        const location = j.location?.trim() || undefined
-        const secondary = (j.secondaryLocations ?? []).map(s => s.location).filter((l): l is string => !!l)
-        // Ashby sets isRemote on hybrid roles too (Replit: isRemote true, workplaceType Hybrid,
-        // Foster City). workplaceType wins when present; a remote secondary location still counts.
-        const remote = j.workplaceType
-          ? /remote/i.test(j.workplaceType) || looksRemote(...secondary)
-          : j.isRemote === true || looksRemote(location, ...secondary)
-        const pay = yearlySalary(j)
-        const country = j.address?.postalAddress?.addressCountry
-        return {
-          job: {
-            source: 'ashby',
-            sourceId: `${board.token}:${j.id}`,
-            title: j.title.trim(),
-            company: board.company,
-            location: [location, ...secondary].filter(Boolean).join('; ') || undefined,
-            remoteType: remote ? 'remote' : /hybrid/i.test(j.workplaceType ?? '') ? 'hybrid' : /onsite/i.test(j.workplaceType ?? '') ? 'onsite' : undefined,
-            salaryMin: pay?.min,
-            salaryMax: pay?.max,
-            salaryCurrency: pay?.currency,
-            description: sanitizeHtml(j.descriptionHtml ?? ''),
-            url: j.jobUrl,
-            applyUrl: j.applyUrl,
-            tags: [j.department, j.team].filter((t): t is string => !!t),
-            atsType: 'ashby',
-            atsMeta: {
-              board: board.token,
-              postingId: j.id,
-              compensationSummary: j.compensation?.compensationTierSummary || j.compensation?.scrapeableCompensationSalarySummary || null,
-            },
-          },
-          publishedAt: j.publishedAt ?? null,
-          locations: [location, ...secondary, country === 'USA' || country === 'US' || country === 'United States' ? 'United States' : country].filter((l): l is string => !!l),
-          remote,
-          fullTime: !['Intern', 'PartTime', 'Temporary'].includes(j.employmentType ?? ''),
-        }
-      })
-    })
-  },
+  overlapHours: 2,
+  search: (params: SearchParams): Promise<NormalizedJob[]> => searchBoards('ashby', params, fetchBoard),
+  pull: (_params: SearchParams, ctx: PullContext): Promise<PullResult> => pullBoards('ashby', ctx, fetchBoard),
 }

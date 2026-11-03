@@ -25,7 +25,9 @@ export interface ResolvedPosting {
   notes: string[]
 }
 
-const AGGREGATOR_HOSTS = /(^|\.)(remotive\.com|adzuna\.com|himalayas\.app|remoteok\.com|jobicy\.com|arbeitnow\.com|google\.com)$/i
+// Hosts whose pages are not the employer's posting: job aggregators, plus the Workable and Gem
+// posting pages, which are script-only shells (those listings carry their own description).
+const AGGREGATOR_HOSTS = /(^|\.)(remotive\.com|adzuna\.com|himalayas\.app|remoteok\.com|jobicy\.com|arbeitnow\.com|google\.com|ycombinator\.com|weworkremotely\.com|workingnomads\.com|jobs\.workable\.com|apply\.workable\.com|jobs\.gem\.com)$/i
 const MAX_TEXT = 40000
 
 function usd(n: number) {

@@ -4,7 +4,8 @@
 //
 // To add a company: find its board token in the careers page URL
 //   Greenhouse: job-boards.greenhouse.io/<token>   Lever: jobs.lever.co/<token>   Ashby: jobs.ashbyhq.com/<token>
-// then add one line here. No schema change is needed.
+// then add one line here. No schema change is needed. Boards found through apply links are
+// added on their own (board-discovery.ts, table job_boards).
 
 export type BoardAts = 'greenhouse' | 'lever' | 'ashby'
 
@@ -118,9 +119,6 @@ export const ATS_BOARDS: AtsBoard[] = [
 export function boardsFor(ats: BoardAts): AtsBoard[] {
   return ATS_BOARDS.filter(b => b.ats === ats)
 }
-
-/** Most matching postings kept per board per run, newest first, so one large employer cannot flood the feed. */
-export const MAX_PER_BOARD = 8
 
 /** The hosted Greenhouse application form. Works even for companies whose posting lives on their own careers site. */
 export function greenhouseApplyUrl(token: string, postingId: string | number) {

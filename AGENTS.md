@@ -89,6 +89,14 @@
 - Tokens: `server/utils/repos/github.ts` only. Git gets the token through `GIT_CONFIG_*` environment entries, never argv, never `.git/config`, never logs or API responses. In the container git runs as uid 10002 (`NUXT_REPO_UID`), not the demo uid, and nothing is ever checked out.
 - Claude: one cheap call per subject for search terms (cached), one judge call per question when there are hits, and only when the hit set changed. Organization repo snippets reach Claude only after Devin turns that repo on.
 
+## Job sources and incremental pulls (added 2026-11-03)
+- Every source pages until it runs out or listings are older than 14 days (`MAX_AGE_DAYS`); employer boards keep every open posting (no age cutoff, no per-board cap). Adapters implement `pull(params, ctx)` returning raw listings; `search()` still works as a full pull with filters (`paging.ts` `aggregator()`).
+- Watermarks: table `source_pulls`, one row per source, config, and scope (keyword for Adzuna, Himalayas, Workable Jobs; board token for boards; '' for one-feed sources). `last_pulled_at` is the start time of the last pull that finished; a failed or cut-short pull leaves it. Each adapter's `overlapHours` looks back past it for late-published listings. A config edit (filter hash) or Settings > Job sources > Pull everything again (`POST /api/sources/reset`) forces a full pull.
+- `source_pulls` and `job_boards` are created with CREATE TABLE IF NOT EXISTS in `server/utils/job-sources/pull-state.ts`, not by a drizzle migration, and are not in `server/db/schema.ts`.
+- One filter stage before insert (`listingRejection()` in filters.ts plus learned search exclusions): only listings that pass are stored, and every stored job is queued for enrichment. `runSearch()` returns `newJobIds` and per-source found, passed, known, new, requests, mode.
+- Terms limits: Remotive at most every 6 hours, Himalayas every 20 hours, Jobicy and We Work Remotely hourly (`minIntervalMinutes`); requests are spaced per host and 429/503 retried with Retry-After (`http.ts`).
+- Board discovery (`board-discovery.ts`): apply links, listing links, and links in descriptions that point at a Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Rippling, or Gem board add it to `job_boards`; a discovered board answering 404 is marked gone.
+
 ## API and Data Safety
 - Do not commit API keys or private profile data.
 - Treat seeded resume/profile content as user-owned data; avoid overwriting without intent.

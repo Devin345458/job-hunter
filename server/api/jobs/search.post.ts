@@ -30,7 +30,8 @@ export default defineEventHandler(async () => {
   return {
     runId: result.runId,
     status: result.status,
-    message: `Found ${stats.found} listings, ${stats.new} new`,
+    // found counts every listing read (14 days, or since the last pull); passed is what met the filters.
+    message: `Read ${stats.found.toLocaleString('en-US')} listings, ${(stats.passed ?? stats.found).toLocaleString('en-US')} passed your filters, ${stats.new} new`,
     jobsFound: stats.new,
     found: stats.found,
   }
