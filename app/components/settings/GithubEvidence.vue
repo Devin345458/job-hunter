@@ -511,6 +511,7 @@ onMounted(async () => {
                           <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
                         </div>
                         <span v-if="r.included && r.indexError" class="ghe__repo-error">{{ r.indexError }}</span>
+                        <span v-if="r.note" class="ghe__repo-note">{{ r.note }}</span>
                       </div>
                       <v-switch
                         :model-value="r.included"
@@ -520,7 +521,7 @@ onMounted(async () => {
                         density="compact"
                         class="ghe__switch"
                         :loading="switching[r.fullName] ? 'success' : false"
-                        :disabled="!!switching[r.fullName]"
+                        :disabled="!!switching[r.fullName] || !!r.note"
                         :aria-label="`Use ${r.fullName} for GitHub evidence`"
                         @update:model-value="toggle(g, r, $event)"
                       />
@@ -813,6 +814,12 @@ onMounted(async () => {
   &__repo-error {
     font-size: 0.75rem;
     color: rgb(var(--v-theme-error));
+    overflow-wrap: anywhere;
+  }
+
+  &__repo-note {
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     overflow-wrap: anywhere;
   }
 

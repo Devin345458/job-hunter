@@ -95,6 +95,8 @@ export interface RepoView {
   sizeMb: number | null
   /** Switched on. A repo is on by default only when one of his own logins owns it and it is not a fork. */
   included: boolean
+  /** Set for a repo that can never be switched on (this app's own repo), saying why. */
+  note: string | null
   pushedAt: string | null
   htmlUrl: string | null
   indexedAt: string | null

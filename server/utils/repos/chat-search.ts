@@ -3,7 +3,7 @@ import { repoCommits, repoSources } from '../../db/schema'
 import type { GithubChatSearch, GithubFinding } from '#shared/types/repos'
 import { CodeSearchLimited, GithubApiError, isSsoError, isSsoSkip, readTokens, searchCode, tokenAccounts, tokenAt } from './github'
 import { cleanTerms, pathMatches, searchEvidence, termPattern, withSignatures, type TermSet } from './search'
-import { currentIdentities, savedIdentities, storedFind, type RepoRow } from './settings'
+import { currentIdentities, isAppRepo, savedIdentities, storedFind, type RepoRow } from './settings'
 
 // The question chat's GitHub search (server/utils/question-chat.ts), in order:
 // 1. Devin's indexed commits: messages and changed file paths. No diffs, so a chat turn takes
@@ -64,7 +64,8 @@ function repoCommitCount(r: RepoRow, found: Record<string, number> | null): numb
 export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}): Promise<GithubChatSearch> {
   const terms = withSignatures(cleanTerms(rawTerms, 20), context)
   const db = useDb()
-  const included = db.select().from(repoSources).where(eq(repoSources.included, true)).all()
+  // This app's own repo names every skill as data, so it is never searched (isAppRepo).
+  const included = db.select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
   const find = storedFind()
   const found = find?.at ? find.byRepo : null
   const indexed = included.filter(r => r.indexedAt)
@@ -78,7 +79,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
       codeSearched: [],
       notIndexed: included.length - indexed.length,
       codeSkipped: 0,
-      offWithCommits: found ? Object.entries(found).filter(([name, n]) => n > 0 && !included.some(r => r.fullName === name)).length : 0,
+      offWithCommits: found ? Object.entries(found).filter(([name, n]) => n > 0 && !isAppRepo(name) && !included.some(r => r.fullName === name)).length : 0,
       codeNote: null,
     },
   }

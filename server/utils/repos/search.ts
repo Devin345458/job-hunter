@@ -3,6 +3,7 @@ import { repoCommits, repoFacts, repoSources } from '../../db/schema'
 import { tokenAt } from './github'
 import { repoCacheDir, runGit } from './git'
 import { LARGE_COMMIT_FILES, excludedPathspecs } from './indexer'
+import { isAppRepo } from './settings'
 
 // Searches Devin's indexed commits for the terms one question expands into: commit messages and
 // changed paths from the database, his diffs from the local clones (git log -G over his commit
@@ -251,7 +252,9 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
   // Already capped by whoever built them (withSignatures allows more than 12); this only bounds them.
   const terms = cleanTerms(rawTerms, 24)
   const db = useDb()
+  // This app's own repo names every skill as data, so it is never evidence (isAppRepo).
   const repos = db.select().from(repoSources).where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
+    .filter(r => !isAppRepo(r.fullName))
   const result: SearchResult = {
     hits: [],
     pathSummaries: [],
