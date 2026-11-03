@@ -165,6 +165,9 @@ export function skillQuestions(): QuestionRow[] {
     .all()
 }
 
+/** What a requirement covered by related experience counts as in the score: 'partial' (cautious default) or 'have'. */
+const REFRAME_STATUS: 'have' | 'partial' = 'partial'
+
 function normStatus(s: string): 'have' | 'reframe' | 'partial' | 'lack' | 'unknown' {
   const v = s.toLowerCase().trim()
   if (v.startsWith('reframe') || v.startsWith('covered')) return 'reframe'
@@ -220,7 +223,9 @@ export async function applyJudgments(reqs: Requirement[], judgments: Requirement
 
     const out: Requirement = {
       ...r,
-      status: status === 'reframe' ? 'have' : status,
+      // A requirement covered by related experience (Express for NestJS) counts as partial until Devin
+      // picks the reframe rule (2026-11-03): REFRAME_STATUS is the one switch.
+      status: status === 'reframe' ? REFRAME_STATUS : status,
       evidence,
       reframed: status === 'reframe' || undefined,
       note: status === 'reframe' ? j.rationale.trim() || null : note,
