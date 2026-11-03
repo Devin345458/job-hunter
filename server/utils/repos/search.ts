@@ -91,7 +91,7 @@ export function cleanTerms(t: TermSet, max = 12): TermSet {
     .filter(s => s.length >= min && s.length <= 60 && !/[\r\n]/.test(s))
     .filter(s => !generic || !GENERIC_CODE.has(s.toLowerCase()))
     .map(s => [s.toLowerCase(), s])).values()].slice(0, max)
-  return { code: clean(t.code, 3, true), paths: clean(t.paths, 2), packages: clean(t.packages, 2) }
+  return { code: clean(t.code, 3, true), paths: clean(t.paths, 2), packages: clean(t.packages, 2, true) }
 }
 
 /**

@@ -3,7 +3,7 @@ import { repoCommits, repoSources } from '../../db/schema'
 import type { GithubChatSearch, GithubFinding } from '#shared/types/repos'
 import { CodeSearchLimited, GithubApiError, isSsoError, isSsoSkip, readTokens, searchCode, tokenAccounts, tokenAt } from './github'
 import { cleanTerms, pathMatches, searchEvidence, termPattern, withSignatures, type TermSet } from './search'
-import { currentIdentities, storedFind, type RepoRow } from './settings'
+import { currentIdentities, savedIdentities, storedFind, type RepoRow } from './settings'
 
 // The question chat's GitHub search (server/utils/question-chat.ts), in order:
 // 1. Devin's indexed commits: messages and changed file paths. No diffs, so a chat turn takes
@@ -126,7 +126,9 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   const words = codeSearchWords(terms, context)
   let personal = new Set<string>()
   try {
-    personal = new Set(currentIdentities(await tokenAccounts()).logins.map(l => l.toLowerCase()))
+    // Saved logins first: listing every repo of every token after a restart takes seconds.
+    const logins = savedIdentities()?.logins ?? currentIdentities(await tokenAccounts()).logins
+    personal = new Set(logins.map(l => l.toLowerCase()))
   }
   catch {}
   const eligible = included

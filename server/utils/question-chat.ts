@@ -760,6 +760,10 @@ export async function questionChatReply(input: { questionId?: number | null; mes
     if (!github && hasTerms(out.githubSearch)) {
       // Claude called the search: run it, then ask again with what it found.
       github = await githubChatSearch(cleanTerms(out.githubSearch, 12), searchContext, searchLog)
+      if (!github.terms.length) {
+        github = null
+        askWhat = true
+      }
       out = await ask(false)
     }
     if (github) console.info(`[question-chat] github search for question ${ctx?.question.id ?? 'none'}: ${github.findings.length} findings, ${github.coverage.indexed.length} indexed repos, ${github.coverage.codeSearched.length} code searched`)
