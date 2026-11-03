@@ -117,6 +117,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [ ] 2026-11-03, `draft-from-records`: Devin changed the chat rule ("you should be able to answer this question"): the question chat drafts a first-person answer from his records (knowledge base, GitHub evidence, live Claude session memory), every sentence with its source, no invented numbers or outcomes, client names generic, nothing saved until he presses Save.
+
 - 2026-11-03, first day pulling every source (production): $72.31 spent, background work stopped at $70.14 as designed. 1,767 jobs read (enrich on Sonnet, $49.96, about $0.028 a job) but only 343 scored (match_gaps, $12.75), so 1,426 wait read but unscored; 254 wait to be read; 257 skipped as duplicates or by the title filter; 24 Decide cards. The 3:00 PM search found 8,555 listings, 446 passed the filters, 405 new, 151 duplicates. Caching deployed at 14:12 but no call has run since (budget), so production cache rates are unconfirmed until the 6:00 AM run. Two faults found: the queue read far ahead of scoring, and the budget-stopped 3:00 PM run read "succeeded"; both sent to `score-first`.
 - [x] 2026-11-03, `score-first`: score items before more reads; a budget stop reads partial with the reason; a backlog line in Settings. Live at 4c5e1c7: score items run before more reads (oldest read first); a budget-stopped step is recorded as partial; Settings shows "Waiting: 254 jobs to read, 1,424 to score; resumes when the budget allows" (checked at 1280 on a production copy). Correction: the 3:00 PM run already read partial in amber with 4 problems; only its status column and steps map said succeeded. The budget day starts at midnight Central, so the backlog resumes at 6:00 AM.
 
