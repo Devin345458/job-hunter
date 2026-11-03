@@ -26,6 +26,62 @@ export interface RepoSuggestionView {
   createdAt: string
 }
 
+/**
+ * One thing the question chat's GitHub search found, shown under its reply as "Found in your
+ * GitHub". Built on the server from the search, never from Claude's text.
+ * - commit: one of Devin's own indexed commits whose message or changed file paths matched.
+ * - file: a GitHub code search hit in a switched-on repo that holds his commits. A lead only:
+ *   code in a repo is not code he wrote.
+ * - dependency: a package a switched-on repo declares at its default branch. Context only.
+ * - language: a switched-on repo written in the language asked about. Context only.
+ */
+export interface GithubFinding {
+  kind: 'commit' | 'file' | 'dependency' | 'language'
+  /** owner/name */
+  repo: string
+  /** The commit, file, manifest, or repo on GitHub. */
+  url: string
+  /** The commit's first line, the file path, the package name, or the language. */
+  title: string
+  /** Authored date of a commit, YYYY-MM-DD. Null for the other kinds. */
+  date: string | null
+  /** What matched: "commit message" or "files: schema.graphql" (commit), 'has "shopify"' (file), or the manifest path (dependency). */
+  detail: string | null
+}
+
+/** Repos where many of his commits change files matching the path terms. */
+export interface GithubPathSummary {
+  repo: string
+  commits: number
+  /** YYYY-MM-DD */
+  first: string
+  last: string
+}
+
+/** What the chat's GitHub search covered, so "nothing found" says where it looked. */
+export interface GithubSearchCoverage {
+  /** Switched-on repos whose indexed commits were searched. */
+  indexed: string[]
+  /** Switched-on repos GitHub code search covered. */
+  codeSearched: string[]
+  /** Switched on, not indexed yet (repos:index takes 30 a run). */
+  notIndexed: number
+  /** Switched-on repos with his commits that code search did not reach this time (its 10-a-minute limit). */
+  codeSkipped: number
+  /** Repos holding his commits (by the last "Find repos with my commits") that are switched off. */
+  offWithCommits: number
+  /** Why code search did not run or stopped early, in plain words. Null when it ran in full. */
+  codeNote: string | null
+}
+
+/** The chat's GitHub search: what it looked for, what it found, and where it looked. */
+export interface GithubChatSearch {
+  terms: string[]
+  findings: GithubFinding[]
+  pathSummaries: GithubPathSummary[]
+  coverage: GithubSearchCoverage
+}
+
 export interface RepoView {
   /** His commits on the default branch, by the last "Find repos with my commits". Null before the first search. */
   yourCommits: number | null

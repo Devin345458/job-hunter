@@ -71,20 +71,132 @@ function termPattern(t: string) {
   return /^[a-z0-9]{1,4}$/i.test(t) ? `(?<![A-Za-z0-9])${e}(?![A-Za-z0-9])` : e
 }
 
-export function cleanTerms(t: TermSet): TermSet {
-  const clean = (list: string[], min: number) => [...new Map(list
+/**
+ * Words that sit in almost every codebase or commit log. As code terms they match unrelated work
+ * ("query" in a jquery dependency, "schema" in a database migration), so they are dropped.
+ */
+const GENERIC_CODE = new Set([
+  'api', 'apis', 'data', 'user', 'users', 'test', 'tests', 'config', 'client', 'server', 'model', 'models', 'type', 'types',
+  'query', 'queries', 'mutation', 'mutations', 'schema', 'schemas', 'resolver', 'resolvers', 'request', 'response', 'fetch',
+  'json', 'error', 'errors', 'index', 'util', 'utils', 'helper', 'helpers', 'service', 'services', 'store', 'state', 'app',
+  'auth', 'token', 'tokens', 'endpoint', 'endpoints', 'route', 'routes', 'controller', 'component', 'components', 'event',
+  'events', 'value', 'values', 'item', 'items', 'list', 'update', 'create', 'delete', 'save', 'load', 'build', 'deploy',
+])
+
+export function cleanTerms(t: TermSet, max = 12): TermSet {
+  const clean = (list: string[], min: number, generic = false) => [...new Map(list
     .map(s => String(s ?? '').trim())
     .filter(s => s.length >= min && s.length <= 60 && !/[\r\n]/.test(s))
-    .map(s => [s.toLowerCase(), s])).values()].slice(0, 12)
-  return { code: clean(t.code, 3), paths: clean(t.paths, 2), packages: clean(t.packages, 2) }
+    .filter(s => !generic || !GENERIC_CODE.has(s.toLowerCase()))
+    .map(s => [s.toLowerCase(), s])).values()].slice(0, max)
+  return { code: clean(t.code, 3, true), paths: clean(t.paths, 2), packages: clean(t.packages, 2) }
 }
 
-function pathMatches(path: string, terms: string[]): boolean {
-  const p = path.toLowerCase()
+/**
+ * ".graphql" matches the extension. "schema.graphql" and "shopify.app.toml" match a file name or a
+ * longer path. "graphql/" and "/graphql/" match that folder anywhere, the repo root included.
+ */
+export function pathMatches(path: string, terms: string[]): boolean {
+  const p = `/${path.toLowerCase()}`
   return terms.some((t) => {
     const x = t.toLowerCase()
-    return x.startsWith('.') && !x.includes('/') ? p.endsWith(x) : p.includes(x)
+    if (x.startsWith('.') && !x.includes('/')) return p.endsWith(x)
+    if (x.endsWith('/')) return p.includes(x.startsWith('/') ? x : `/${x}`)
+    return p.includes(x)
   })
+}
+
+// ── Signatures ──
+// Files, folders, and packages that only a given subject produces. A commit that touches
+// schema.graphql is GraphQL work even when its message says "product sync". They are added to the
+// terms Claude gives, so a subject never depends on Claude remembering them.
+
+interface Signature {
+  /** Tested against the subject, the question, and in the chat Devin's message. */
+  when: RegExp
+  terms: TermSet
+}
+
+const SIGNATURES: Signature[] = [
+  {
+    when: /\bgraph\s?ql\b/i,
+    terms: {
+      code: ['graphql', 'gql`', 'ApolloClient'],
+      paths: ['.graphql', '.gql', 'graphql/', 'schema.graphql', 'codegen.yml', 'codegen.ts', '.graphqlrc'],
+      packages: ['graphql', '@apollo/client', 'apollo-server', 'graphql-request', 'urql', 'graphql-tag', 'nuwave/lighthouse', 'webonyx/graphql-php', 'rebing/graphql-laravel'],
+    },
+  },
+  {
+    when: /\bshopify\b/i,
+    terms: {
+      code: ['shopify', 'myshopify'],
+      paths: ['shopify.app.toml', 'shopify.extension.toml', 'shopify.web.toml', '.liquid', 'shopify/'],
+      packages: ['@shopify/shopify-api', '@shopify/app-bridge', '@shopify/polaris', '@shopify/shopify-app-remix', '@shopify/cli', 'osiset/laravel-shopify', 'shopify/shopify-api'],
+    },
+  },
+  {
+    when: /\bdocker\b|\bcontainers?\b/i,
+    terms: { code: ['docker compose', 'docker-compose'], paths: ['dockerfile', 'docker-compose.yml', 'docker-compose.yaml', 'compose.yaml', '.dockerignore'], packages: [] },
+  },
+  {
+    when: /\bkubernetes\b|\bk8s\b|\bhelm\b/i,
+    terms: { code: ['apiVersion', 'kubectl'], paths: ['k8s/', 'helm/', 'chart.yaml', 'kustomization.yaml'], packages: [] },
+  },
+  {
+    when: /\bterraform\b|\binfrastructure as code\b/i,
+    terms: { code: ['terraform', 'resource "aws_'], paths: ['.tf', '.tfvars', 'terraform/'], packages: [] },
+  },
+  {
+    when: /\bgithub actions\b|\bci\/cd\b|\bcontinuous integration\b/i,
+    terms: { code: ['runs-on', 'uses: actions/'], paths: ['.github/workflows/'], packages: [] },
+  },
+  {
+    when: /\bprisma\b/i,
+    terms: { code: ['prisma'], paths: ['schema.prisma', 'prisma/'], packages: ['prisma', '@prisma/client'] },
+  },
+  {
+    when: /\bflutter\b|\bdart\b/i,
+    terms: { code: ['flutter', 'StatelessWidget'], paths: ['.dart', 'pubspec.yaml'], packages: [] },
+  },
+  {
+    when: /\bcapacitor\b/i,
+    terms: { code: ['@capacitor/'], paths: ['capacitor.config.ts', 'capacitor.config.json'], packages: ['@capacitor/core', '@capacitor/cli'] },
+  },
+  {
+    when: /\breact native\b/i,
+    terms: { code: ['react-native'], paths: ['metro.config.js'], packages: ['react-native', 'expo'] },
+  },
+  {
+    when: /\bswift\b|\bios\b/i,
+    terms: { code: ['SwiftUI', 'UIKit'], paths: ['.swift', '.xcodeproj/', 'podfile', 'package.swift'], packages: [] },
+  },
+  {
+    when: /\bkotlin\b|\bandroid\b/i,
+    terms: { code: ['AndroidManifest'], paths: ['.kt', 'androidmanifest.xml', 'build.gradle.kts'], packages: [] },
+  },
+]
+
+/** The signature terms for whatever the text names, or empty lists. */
+export function signatureTerms(text: string): TermSet {
+  const out: TermSet = { code: [], paths: [], packages: [] }
+  for (const s of SIGNATURES) {
+    if (!s.when.test(text)) continue
+    out.code.push(...s.terms.code)
+    out.paths.push(...s.terms.paths)
+    out.packages.push(...s.terms.packages)
+  }
+  return out
+}
+
+/** Claude's terms with the signatures for the text added. Signatures go first so the per-list cap never drops them. */
+export function withSignatures(terms: TermSet, text: string): TermSet {
+  const sig = signatureTerms(text)
+  const extra = Math.max(sig.code.length, sig.paths.length, sig.packages.length)
+  return cleanTerms({
+    code: [...sig.code, ...terms.code],
+    paths: [...sig.paths, ...terms.paths],
+    packages: [...sig.packages, ...terms.packages],
+  }, 12 + extra)
 }
 
 function depMatches(name: string, terms: string[]): boolean {
@@ -129,8 +241,13 @@ function parseDiffHits(out: string, re: RegExp): Map<string, DiffHit> {
   return hits
 }
 
-export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void = () => {}): Promise<SearchResult> {
-  const terms = cleanTerms(rawTerms)
+/**
+ * opts.diffs false skips the diff search over the local clones (git log -G, up to two minutes a
+ * repo), so the chat answers in seconds from messages, paths, and manifests alone.
+ */
+export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void = () => {}, opts: { diffs?: boolean } = {}): Promise<SearchResult> {
+  // Already capped by whoever built them (withSignatures allows more than 12); this only bounds them.
+  const terms = cleanTerms(rawTerms, 24)
   const db = useDb()
   const repos = db.select().from(repoSources).where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
   const result: SearchResult = {
@@ -208,7 +325,7 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
     }
 
     // His diffs, from the clone: only his indexed commits, only searchable paths.
-    if (textRe) {
+    if (textRe && opts.diffs !== false) {
       const shas = commits.filter(c => (JSON.parse(c.pathsJson ?? '[]') as string[]).length < LARGE_COMMIT_FILES).map(c => c.sha)
       const ere = `(${textTerms.map(escapeEre).join('|')})`
       const r = await runGit([

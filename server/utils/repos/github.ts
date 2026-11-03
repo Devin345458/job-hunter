@@ -309,3 +309,54 @@ function waitMs(res: Response): number {
   if (Number.isFinite(reset) && reset > 0) return Math.min(Math.max(reset * 1000 - Date.now(), 0) + 1000, 5 * 60_000)
   return 60_000
 }
+
+// ── Code search ──
+
+export interface CodeSearchItem {
+  path: string
+  html_url: string
+  repository: { full_name: string }
+}
+
+export interface CodeSearchPage {
+  total: number
+  items: CodeSearchItem[]
+}
+
+/** Code search allows 10 requests a minute. The chat never waits that out: it reports the limit instead. */
+export class CodeSearchLimited extends Error {
+  constructor(public seconds: number) {
+    super(`GitHub code search allows 10 searches a minute; try again in ${seconds} seconds`)
+  }
+}
+
+/**
+ * One GET /search/code. The query must name its repos with repo: qualifiers (the caller passes
+ * only repos Devin switched on). Throws CodeSearchLimited on the rate limit and GithubApiError
+ * otherwise, never with the token in the message.
+ */
+export async function searchCode(token: string, q: string, perPage = 30): Promise<CodeSearchPage> {
+  const params = new URLSearchParams({ q, per_page: String(perPage) })
+  const res = await fetch(`https://api.github.com/search/code?${params}`, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'job-hunter-repo-evidence',
+    },
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (res.ok) {
+    const body = await res.json() as { total_count?: number; items?: CodeSearchItem[] }
+    return { total: Number(body.total_count) || 0, items: body.items ?? [] }
+  }
+  let detail = ''
+  try {
+    detail = String(((await res.json()) as any)?.message ?? '').slice(0, 200)
+  }
+  catch {}
+  if (res.status === 429 || (res.status === 403 && (/rate limit/i.test(detail) || res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after')))) {
+    throw new CodeSearchLimited(Math.max(1, Math.ceil(waitMs(res) / 1000)))
+  }
+  throw new GithubApiError(res.status, '/search/code', detail)
+}

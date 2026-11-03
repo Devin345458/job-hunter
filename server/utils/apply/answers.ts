@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { eq, inArray } from 'drizzle-orm'
+import { and, eq, inArray, like, ne } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, jobs, questions } from '../../db/schema'
 import type { FormAnswer, FormField, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
 import { aiStructured } from '../ai'
-import { cleanStoredAnswer, factForQuestion, factStatements, matchFact, resolveFacts, resolveField, type FactValues } from '../facts'
+import { cleanStoredAnswer, factForQuestion, factStatements, isHistoryDate, matchFact, resolveFacts, resolveField, type FactValues } from '../facts'
 import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { ADDRESS_CONTEXT, answeredValue, askOrReuse, askQuestion, canonicalQuestion, type AskInput, type AskOutcome, type QuestionRow } from '../questions'
 import { nowSql, parseJson, setApplicationStatus } from '../review'
@@ -385,7 +385,7 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext):
       continue
     }
 
-    const matched = matchFact(field)
+    const matched = matchFact(field, snapshot.fields)
     if (matched) {
       const { def, res } = resolveField(matched, field, facts, snapshot.fields)
       if (res.kind === 'value') {
@@ -588,6 +588,10 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
   const facts = currentFacts(loadKnowledge())
   let updated = 0
   const needModel: Array<{ field: FormField; fact: string; index: number; source: 'knowledge' | 'question'; detail: string; answerText: string | null }> = []
+  /** Fact questions a field let go of because the field is not that fact. */
+  const misread = new Set<number>()
+  /** Required fields that let go of a misread fact question and need their own question. */
+  const reask: number[] = []
 
   let next = answers.map((original, index) => {
     const qid = questionIdOf(original)
@@ -609,7 +613,18 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     // fact could not fill the field ("Location Preference" reads as his home city, which matches
     // none of Upstart's options), so his answer wins. Taking the fact again left the field waiting
     // on an answered question forever, with nothing to answer on the card.
-    const matched = matchFact(field)
+    const matched = matchFact(field, snapshot.fields)
+    // A registry fact question waiting on a field that is no personal fact at all: an education
+    // "Start date month" once read as "when could you start". The field lets go of the question
+    // instead of taking its answer. An optional field is left blank; a required one is asked as
+    // its own form question below.
+    if (q.kind === 'fact' && !matched && factForQuestion(q)) {
+      updated++
+      misread.add(q.id)
+      const why = isHistoryDate(field, snapshot.fields) ? 'a date in your education or work history, not when you could start' : `not what question #${q.id} asks`
+      if (field.required) reask.push(index)
+      return { ...a, value: null, source: 'skipped' as const, sourceDetail: `${field.required ? 'Required' : 'Optional'}, left blank: ${why}`, confidence: 'high' as const, needsQuestionId: null, filled: false, fillError: null }
+    }
     const ownAnswer = q.kind === 'form_field' && q.status === 'answered'
     if (matched && !ownAnswer && (q.status === 'answered' || a.needsQuestionId)) {
       const { res } = resolveField(matched, field, facts, snapshot.fields)
@@ -680,6 +695,39 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     qById.set(asked.id, asked)
     updated++
     next[i] = { ...a, needsQuestionId: asked.id, sourceDetail: `question #${asked.id}: ${truncate(label, 80)}` }
+  }
+
+  // A required field that let go of a misread fact question is asked as its own form question.
+  for (const i of reask) {
+    const a = next[i]!
+    const field = snapshot.fields.find(f => f.id === a.fieldId)
+    if (!field) continue
+    const label = cleanFieldLabel(field.label)
+    const asked = askQuestion({
+      ...formFieldQuestion(field, null),
+      applicationId,
+      jobId: app.jobId,
+      context: `${job?.company || 'The employer'} asks "${label}" on its application form. The field is required, so the application waits on your answer.`,
+      blocking: true,
+    })
+    qById.set(asked.id, asked)
+    next[i] = { ...a, source: 'question', confidence: 'low', needsQuestionId: asked.id, sourceDetail: `question #${asked.id}: ${truncate(label, 80)}` }
+  }
+
+  // A misread fact question this application asked, now waited on by no field of any
+  // application, was only ever asked by mistake. It is skipped, so it leaves this application's
+  // card and the question list. A form that really asks it asks again (askQuestion re-asks when
+  // only a skipped row exists).
+  for (const id of misread) {
+    const q = qById.get(id)
+    if (!q || q.id !== id || q.status !== 'pending' || q.applicationId !== applicationId) continue
+    if (next.some(a => questionIdOf(a) === id)) continue
+    const elsewhere = db.select({ id: applications.id, answersJson: applications.answersJson }).from(applications)
+      .where(and(ne(applications.id, applicationId), like(applications.answersJson, `%${id}%`))).all()
+      .some(o => parseJson<FormAnswer[]>(o.answersJson, []).some(x => questionIdOf(x) === id))
+    if (elsewhere) continue
+    db.update(questions).set({ status: 'skipped', blocking: false }).where(eq(questions.id, id)).run()
+    qById.set(id, { ...q, status: 'skipped', blocking: false })
   }
 
   const blocking = openBlockingQuestionIds(next, snapshot)

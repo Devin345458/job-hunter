@@ -232,6 +232,7 @@ defineExpose({ focus: () => input.value?.focus() })
             <v-icon icon="mdi-history" size="14" />
             Excerpts from your past Claude sessions were in this reply. They are leads, not proof of work you did.
           </div>
+          <QuestionsChatGithub v-if="m.role === 'assistant' && m.github" :search="m.github" />
 
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
             <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
