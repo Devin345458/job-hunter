@@ -562,6 +562,8 @@ export interface QueueSnapshot {
   waiting: QueueItemView[]
   /** Daily runs working through their steps. */
   runs: QueueItemView[]
+  /** Per-job items (read one posting, score one job), counted rather than listed. */
+  bulk: Array<{ task: string; label: string; running: number; waiting: number }>
   /** The last day's interrupted, failed, canceled, and resumed items, newest first. */
   recent: QueueItemView[]
 }

@@ -1,6 +1,9 @@
 import { askDailyQuestions } from '../../utils/questions'
-import { scoreJobs } from '../../utils/scoring'
+import { matchStep } from '../../utils/queue-jobs'
 
+// Queues one jobs:match-one item for every read job without a current score (no cap), waits for
+// them, rescores every open job in code, and records the counts.
+// Payload: { jobIds?: number[], fresh?: boolean } scores those only.
 export default defineTask({
   meta: {
     name: 'jobs:match',
@@ -8,7 +11,7 @@ export default defineTask({
   },
   async run({ payload }) {
     const outcome = await withRun('jobs:match', triggerOf(payload), async (log) => {
-      const stats = await scoreJobs({ log, jobIds: payloadJobIds(payload) })
+      const stats = await matchStep((payload ?? {}) as Record<string, unknown>, log)
       // Ask about skills the newly read and scored jobs need now, not at tomorrow's learning step.
       const asked = askDailyQuestions()
       if (asked.length) log(`asked ${asked.length} new skill ${asked.length === 1 ? 'question' : 'questions'}`)
@@ -17,11 +20,3 @@ export default defineTask({
     return { result: outcome }
   },
 })
-
-/** Job ids from a manual run's payload ({ jobIds: [1, 2] }); undefined runs the normal selection. */
-function payloadJobIds(payload: unknown): number[] | undefined {
-  const ids = (payload as { jobIds?: unknown } | undefined)?.jobIds
-  if (!Array.isArray(ids)) return undefined
-  const clean = ids.map(Number).filter(Number.isInteger)
-  return clean.length ? clean : undefined
-}

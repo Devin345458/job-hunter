@@ -15,8 +15,7 @@ export default defineEventHandler(async (event) => {
   // One transaction: the daily prepare step never sees the new row in preparing without its item.
   const { app, item } = useDb().$client.transaction(() => {
     const app = createApplicationRow(job)
-    setApplicationStatus(app.id, 'preparing', 'Waiting in the queue to prepare')
-    return { app, item: enqueue(PREPARE_ONE_TASK, { applicationId: app.id }, { trigger: 'manual' }).item }
+    return { app, item: queuePrepare(app.id) }
   }).immediate()
   if (getQuery(event).wait === 'true') return await waitForPreparation(app.id, item.id)
   setResponseStatus(event, 202)

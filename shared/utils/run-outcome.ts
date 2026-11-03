@@ -28,6 +28,9 @@ export const TASK_LABELS: Record<string, string> = {
   'applications:prepare-one': 'Prepare an application',
   'applications:refill': 'Fill a form again',
   'applications:approve': 'Submit an approved application',
+  // One job at a time, queued by the search and by the jobs:enrich and jobs:match steps.
+  'jobs:enrich-one': 'Read a posting',
+  'jobs:match-one': 'Score a job',
   'system:heartbeat': 'Scheduler heartbeat',
 }
 

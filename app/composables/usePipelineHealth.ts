@@ -62,7 +62,7 @@ export function usePipelineHealth() {
   /** True while anything is waiting in or running from the job queue. */
   const queueBusy = computed(() => {
     const q = runs.value?.queue
-    return !!q && (q.running.length > 0 || q.waiting.length > 0 || q.runs.length > 0)
+    return !!q && (q.running.length > 0 || q.waiting.length > 0 || q.runs.length > 0 || (q.bulk?.length ?? 0) > 0)
   })
 
   const watchers = useState<number>('health-queue-watchers', () => 0)

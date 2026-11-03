@@ -63,15 +63,28 @@ export default defineNitroPlugin((nitroApp) => {
   })
 })
 
+/**
+ * Lanes, each with its own slots:
+ * - main: everything else, NUXT_WORKER_CONCURRENCY at once (default 1)
+ * - bulk: one item per job (read a posting, score a job), NUXT_BULK_CONCURRENCY at once (default 4)
+ * - coord: the jobs:enrich and jobs:match steps, which queue per-job items and wait for them
+ * - light: the heartbeat, only while the main lane is full
+ */
+type Lane = 'main' | 'bulk' | 'coord' | 'light'
+
 interface Running {
   promise: Promise<void>
-  lane: 'main' | 'light'
+  lane: Lane
   renew: ReturnType<typeof setInterval>
 }
 
 function createWorker() {
   const owner = `${hostname()}:${process.pid}:${randomBytes(3).toString('hex')}`
-  const slots = Math.max(1, Math.min(4, Number(useRuntimeConfig().workerConcurrency) || 1))
+  const config = useRuntimeConfig()
+  const slots = Math.max(1, Math.min(4, Number(config.workerConcurrency) || 1))
+  const bulkSlots = Math.max(1, Math.min(8, Number(config.bulkConcurrency) || 4))
+  const coordSlots = 2
+  const mainExcept = [...BULK_TASKS, ...COORD_TASKS]
   const running = new Map<number, Running>()
   let stopping = false
   let ticking = false
@@ -86,10 +99,10 @@ function createWorker() {
       console.warn('[queue] could not prune finished items', e)
     }
   }
-  const busy = (lane: Running['lane']) => [...running.values()].filter(r => r.lane === lane).length
+  const busy = (lane: Lane) => [...running.values()].filter(r => r.lane === lane).length
   const wake = () => setImmediate(tick)
 
-  function launch(item: QueueRow, lane: Running['lane']) {
+  function launch(item: QueueRow, lane: Lane) {
     console.log(`[queue] running #${item.id} ${item.task}${item.attempts ? ` (resumed after a restart, attempt ${item.attempts + 1} of ${item.maxAttempts})` : ''}`)
     const renew = setInterval(() => {
       try {
@@ -125,16 +138,18 @@ function createWorker() {
     ticking = true
     try {
       recoverExpired(owner, new Set(running.keys()))
-      while (!stopping && busy('main') < slots) {
-        const item = claimNext(owner)
-        if (!item) break
-        launch(item, 'main')
+      const fill = (lane: Lane, max: number, pick: { only?: readonly string[]; except?: readonly string[] }) => {
+        while (!stopping && busy(lane) < max) {
+          const item = claimNext(owner, pick)
+          if (!item) break
+          launch(item, lane)
+        }
       }
-      // The heartbeat does not wait behind a 25-minute demo build.
-      if (!stopping && busy('main') >= slots && busy('light') < 1) {
-        const item = claimNext(owner, LIGHT_TASKS)
-        if (item) launch(item, 'light')
-      }
+      fill('main', slots, { except: mainExcept })
+      fill('coord', coordSlots, { only: COORD_TASKS })
+      fill('bulk', bulkSlots, { only: BULK_TASKS })
+      // The heartbeat does not wait behind a 25 minute demo build.
+      if (busy('main') >= slots) fill('light', 1, { only: LIGHT_TASKS })
     }
     catch (e) {
       console.error('[queue] worker tick failed', e)
@@ -158,7 +173,7 @@ function createWorker() {
       queueEvents.on('enqueued', wake)
       timer = setInterval(tick, TICK_MS)
       pruner = setInterval(prune, PRUNE_EVERY_MS)
-      console.log(`[queue] worker ${owner} started, ${slots} at a time`)
+      console.log(`[queue] worker ${owner} started: ${slots} at a time, ${bulkSlots} per-job items at a time`)
       wake()
     },
 

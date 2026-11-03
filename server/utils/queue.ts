@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { EventEmitter } from 'node:events'
 import { hostname } from 'node:os'
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, demoProjects, jobs, pipelineRuns, taskQueue } from '../db/schema'
 import type { QueueItemView, QueueSnapshot, QueueStatus } from '#shared/types/pipeline'
@@ -32,9 +32,21 @@ export const PREVIEW_TASK = 'demos:preview'
 export const FIND_TASK = 'repos:find'
 export const DAILY_TASK = 'pipeline:daily'
 export const HEARTBEAT_TASK = 'system:heartbeat'
+export const ENRICH_ONE_TASK = 'jobs:enrich-one'
+export const MATCH_ONE_TASK = 'jobs:match-one'
 
-/** Tasks that drive Chromium or build demos. At most one of them runs at a time, in any process. */
-export const HEAVY_TASKS = ['demos:build', REBUILD_TASK, PREVIEW_TASK, 'applications:prepare', PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK, 'jobs:enrich'] as const
+/** Tasks that drive Chromium for a form or build demos. At most one of them runs at a time, in any process. */
+export const HEAVY_TASKS = ['demos:build', REBUILD_TASK, PREVIEW_TASK, 'applications:prepare', PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK] as const
+/**
+ * One item per job: read one posting, score one job. They run in their own lane, several at once
+ * (NUXT_BULK_CONCURRENCY), so a backlog of hundreds never holds up an approval or a demo.
+ */
+export const BULK_TASKS = [ENRICH_ONE_TASK, MATCH_ONE_TASK] as const
+/**
+ * The jobs:enrich and jobs:match steps queue the per-job items and wait for them. They run in their
+ * own lane too, since most of their time is waiting.
+ */
+export const COORD_TASKS = ['jobs:enrich', 'jobs:match'] as const
 /** Tasks the worker runs beside a long item, so the heartbeat stays on time during a demo build. */
 export const LIGHT_TASKS = [HEARTBEAT_TASK] as const
 /** Never run twice: an interrupted approval may already have submitted the employer form. */
@@ -142,6 +154,19 @@ export function firstQueueItemAt(): string | null {
   return useDb().select({ at: taskQueue.createdAt }).from(taskQueue).orderBy(taskQueue.id).limit(1).get()?.at ?? null
 }
 
+/**
+ * Queues the whole preparation of one application (applications:prepare-one: tailor, cover letter,
+ * gap analysis, form dry run) and shows it as preparing, in one transaction so the daily prepare
+ * step never sees it in preparing without its item. Prepare, Prepare again, and an Apply action
+ * call this. A second call while one waits returns the waiting item.
+ */
+export function queuePrepare(applicationId: number, detail = 'Waiting in the queue to prepare'): QueueRow {
+  return sqlite().transaction(() => {
+    setApplicationStatus(applicationId, 'preparing', detail)
+    return enqueue(PREPARE_ONE_TASK, { applicationId }, { trigger: 'manual', existing: () => activeItem(PREPARE_ONE_TASK, 'applicationId', applicationId) }).item
+  }).immediate()
+}
+
 /** A daily run that is queued or still working through its steps. */
 export function dailyInFlight(): QueueRow | null {
   return activeItem(DAILY_TASK)
@@ -161,13 +186,15 @@ const quoted = (list: readonly string[]) => list.map((t) => {
 
 /**
  * Claims the oldest due item in one atomic UPDATE ... RETURNING and leases it to `owner`.
- * Skipped: a daily step whose earlier sibling has not finished; a task that is already running;
- * a heavy task (Chromium, demo builds) while another heavy task runs. With onlyTasks, only those.
+ * Skipped: a daily step whose earlier sibling has not finished; a task that is already running
+ * (per-job items excepted: several jobs are read at once); a heavy task (form fills, demo builds)
+ * while another heavy task runs. `only` and `except` pick the lane's tasks.
  */
-export function claimNext(owner: string, onlyTasks?: readonly string[]): QueueRow | null {
+export function claimNext(owner: string, lane: { only?: readonly string[]; except?: readonly string[] } = {}): QueueRow | null {
   const now = sqlTime()
   const heavy = quoted(HEAVY_TASKS)
-  const only = onlyTasks?.length ? `AND t.task IN (${quoted(onlyTasks)})` : ''
+  const bulk = quoted(BULK_TASKS)
+  const only = `${lane.only?.length ? `AND t.task IN (${quoted(lane.only)})` : ''} ${lane.except?.length ? `AND t.task NOT IN (${quoted(lane.except)})` : ''}`
   const row = sqlite().prepare(`
     UPDATE task_queue
     SET status = 'running', lease_owner = @owner, lease_expires_at = @lease, started_at = @now
@@ -175,7 +202,7 @@ export function claimNext(owner: string, onlyTasks?: readonly string[]): QueueRo
       SELECT t.id FROM task_queue t
       WHERE t.status = 'queued' AND t.run_after <= @now ${only}
         AND NOT EXISTS (SELECT 1 FROM task_queue s WHERE t.parent_id IS NOT NULL AND s.parent_id = t.parent_id AND s.id < t.id AND s.status IN ('queued', 'running'))
-        AND NOT EXISTS (SELECT 1 FROM task_queue r WHERE r.status = 'running' AND r.task = t.task)
+        AND (t.task IN (${bulk}) OR NOT EXISTS (SELECT 1 FROM task_queue r WHERE r.status = 'running' AND r.task = t.task))
         AND (t.task NOT IN (${heavy}) OR NOT EXISTS (SELECT 1 FROM task_queue r WHERE r.status = 'running' AND r.task IN (${heavy})))
       ORDER BY t.run_after, t.id
       LIMIT 1
@@ -289,6 +316,18 @@ export function advanceChain(parentId: number) {
     if (c.attempts > 0) resumed++
   }
   const stats: Record<string, unknown> = { steps, problems }
+  // The day's counts on the run itself: postings read, jobs scored, and jobs still waiting for either.
+  const stepStats = (task: string) => {
+    const c = children.find(x => x.task === task)
+    const run = c?.pipelineRunId ? db.select({ s: pipelineRuns.statsJson }).from(pipelineRuns).where(eq(pipelineRuns.id, c.pipelineRunId)).get() : null
+    return parseStats(run?.s ?? null) ?? {}
+  }
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+  const enrich = stepStats('jobs:enrich')
+  const match = stepStats('jobs:match')
+  stats.enriched = num(enrich.enriched)
+  stats.scored = num(match.scored)
+  stats.pending = num(enrich.pending) + num(match.pending)
   if (resumed) stats.resumedAfterRestart = resumed
   const outcome = runOutcome({ task: DAILY_TASK, status: 'succeeded', stats }, runProblems({ task: DAILY_TASK, status: 'succeeded', stats }))
   const finishedAt = sqlTime()
@@ -531,6 +570,10 @@ export function queueItemLabel(item: QueueRow): string {
         .where(eq(applications.id, Number(p.applicationId))).get()
       if (row?.company) return `${base}: ${row.company}`
     }
+    if (p.jobId != null) {
+      const row = useDb().select({ company: jobs.company }).from(jobs).where(eq(jobs.id, Number(p.jobId))).get()
+      if (row?.company) return `${base}: ${row.company}`
+    }
     if (p.demoId != null) {
       const row = useDb().select({ title: demoProjects.title }).from(demoProjects).where(eq(demoProjects.id, Number(p.demoId))).get()
       if (row?.title) return `${base}: ${row.title}`
@@ -580,38 +623,51 @@ export function queueSnapshot(): QueueSnapshot {
       sql`${taskQueue.finishedAt} > ${dayAgo}`,
       sql`(${taskQueue.status} in ('interrupted', 'failed', 'canceled') or (${taskQueue.status} = 'done' and ${taskQueue.attempts} > 0))`,
       sql`${taskQueue.task} != ${HEARTBEAT_TASK}`,
+      notInArray(taskQueue.task, [...BULK_TASKS]),
     ))
     .orderBy(desc(taskQueue.finishedAt), desc(taskQueue.id)).limit(8).all()
   const waitingParents = active.filter(i => parents.has(i.id))
+  const isBulk = (task: string) => (BULK_TASKS as readonly string[]).includes(task)
   return {
-    running: active.filter(i => i.status === 'running' && !parents.has(i.id) && i.task !== HEARTBEAT_TASK).map(i => toView(i, steps)),
-    waiting: active.filter(i => i.status === 'queued' && i.task !== HEARTBEAT_TASK).map(i => toView(i, steps)),
+    running: active.filter(i => i.status === 'running' && !parents.has(i.id) && i.task !== HEARTBEAT_TASK && !isBulk(i.task)).map(i => toView(i, steps)),
+    waiting: active.filter(i => i.status === 'queued' && i.task !== HEARTBEAT_TASK && !isBulk(i.task)).map(i => toView(i, steps)),
     runs: waitingParents.map(i => toView(i, steps)),
+    // Per-job items are counted, not listed: a backlog can be hundreds of jobs.
+    bulk: BULK_TASKS.map(task => ({
+      task,
+      label: taskLabel(task),
+      running: active.filter(i => i.task === task && i.status === 'running').length,
+      waiting: active.filter(i => i.task === task && i.status === 'queued').length,
+    })).filter(b => b.running || b.waiting),
     recent: recent.map(i => toView(i, steps)),
   }
 }
 
 /** "Waiting in the queue behind Read postings", or without the name when nothing runs. */
 export function waitingText(): string {
+  const lanes = [HEARTBEAT_TASK, ...BULK_TASKS, ...COORD_TASKS]
   const running = useDb().select().from(taskQueue)
-    .where(and(eq(taskQueue.status, 'running'), sql`${taskQueue.leaseOwner} is not null`, sql`${taskQueue.task} != ${HEARTBEAT_TASK}`))
+    .where(and(eq(taskQueue.status, 'running'), sql`${taskQueue.leaseOwner} is not null`, notInArray(taskQueue.task, lanes)))
     .orderBy(taskQueue.id).limit(1).get()
   return running ? `Waiting in the queue behind ${queueItemLabel(running)}` : 'Waiting in the queue'
 }
 
 /**
- * Keeps the table small: finished heartbeats after a day, every other finished item after 30
- * days (their pipeline_runs rows stay). Returns how many rows went.
+ * Keeps the table small: finished heartbeats after a day, per-job items after two days, every
+ * other finished item after 30 days (their pipeline_runs rows stay). Returns how many rows went.
  */
 export function pruneQueue(): number {
   const db = useDb()
   const dayAgo = sqlTime(new Date(Date.now() - 24 * 3600_000))
   const monthAgo = sqlTime(new Date(Date.now() - 30 * 24 * 3600_000))
   const heartbeats = db.delete(taskQueue).where(and(eq(taskQueue.task, HEARTBEAT_TASK), inArray(taskQueue.status, TERMINAL), sql`${taskQueue.finishedAt} < ${dayAgo}`)).run().changes
+  // Per-job items: their results are counted into the step's pipeline_runs row, which stays.
+  const twoDaysAgo = sqlTime(new Date(Date.now() - 2 * 24 * 3600_000))
+  const perJob = db.delete(taskQueue).where(and(inArray(taskQueue.task, [...BULK_TASKS]), inArray(taskQueue.status, TERMINAL), sql`${taskQueue.finishedAt} < ${twoDaysAgo}`)).run().changes
   // A daily run's steps go with it, never before it.
   const old = db.delete(taskQueue).where(and(inArray(taskQueue.status, TERMINAL), sql`${taskQueue.finishedAt} < ${monthAgo}`, isNull(taskQueue.parentId))).run().changes
   const orphans = db.delete(taskQueue).where(and(sql`${taskQueue.parentId} is not null`, sql`${taskQueue.parentId} not in (select id from task_queue)`)).run().changes
-  return heartbeats + old + orphans
+  return heartbeats + perJob + old + orphans
 }
 
 /** Queued and running counts, for /api/health. */

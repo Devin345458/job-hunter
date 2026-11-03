@@ -4,7 +4,7 @@ import type { PipelineRunView, QueueItemView } from '#shared/types/pipeline'
 import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsText } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
-import { queueItemColor, queueItemText } from '#shared/utils/queue-text'
+import { bulkText, queueItemColor, queueItemText } from '#shared/utils/queue-text'
 
 // Settings > Pipeline: start any step by hand, watch it wait in the job queue and run, and read
 // the recent run log. Every trigger goes through POST /api/pipeline/run, which adds the task to
@@ -45,7 +45,8 @@ const queueRunning = computed<QueueItemView[]>(() => queue.value?.running ?? [])
 const queueWaiting = computed<QueueItemView[]>(() => queue.value?.waiting ?? [])
 const queueDaily = computed<QueueItemView[]>(() => queue.value?.runs ?? [])
 const queueRecent = computed<QueueItemView[]>(() => queue.value?.recent ?? [])
-const queueEmpty = computed(() => !queueRunning.value.length && !queueWaiting.value.length && !queueDaily.value.length)
+const queueBulk = computed(() => queue.value?.bulk ?? [])
+const queueEmpty = computed(() => !queueRunning.value.length && !queueWaiting.value.length && !queueDaily.value.length && !queueBulk.value.length)
 
 /** 'running' or 'waiting' when this task is in the queue (a full run counts while its steps run). */
 function queued(task: string): 'running' | 'waiting' | null {
@@ -186,7 +187,7 @@ onMounted(() => {
       <h3 class="pp__h">Queue</h3>
     </div>
     <p class="pp__queue-help">
-      The worker runs one item at a time, oldest first. A restart or deploy pauses it; the item it was on starts again when the server is back.
+      The worker runs one item at a time, oldest first, and reads and scores up to four jobs at once beside it. A restart or deploy pauses it; the items it was on start again when the server is back.
     </p>
     <p v-if="queueEmpty" class="pp__empty">Nothing is waiting.</p>
     <ul v-else class="pp__queue" aria-label="Job queue">
@@ -198,6 +199,10 @@ onMounted(() => {
       <li v-for="i in queueRunning" :key="i.id" class="pp__qitem">
         <span class="pp__dot" :class="`bg-${queueItemColor(i)}`" />
         <span class="pp__qtext pp__qtext--strong">{{ queueItemText(i) }}</span>
+      </li>
+      <li v-for="b in queueBulk" :key="b.task" class="pp__qitem">
+        <span class="pp__dot" :class="b.running ? 'bg-info' : 'bg-secondary'" />
+        <span class="pp__qtext" :class="{ 'pp__qtext--strong': b.running > 0 }">{{ bulkText(b) }}</span>
       </li>
       <li v-for="i in queueWaiting" :key="i.id" class="pp__qitem">
         <span class="pp__dot" :class="`bg-${queueItemColor(i)}`" />

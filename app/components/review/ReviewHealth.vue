@@ -2,7 +2,7 @@
 import { OUTCOME, clockTime, outcomeOf } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
-import { queueItemName, queueItemText } from '#shared/utils/queue-text'
+import { bulkText, queueItemName, queueItemText } from '#shared/utils/queue-text'
 
 // Pipeline health, kept small: did the last run work, how much of today's AI budget is gone,
 // and how many questions are waiting. Detail lives in Settings and on the Questions page.
@@ -67,11 +67,14 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
   const t = now.value
   const [running] = q.running
   const waiting = running ? q.waiting : q.waiting.slice(1)
-  const more = waiting.length
+  const waitingLine = waiting.length
     ? `Waiting: ${queueItemName(waiting[0]!)}${waiting.length > 1 ? ` and ${waiting.length - 1} more` : ''}`
     : null
+  const bulk = (q.bulk ?? []).map(bulkText).join('. ')
+  const more = [bulk || null, waitingLine].filter(Boolean).join('. ') || null
   if (running) return { title: queueItemText(running, t), sub: more, tone: 'info' }
   if (q.waiting[0]) return { title: queueItemText(q.waiting[0], t), sub: more, tone: 'secondary' }
+  if (bulk) return { title: bulk, sub: null, tone: 'info' }
   const interrupted = q.recent.find(i => i.status === 'interrupted')
   if (interrupted) return { title: queueItemText(interrupted, t), sub: null, tone: 'error' }
   return null

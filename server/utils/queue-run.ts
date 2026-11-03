@@ -6,6 +6,7 @@ import { runDemoRebuild } from './demo/build'
 import { runDemoPreview } from './demo/preview'
 import { findMyRepos } from './repos/commit-search'
 import { refreshRepoList } from './repos/settings'
+import { runEnrichOne, runMatchOne } from './queue-jobs'
 import type { ItemOutcome, QueueRow } from './queue'
 import type { RunTrigger } from './runs'
 
@@ -82,6 +83,13 @@ export async function runQueueItem(item: QueueRow, owner: string): Promise<ItemO
 
     case PREVIEW_TASK:
       return fromRun(await runDemoPreview(Number(payload.demoId)))
+
+    // One job each, no pipeline_runs row: the jobs:enrich and jobs:match steps count the results.
+    case ENRICH_ONE_TASK:
+      return { status: 'done', result: await runEnrichOne(payload) }
+
+    case MATCH_ONE_TASK:
+      return { status: 'done', result: await runMatchOne(payload) }
 
     case FIND_TASK:
       return fromRun(await withRun(FIND_TASK, trigger, async (log) => {

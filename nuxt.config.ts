@@ -170,6 +170,9 @@ export default defineNuxtConfig({
     // Queue items the worker runs at once (NUXT_WORKER_CONCURRENCY, 1 to 4). Demo builds and form
     // fills never run two at a time whatever this says.
     workerConcurrency: '1',
+    // Per-job items (read one posting, score one job) the worker runs at once, in their own lane
+    // (NUXT_BULK_CONCURRENCY, 1 to 8).
+    bulkConcurrency: '4',
     // Test overrides for the schedule (NUXT_PIPELINE_CRON, NUXT_HEARTBEAT_CRON). Empty uses
     // PIPELINE_CRON and every 15 minutes. Production leaves them unset.
     pipelineCron: '',

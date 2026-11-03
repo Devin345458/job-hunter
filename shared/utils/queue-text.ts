@@ -1,4 +1,4 @@
-import type { QueueItemView } from '../types/pipeline'
+import type { QueueItemView, QueueSnapshot } from '../types/pipeline'
 
 // Queue items in plain words, for the run log and the Review page:
 // "Waiting: Score matches, queued 2 minutes ago"
@@ -58,4 +58,16 @@ export function queueItemColor(item: QueueItemView): string {
   if (item.status === 'interrupted' || item.status === 'failed') return 'error'
   if (item.status === 'done') return 'success'
   return 'secondary'
+}
+
+const BULK_VERB: Record<string, string> = {
+  'jobs:enrich-one': 'Reading postings',
+  'jobs:match-one': 'Scoring jobs',
+}
+
+/** Per-job items in one line: "Reading postings: 4 now, 37 waiting". */
+export function bulkText(b: QueueSnapshot['bulk'][number]): string {
+  const verb = BULK_VERB[b.task] ?? b.label
+  const parts = [b.running ? `${b.running} now` : null, b.waiting ? `${b.waiting} waiting` : null].filter(Boolean)
+  return `${verb}: ${parts.join(', ')}`
 }
