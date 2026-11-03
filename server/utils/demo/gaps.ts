@@ -31,7 +31,7 @@ const CandidateSchema = z.object({
     evidence: z.string().nullable().describe('Knowledge base entry behind a partial or lack status, quoted briefly. Null for unknown.'),
     askKind: z.enum(['has_done', 'knows']).describe('has_done for experience or practice, knows for a language or tool'),
     question: z.string().describe('Yes or no question for Devin, e.g. "Have you used Go in a real project?"'),
-    codeShowable: z.boolean().describe('True only when a small code project could show this: a language, framework, tool, platform, or technical technique. False for experience a project cannot show: presenting or giving live demos, customer or stakeholder work, leading people, running something in production at scale, on-call, industry or domain experience.'),
+    codeShowable: z.boolean().describe('True only when a small code project could show this: a language, framework, tool, platform, or technical technique. False for experience a project cannot show: presenting or giving live demos, customer or stakeholder work, leading people, running something in production at scale, on-call, industry or domain experience. Also false when the requirement joins a technique to production scale or reliability ("at scale", "in production", "reliable and scalable"), because a small project cannot show the scale.'),
   })),
 })
 
@@ -120,7 +120,7 @@ ${askedText}
 </questions_already_asked>
 
 ${reqText
-  ? `<requirements>\n${reqText}\n</requirements>\n\nThese requirements were already judged against the knowledge base. List every one whose status is not "have".`
+  ? `<requirements>\n${reqText}\n</requirements>\n\nThese requirements were already judged against the knowledge base. List every one whose status is not "have", except the kinds under "Leave out" below.`
   : `<posting>\n${posting.slice(0, 20000)}\n</posting>\n\nRead the whole posting, including the duties, and list each concrete technical requirement (languages, frameworks, tools, platforms, kinds of experience) that the knowledge base does not clearly show.`}
 
 Status rules:
@@ -129,7 +129,7 @@ Status rules:
 - unknown: the knowledge base does not mention it. Use unknown whenever you would otherwise be guessing.
 Leave out:
 - Anything the knowledge base names directly, even when the posting asks for more years, bigger data, or more depth than the entry states. Those are not gaps a project can close.
-- Soft skills, leadership, years of experience, education, work authorization, and location.
+- Soft skills and attitudes (communication, language fluency, reliability, adaptability, ownership, openness to or curiosity about a tool), leadership, years of experience, education, work authorization, and location.
 When a question was already asked about the same thing, reuse its exact subject text.
 Write the question so Devin can answer yes or no in one tap. Plain American English, no dashes.`,
   })
