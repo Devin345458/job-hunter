@@ -1,102 +1,19 @@
 import { createHash } from 'node:crypto'
 import { and, eq, sql } from 'drizzle-orm'
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
+import { jobBoards, sourcePulls } from '../../db/schema'
 import type { SearchParams } from './types'
 
-// Incremental pull state: one row per source, search config, and scope (a keyword for sources
-// queried per keyword, a board token for employer boards, '' for one-feed sources). The row's
-// last_pulled_at is the watermark: the start time of the last pull of that scope that finished
-// completely. A failed or cut-short pull records the attempt and leaves the watermark alone.
-//
-// These two tables are created here with CREATE TABLE IF NOT EXISTS on first use instead of a
-// numbered drizzle migration, and are defined here instead of server/db/schema.ts, so this unit
-// adds no migration and no schema edit (another unit adds a migration in parallel, and drizzle
-// applies migrations by timestamp). drizzle-kit generate does not know about them. Times are ISO
-// strings with a Z, so a browser reads them as UTC.
+// Incremental pull state: one source_pulls row per source, search config, and scope (a keyword
+// for sources queried per keyword, a board token for employer boards, '' for one-feed sources).
+// The row's last_pulled_at is the watermark: the start time of the last pull of that scope that
+// finished completely. A failed or cut-short pull records the attempt and leaves the watermark
+// alone. The tables (source_pulls, job_boards) come from migration 0006 in server/db/schema.ts.
 
-export const sourcePulls = sqliteTable('source_pulls', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  source: text('source').notNull(),
-  configId: integer('config_id').notNull(),
-  scope: text('scope').notNull().default(''),
-  /** Hash of the config's filters when the watermark was set. A different hash means a full pull. */
-  filterHash: text('filter_hash'),
-  lastPulledAt: text('last_pulled_at'),
-  lastAttemptAt: text('last_attempt_at'),
-  lastStatus: text('last_status'), // ok, partial, failed, unavailable
-  lastError: text('last_error'),
-  lastMode: text('last_mode'), // full, incremental
-  found: integer('found').notNull().default(0),
-  passed: integer('passed').notNull().default(0),
-  known: integer('known').notNull().default(0),
-  added: integer('added').notNull().default(0),
-  requests: integer('requests').notNull().default(0),
-  updatedAt: text('updated_at').notNull(),
-}, table => [
-  uniqueIndex('source_pulls_key_idx').on(table.source, table.configId, table.scope),
-])
+export { jobBoards, sourcePulls }
 
-/** Employer boards found through apply links, pulled like the curated list in ats-boards.ts. */
-export const jobBoards = sqliteTable('job_boards', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  ats: text('ats').notNull(),
-  token: text('token').notNull(),
-  company: text('company').notNull(),
-  foundVia: text('found_via'),
-  status: text('status').notNull().default('active'), // active, gone
-  lastError: text('last_error'),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-}, table => [
-  uniqueIndex('job_boards_ats_token_idx').on(table.ats, table.token),
-  index('job_boards_status_idx').on(table.status),
-])
-
-const DDL = `
-CREATE TABLE IF NOT EXISTS source_pulls (
-  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-  source text NOT NULL,
-  config_id integer NOT NULL,
-  scope text DEFAULT '' NOT NULL,
-  filter_hash text,
-  last_pulled_at text,
-  last_attempt_at text,
-  last_status text,
-  last_error text,
-  last_mode text,
-  found integer DEFAULT 0 NOT NULL,
-  passed integer DEFAULT 0 NOT NULL,
-  known integer DEFAULT 0 NOT NULL,
-  added integer DEFAULT 0 NOT NULL,
-  requests integer DEFAULT 0 NOT NULL,
-  updated_at text NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS source_pulls_key_idx ON source_pulls (source, config_id, scope);
-CREATE TABLE IF NOT EXISTS job_boards (
-  id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-  ats text NOT NULL,
-  token text NOT NULL,
-  company text NOT NULL,
-  found_via text,
-  status text DEFAULT 'active' NOT NULL,
-  last_error text,
-  created_at text NOT NULL,
-  updated_at text NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS job_boards_ats_token_idx ON job_boards (ats, token);
-CREATE INDEX IF NOT EXISTS job_boards_status_idx ON job_boards (status);
-`
-
-let ready = false
-
-/** The database with the pull tables in place. */
+/** The database the pull tables live in. */
 export function pullDb() {
-  const db = useDb()
-  if (!ready) {
-    db.$client.exec(DDL)
-    ready = true
-  }
-  return db
+  return useDb()
 }
 
 export function nowIso() {
@@ -136,6 +53,17 @@ export function pullRows(source: string, configId: number): Map<string, PullRow>
 export function lastAttempt(source: string): string | null {
   const row = pullDb().select({ at: sql<string | null>`max(${sourcePulls.lastAttemptAt})` }).from(sourcePulls)
     .where(eq(sourcePulls.source, source))
+    .get()
+  return row?.at ?? null
+}
+
+/**
+ * Start of the newest pull of a source that finished completely, across configs and scopes. Unlike
+ * last_pulled_at it survives "Pull everything again", so a reset source does not look stuck.
+ */
+export function lastSuccess(source: string): string | null {
+  const row = pullDb().select({ at: sql<string | null>`max(${sourcePulls.lastAttemptAt})` }).from(sourcePulls)
+    .where(and(eq(sourcePulls.source, source), eq(sourcePulls.lastStatus, 'ok')))
     .get()
   return row?.at ?? null
 }

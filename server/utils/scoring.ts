@@ -271,7 +271,7 @@ export interface ScoreOneResult extends Record<string, unknown> {
   error?: string
 }
 
-/** Enriched jobs with no skills score yet, or whose posting was read again after the last score. Newest first. */
+/** Enriched jobs with no skills score yet, or whose posting was read again after the last score. Newest posting first. */
 export function pendingScoreJobs(): JobRow[] {
   return useDb().select().from(jobs).where(and(
     isNotNull(jobs.enrichedAt),
@@ -280,7 +280,7 @@ export function pendingScoreJobs(): JobRow[] {
     or(isNull(jobs.skillsScore), isNull(jobs.scoredAt), lt(jobs.scoredAt, jobs.enrichedAt)),
   )).all()
     .filter(j => !isPrefilterSkip(j.enrichError))
-    .sort((a, b) => b.foundAt.localeCompare(a.foundAt))
+    .sort((a, b) => (b.postedAt ?? b.foundAt).localeCompare(a.postedAt ?? a.foundAt) || b.id - a.id)
 }
 
 /**

@@ -94,14 +94,21 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
   if (stats.budgetStop === true || stats.budgetStopped === true) {
     out.push(stats.stopReason === 'key'
       ? 'stopped: Anthropic rejected the API key'
-      : stats.stopReason === 'credit' ? 'stopped: out of credit' : 'stopped: daily AI budget reached')
+      : stats.stopReason === 'credit' ? 'stopped: out of credit'
+        : stats.stopReason === 'background' ? 'stopped: background share of the AI budget reached, continues tomorrow' : 'stopped: daily AI budget reached')
   }
   if (num(stats.noteErrors) > 0) out.push(`${num(stats.noteErrors)} rejection note${num(stats.noteErrors) === 1 ? '' : 's'} not read`)
   if (num(stats.interrupted) > 0) out.push(`${num(stats.interrupted)} interrupted`)
-  const sources = stats.sources as Record<string, { status?: string }> | undefined
+  const sources = stats.sources as Record<string, { status?: string; overdue?: boolean }> | undefined
   if (sources && typeof sources === 'object') {
     const down = Object.entries(sources).filter(([, s]) => s?.status === 'failed').map(([name]) => name)
     if (down.length) out.push(`${down.map(properName).join(', ')} search failed`)
+    // A keyword or board that failed while the rest worked, and a source that has waited past twice
+    // its allowed interval (stuck, not resting between the pulls its terms allow).
+    const partly = Object.entries(sources).filter(([, s]) => s?.status === 'partial').map(([name]) => name)
+    if (partly.length) out.push(`${partly.map(properName).join(', ')} search partly failed`)
+    const stuck = Object.entries(sources).filter(([, s]) => s?.status === 'waiting' && s.overdue === true).map(([name]) => name)
+    if (stuck.length) out.push(`${stuck.map(properName).join(', ')} not pulled for over twice its allowed interval`)
   }
   return out.map(properNamesIn)
 }

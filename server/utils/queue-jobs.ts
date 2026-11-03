@@ -129,7 +129,7 @@ function jobIdsOf(payload: Record<string, unknown>): number[] {
 
 /**
  * The jobs:enrich step. Queues a jobs:enrich-one item for every job still waiting to be read (no
- * cap, best candidates first) or for the payload's jobIds (read again), waits for every queued
+ * cap, newest posting first) or for the payload's jobIds (read again), waits for every queued
  * read to finish, and returns the counts. `pending` is the jobs still waiting afterward (the budget
  * stopped them, or they arrived meanwhile).
  */
@@ -152,7 +152,10 @@ export async function enrichStep(payload: Record<string, unknown>, log: (msg: st
       log(`not queuing ${f.ranked.length} jobs: ${stop.message}`)
     }
     else {
-      for (const { job } of f.ranked) if (queueEnrichJob(job.id).created) queued++
+      // Newest posting first, so when background work stops at its share of the budget the
+      // oldest postings are the ones left for the next day.
+      const newest = [...f.ranked].sort((a, b) => (b.job.postedAt ?? b.job.foundAt).localeCompare(a.job.postedAt ?? a.job.foundAt) || b.job.id - a.job.id)
+      for (const { job } of newest) if (queueEnrichJob(job.id).created) queued++
     }
   }
   stats.selected = queued

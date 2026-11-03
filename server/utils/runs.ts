@@ -51,7 +51,7 @@ export async function withRun<T extends Record<string, unknown>>(
     // problem (out of credit) that no amount of waiting for midnight fixes.
     const s = stats as Record<string, unknown> | null
     if (s && (s.budgetStop === true || s.budgetStopped === true) && !('stopReason' in s)) {
-      (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? 'budget'
+      (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? budgetStopKind()
     }
     const recorded = resumed ? { ...s, resumedAfterRestart: resumed } : stats
     db.update(pipelineRuns).set({ status: 'succeeded', finishedAt: now(), statsJson: JSON.stringify(recorded) }).where(eq(pipelineRuns.id, row.id)).run()

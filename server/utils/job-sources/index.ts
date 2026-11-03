@@ -25,8 +25,10 @@ import { ripplingAdapter } from './rippling'
 import { gemAdapter } from './gem'
 import { listingRejection, normalizeCompany } from './filters'
 import { endRunCache, sourceWarnings, startRunCache } from './http'
-import { filterHash, lastAttempt, MAX_AGE_DAYS, nowIso, pullRows, recordPull } from './pull-state'
+import { filterHash, lastAttempt, lastSuccess, MAX_AGE_DAYS, nowIso, pullRows, recordPull } from './pull-state'
 import { type BoardCandidate, boardLinksIn, discoverFromJobs, recordBoards } from './board-discovery'
+import { DuplicateIndex, type DuplicateMatch } from './duplicates'
+import { properName } from '#shared/utils/names'
 
 /** Aggregators a search config can pick in its job_sources list. */
 export const AGGREGATOR_ADAPTERS: Record<string, JobSourceAdapter> = {
@@ -103,8 +105,11 @@ export interface SourceRunStat {
   passed: number
   /** Passed, but already stored (same source and source id). */
   known: number
-  /** Stored by this run. Every new job is queued for enrichment; nothing else is. */
+  /** Stored by this run, duplicates included. */
   new: number
+  /** Of the new jobs, how many repeat a job another source already brought (stored, never read or scored). */
+  duplicates?: number
+  /** New jobs queued for reading: new minus duplicates. */
   queued: number
   requests: number
   /** full: the whole window was read; incremental: only listings since the watermark; mixed: some of each. */
@@ -116,6 +121,9 @@ export interface SourceRunStat {
   dropped?: Record<string, number>
   /** When a waiting source may be asked again. */
   waitUntil?: string
+  /** A waiting source whose last good pull is older than twice its interval: stuck, not resting. */
+  overdue?: boolean
+  lastPulledAt?: string | null
   error?: string
   warnings?: string[]
 }
@@ -126,6 +134,7 @@ export interface SearchRunStats extends Record<string, unknown> {
   passed: number
   known: number
   new: number
+  duplicates: number
   queued: number
   sources: Record<string, SourceRunStat>
   adjustments: { excludedKeywords: number; excludedCompanies: number; boostKeywords: number } | 'not available'
@@ -133,7 +142,7 @@ export interface SearchRunStats extends Record<string, unknown> {
   learnedExclusions: Record<string, number>
   /** Employer boards added this run from apply links. */
   boardsDiscovered: number
-  /** Ids of the jobs stored by this run, in insert order: the enrich queue's input. */
+  /** Ids of the new jobs queued for reading (duplicates left out), newest posting first. */
   newJobIds: number[]
 }
 
@@ -148,8 +157,19 @@ function parseList(value: string | null | undefined): string[] | undefined {
   }
 }
 
-/** Stores a listing not seen before (dedupe on source + source_id). Returns the new job id, or null when known. */
-function insertIfNew(job: NormalizedJob): number | null {
+/** "2026-11-03T10:00:00.000Z" as "2026-11-03 10:00:00", the format found_at uses, so the two sort together. */
+function sqlTimeOf(iso: string | null | undefined): string | null {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  return Number.isNaN(t) ? null : new Date(t).toISOString().replace('T', ' ').slice(0, 19)
+}
+
+/**
+ * Stores a listing not seen before (dedupe on source + source_id). Returns the new job id, or null
+ * when known. A duplicate of another source's job is stored already marked as skipped, so the
+ * reading and scoring steps never pick it up.
+ */
+function insertIfNew(job: NormalizedJob, extra: { postedAt?: string | null; duplicate?: DuplicateMatch | null } = {}): number | null {
   const db = useDb()
   const existing = db.select({ id: jobs.id }).from(jobs)
     .where(and(eq(jobs.source, job.source), eq(jobs.sourceId, job.sourceId)))
@@ -173,12 +193,20 @@ function insertIfNew(job: NormalizedJob): number | null {
     applyUrl: job.applyUrl ?? null,
     atsType: job.atsType ?? null,
     atsMeta: job.atsMeta ? JSON.stringify(job.atsMeta) : null,
+    postedAt: sqlTimeOf(extra.postedAt),
+    ...(extra.duplicate
+      ? {
+          duplicateOf: extra.duplicate.jobId,
+          enrichedAt: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          enrichError: `Skipped by prefilter: the same job as #${extra.duplicate.jobId} from ${properName(extra.duplicate.source)}`,
+        }
+      : {}),
   }).returning({ id: jobs.id }).get()
   return row.id
 }
 
 function emptyStat(): SourceRunStat {
-  return { status: 'ok', found: 0, passed: 0, known: 0, new: 0, queued: 0, requests: 0 }
+  return { status: 'ok', found: 0, passed: 0, known: 0, new: 0, duplicates: 0, queued: 0, requests: 0 }
 }
 
 /** A source without pull(): its search() result, already filtered by the source, as one scope. */
@@ -204,7 +232,7 @@ async function pullViaSearch(adapter: JobSourceAdapter, params: SearchParams): P
 export async function runSearch(log: (msg: string) => void = console.log, opts: { onNewJob?: (jobId: number) => void } = {}): Promise<SearchRunStats> {
   const db = useDb()
   const configs = db.select().from(searchConfigs).where(eq(searchConfigs.isActive, true)).all()
-  const stats: SearchRunStats = { configs: configs.length, found: 0, passed: 0, known: 0, new: 0, queued: 0, sources: {}, adjustments: 'not available', learnedExclusions: {}, boardsDiscovered: 0, newJobIds: [] }
+  const stats: SearchRunStats = { configs: configs.length, found: 0, passed: 0, known: 0, new: 0, duplicates: 0, queued: 0, sources: {}, adjustments: 'not available', learnedExclusions: {}, boardsDiscovered: 0, newJobIds: [] }
   if (!configs.length) {
     log('no active search configs')
     return stats
@@ -240,6 +268,8 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
   }
 
   const boardCandidates: BoardCandidate[] = []
+  const duplicateIndex = DuplicateIndex.load()
+  const toQueue: Array<{ id: number; postedAt: string }> = []
   startRunCache()
   try {
     for (const config of configs) {
@@ -285,7 +315,11 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
         return { name, adapter, result, since }
       }))
 
-      pulls.forEach((settled, i) => {
+      // Employer boards first, so when an aggregator repeats a board's posting, the board's copy
+      // (with the employer's form and structured data) is the one that gets read.
+      const order = names.map((_, i) => i).sort((a, b) => Number(!(names[a]! in BOARD_ADAPTERS)) - Number(!(names[b]! in BOARD_ADAPTERS)))
+      order.forEach((i) => {
+        const settled = pulls[i]!
         const name = names[i]!
         const stat = stats.sources[name] ??= emptyStat()
         const warnings = sourceWarnings.get(name)
@@ -303,7 +337,12 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
         if (!result) {
           stat.status = 'waiting'
           stat.waitUntil = waiting.get(name)
-          log(`${name}: waiting until ${stat.waitUntil} (the source limits how often it may be asked)`)
+          // Resting between allowed pulls is normal; past twice the interval the source is stuck.
+          const good = lastSuccess(name)
+          const interval = (ALL_ADAPTERS[name]?.minIntervalMinutes ?? 0) * 60000
+          stat.lastPulledAt = good
+          stat.overdue = !good || Date.now() - Date.parse(good) > 2 * interval
+          log(`${name}: waiting until ${stat.waitUntil} (the source limits how often it may be asked)${stat.overdue ? `; no good pull since ${good ?? 'it started'}` : ''}`)
           return
         }
 
@@ -335,7 +374,8 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
             ...boardLinksIn(listing.job.description).map(url => ({ url, company: listing.job.company, via: `link in ${name} listing ${listing.job.sourceId}` })),
           )
           try {
-            const id = insertIfNew(listing.job)
+            const duplicate = duplicateIndex.find(listing.job)
+            const id = insertIfNew(listing.job, { postedAt: listing.postedAt, duplicate })
             if (id == null) {
               counts.known++
               stat.known++
@@ -344,12 +384,17 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
             else {
               counts.added++
               stat.new++
-              stat.queued++
               stats.new++
-              stats.queued++
-              stats.newJobIds.push(id)
-              // The jobs:search task queues each new job for reading (task-queue unit).
-              opts.onNewJob?.(id)
+              duplicateIndex.add(id, duplicate?.jobId ?? id, listing.job)
+              if (duplicate) {
+                stat.duplicates = (stat.duplicates ?? 0) + 1
+                stats.duplicates++
+              }
+              else {
+                stat.queued++
+                stats.queued++
+                toQueue.push({ id, postedAt: sqlTimeOf(listing.postedAt) ?? '' })
+              }
             }
           }
           catch (e: any) {
@@ -395,12 +440,20 @@ export async function runSearch(log: (msg: string) => void = console.log, opts: 
         else if (stat.scopesFailed) {
           stat.status = 'partial'
         }
-        log(`${name}: ${stat.mode} pull, ${stat.requests} requests, found ${stat.found}, passed filters ${stat.passed}, already known ${stat.known}, new ${stat.new}${stat.scopesFailed ? `, ${stat.scopesFailed} of ${result.scopes.length} ${result.scopes.length === 1 ? 'part' : 'parts'} failed` : ''}`)
+        log(`${name}: ${stat.mode} pull, ${stat.requests} requests, found ${stat.found}, passed filters ${stat.passed}, already known ${stat.known}, new ${stat.new}${stat.duplicates ? ` (${stat.duplicates} already on another source)` : ''}${stat.scopesFailed ? `, ${stat.scopesFailed} of ${result.scopes.length} ${result.scopes.length === 1 ? 'part' : 'parts'} failed` : ''}`)
       })
     }
   }
   finally {
     endRunCache()
+  }
+
+  // Queue reading newest posting first, so a backlog the budget stops leaves the oldest postings
+  // for the next day. The jobs:search task queues each one (task-queue unit).
+  toQueue.sort((a, b) => b.postedAt.localeCompare(a.postedAt) || b.id - a.id)
+  for (const { id } of toQueue) {
+    stats.newJobIds.push(id)
+    opts.onNewJob?.(id)
   }
 
   const added = recordBoards(boardCandidates)

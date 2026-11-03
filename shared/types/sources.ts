@@ -7,12 +7,16 @@ export interface SourceLastRun {
   passed?: number
   known?: number
   new: number
+  /** New jobs that repeat a job another source already brought: stored, never read or scored. */
+  duplicates?: number
   queued?: number
   requests?: number
   mode?: 'full' | 'incremental' | 'mixed'
   scopes?: number
   scopesFailed?: number
   waitUntil?: string
+  /** Waiting longer than twice its allowed interval since its last good pull. */
+  overdue?: boolean
   error?: string
 }
 

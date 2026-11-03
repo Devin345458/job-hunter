@@ -55,9 +55,20 @@ const NON_SOFTWARE_TITLE = /\b(sales|pre[\s-]?sales|customer success|professiona
 const NON_TECH_DOMAIN = /\b(sterile|surgical|nurs(e|es|ing)|clinical|medical|pharmac\w*|dental|veterinar\w*|patient|laborator\w*|radiolog\w*|hvac|plumb\w*|maintenance|facilities|warehouse|construction|processing tech\w*)\b/i
 const SOFTWARE_WORD = /\b(software|developers?|programmers?|full[\s-]?stack|front[\s-]?end|back[\s-]?end|devops|sre|platform|web|mobile|ios|android|cloud|data|api|systems? software|applications?)\b/i
 
+// Engineering fields that are not software ("Senior Manager of BESS Engineering", "Process
+// Engineer", "Structural Engineer"). Like the domains above, they only rule a title out when it
+// names no software work, so "Software Engineer, Energy Storage" and "Data Engineer, Civil
+// Infrastructure" stay in.
+const NON_SOFTWARE_FIELD = /\b(bess|batter(y|ies)|energy storage|solar|photovoltaic|wind (energy|turbines?|farms?)|substations?|power (systems?|electronics|plants?|generation)|civil|structural|chemical|process (engineer\w*|engineering)|field service\w*|piping|geotechnical|environmental|aerospace|propulsion|avionics|nuclear|petroleum|drilling|mining|oil (and|&) gas|semiconductors?|photonics|optical|mechatronics|industrial|instrumentation|controls engineer\w*|project controls|plc|scada|transmission lines?|aec|mep|validation engineer\w*|sustaining|equipment engineer\w*|system safety|i&t|customer engineer\w*)\b/i
+
+// Product, program, and project managers match the "engineering manager" keyword word by word
+// ("Engineering Project Manager") but are a different job.
+const NOT_ENGINEERING_MANAGER = /\b(product|program|project)\s+manag(er|ement)\b/i
+
 export function isSoftwareRoleTitle(title: string): boolean {
-  if (!isEngineeringTitle(title) || NON_SOFTWARE_TITLE.test(title)) return false
-  return !(NON_TECH_DOMAIN.test(title) && !SOFTWARE_WORD.test(title))
+  if (!isEngineeringTitle(title) || NON_SOFTWARE_TITLE.test(title) || NOT_ENGINEERING_MANAGER.test(title)) return false
+  if (SOFTWARE_WORD.test(title)) return true
+  return !NON_TECH_DOMAIN.test(title) && !NON_SOFTWARE_FIELD.test(title)
 }
 
 function escapeRegex(s: string) {

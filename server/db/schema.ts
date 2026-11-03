@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core'
+import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import { sql } from 'drizzle-orm'
 
 export const jobs = sqliteTable('jobs', {
@@ -38,8 +38,15 @@ export const jobs = sqliteTable('jobs', {
   scoreBreakdown: text('score_breakdown'), // ScoreBreakdown
   scoredAt: text('scored_at'),
   isSandbox: integer('is_sandbox', { mode: 'boolean' }).notNull().default(false),
+  // Migration 0006 (data-sources): when the source says the listing was posted or last updated
+  // (UTC, same format as found_at), and the job this one repeats from another source. A duplicate
+  // is stored (dedupe stays source + source_id) but never read or scored; the Jobs page lists it
+  // as "Also on <source>" on the job it repeats.
+  postedAt: text('posted_at'),
+  duplicateOf: integer('duplicate_of'),
 }, (table) => [
   index('jobs_source_source_id_idx').on(table.source, table.sourceId),
+  index('jobs_duplicate_of_idx').on(table.duplicateOf),
   index('jobs_status_idx').on(table.status),
   index('jobs_match_score_idx').on(table.matchScore),
   index('jobs_company_idx').on(table.company),
@@ -359,4 +366,48 @@ export const taskQueue = sqliteTable('task_queue', {
 }, (table) => [
   index('task_queue_status_run_after_idx').on(table.status, table.runAfter),
   index('task_queue_parent_idx').on(table.parentId),
+])
+
+// ── Migration 0006: incremental job source pulls and discovered boards (data-sources unit) ──
+
+// One row per source, search config, and scope (a keyword for sources queried per keyword, a
+// board token for employer boards, '' for one-feed sources). last_pulled_at is the watermark: the
+// start time of the last pull of that scope that finished completely. A failed or cut-short pull
+// records the attempt and leaves the watermark alone. Times are ISO strings with a Z.
+export const sourcePulls = sqliteTable('source_pulls', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  source: text('source').notNull(),
+  configId: integer('config_id').notNull(),
+  scope: text('scope').notNull().default(''),
+  /** Hash of the config's filters when the watermark was set. A different hash means a full pull. */
+  filterHash: text('filter_hash'),
+  lastPulledAt: text('last_pulled_at'),
+  lastAttemptAt: text('last_attempt_at'),
+  lastStatus: text('last_status'), // ok, partial, failed, unavailable
+  lastError: text('last_error'),
+  lastMode: text('last_mode'), // full, incremental
+  found: integer('found').notNull().default(0),
+  passed: integer('passed').notNull().default(0),
+  known: integer('known').notNull().default(0),
+  added: integer('added').notNull().default(0),
+  requests: integer('requests').notNull().default(0),
+  updatedAt: text('updated_at').notNull(),
+}, table => [
+  uniqueIndex('source_pulls_key_idx').on(table.source, table.configId, table.scope),
+])
+
+/** Employer boards found through apply links, pulled like the curated list in job-sources/ats-boards.ts. */
+export const jobBoards = sqliteTable('job_boards', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ats: text('ats').notNull(),
+  token: text('token').notNull(),
+  company: text('company').notNull(),
+  foundVia: text('found_via'),
+  status: text('status').notNull().default('active'), // active, gone
+  lastError: text('last_error'),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+}, table => [
+  uniqueIndex('job_boards_ats_token_idx').on(table.ats, table.token),
+  index('job_boards_status_idx').on(table.status),
 ])

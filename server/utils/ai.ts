@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { and, gte, sql } from 'drizzle-orm'
 import { aiCalls } from '../db/schema'
 import { FALLBACK_MODEL, MODEL, priceOf, profileOf, type Effort } from './model'
+import { BULK_TASKS, currentQueueContext, getItem } from './queue'
 import type { TailoredResume } from '#shared/types/pipeline'
 
 let _client: Anthropic | null = null
@@ -98,11 +99,58 @@ export function aiBudget(): number {
   return Number(config.dailyAiBudgetUsd) || 10
 }
 
-/** Throws AiBudgetExceeded when today's spend has reached the daily budget. */
+/** Share of the daily budget background work may spend (NUXT_BACKGROUND_BUDGET_SHARE, default 0.7). */
+export function backgroundBudgetShare(): number {
+  const v = Number(useRuntimeConfig().backgroundBudgetShare)
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.7
+}
+
+/**
+ * True for work nobody started by hand: the per-job read and score items (whoever queued them),
+ * and every item of a chain the schedule started (a scheduled full run and its steps). Chat, Apply
+ * preparation, approve, and a step or full run started from Settings are not background.
+ */
+export function isBackgroundWork(): boolean {
+  const ctx = currentQueueContext()
+  if (!ctx) return false
+  let item: { task: string; trigger: string; parentId: number | null } | null = ctx.item
+  if ((BULK_TASKS as readonly string[]).includes(item.task)) return true
+  for (let hops = 0; item && hops < 5; hops++) {
+    if (item.trigger === 'schedule') return true
+    if (!item.parentId) return false
+    item = getItem(item.parentId)
+  }
+  return false
+}
+
+/** Background work stopped at its share of the day's budget; the rest is kept for what Devin starts. */
+export class AiBackgroundBudgetReached extends AiBudgetExceeded {
+  constructor(spent: number, budget: number, share: number) {
+    super(spent, budget, `Background work stopped at ${Math.round(share * 100)}% of today's AI budget ($${spent.toFixed(2)} of $${budget.toFixed(2)} spent). The rest is kept for what you start yourself; the backlog continues tomorrow.`)
+    this.name = 'AiBackgroundBudgetReached'
+  }
+}
+
+/**
+ * Throws AiBudgetExceeded when today's spend has reached the daily budget, or, for background work,
+ * its share of it (AiBackgroundBudgetReached).
+ */
 export function assertAiBudget() {
   const spent = aiSpentToday()
   const budget = aiBudget()
   if (spent >= budget) throw new AiBudgetExceeded(spent, budget)
+  if (isBackgroundWork()) {
+    const share = backgroundBudgetShare()
+    if (spent >= budget * share) throw new AiBackgroundBudgetReached(spent, budget, share)
+  }
+}
+
+/**
+ * Why a run stopped at the budget: the whole budget, or the background share of it (a step started
+ * by hand still stops there when its per-job items are what hit the share).
+ */
+export function budgetStopKind(): 'budget' | 'background' {
+  return aiSpentToday() < aiBudget() ? 'background' : 'budget'
 }
 
 /**

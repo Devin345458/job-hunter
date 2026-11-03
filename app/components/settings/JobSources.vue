@@ -63,6 +63,7 @@ function chip(row: SourceStatusRow) {
   if (!row.selected) return { text: 'Off in your search', color: 'default' }
   if (noBoards(row)) return { text: 'No boards yet', color: 'default' }
   if (!row.lastRun) return { text: 'Not run yet', color: 'default' }
+  if (row.lastRun.status === 'waiting' && row.lastRun.overdue) return { text: 'Stuck', color: 'warning' }
   return STATUS[row.lastRun.status] ?? { text: row.lastRun.status, color: 'default' }
 }
 
@@ -80,11 +81,16 @@ function pulledLine(row: SourceStatusRow): string {
 function runLine(row: SourceStatusRow): string {
   const r = row.lastRun
   if (!r) return ''
-  if (r.status === 'waiting') return `Last search skipped it: this source asks not to be called that often. Next pull after ${when(r.waitUntil ?? row.waitUntil)}.`
+  if (r.status === 'waiting') {
+    return r.overdue
+      ? `Last search skipped it while it waits between allowed pulls, but it has had no good pull for over twice that interval. Next try after ${when(r.waitUntil ?? row.waitUntil)}.`
+      : `Last search skipped it: this source asks not to be called that often. Next pull after ${when(r.waitUntil ?? row.waitUntil)}.`
+  }
   if (r.status === 'unavailable' || (r.status === 'failed' && !r.found)) return r.error ? `Last search: ${plainError(r.error)}` : 'Last search: no listings.'
   if (r.passed == null) return `Last search: ${n(r.found)} listings passed the filters, ${n(r.new)} new.`
   const mode = r.mode === 'incremental' ? 'only listings since the last pull' : r.mode === 'mixed' ? 'partly a full pull' : 'a full pull'
-  return `Last search, ${mode}: ${n(r.found)} found, ${n(r.passed)} passed your filters, ${n(r.known)} already known, ${n(r.new)} new and queued for reading. ${n(r.requests)} ${r.requests === 1 ? 'request' : 'requests'}.`
+  const dupes = r.duplicates ? ` (${n(r.duplicates)} already on another source, not read)` : ''
+  return `Last search, ${mode}: ${n(r.found)} found, ${n(r.passed)} passed your filters, ${n(r.known)} already known, ${n(r.new)} new${dupes}, ${n(r.queued ?? r.new)} queued for reading. ${n(r.requests)} ${r.requests === 1 ? 'request' : 'requests'}.`
 }
 
 function boardLine(row: SourceStatusRow): string {

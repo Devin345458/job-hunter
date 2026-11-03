@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, count, inArray } from 'drizzle-orm'
+import { eq, and, desc, sql, count, inArray, isNull, isNotNull } from 'drizzle-orm'
 import { jobs } from '~~/server/db/schema'
 import { jobGroupKey, jobStateKey, latestApplication, toJobApplication } from '~~/server/utils/job-list'
 
@@ -26,7 +26,9 @@ export default defineEventHandler(async (event) => {
   const appStatus = latestApplication('status')
 
   try {
-    const conditions = []
+    // A job another source already brought (jobs.duplicate_of) is not a card of its own; the job it
+    // repeats says "Also on <source>".
+    const conditions = [isNull(jobs.duplicateOf)]
 
     if (status) {
       // The jobs page sends several statuses joined by commas. Each matches the state the card
@@ -131,8 +133,18 @@ export default defineEventHandler(async (event) => {
           .all()
       : []
 
+    // Sources that repeat each card's postings, for its "Also on" line.
+    const cardIds = [...rows.map(r => r.id), ...siblings.map(s => s.id)]
+    const repeats = cardIds.length
+      ? db.select({ of: jobs.duplicateOf, source: jobs.source }).from(jobs)
+          .where(and(isNotNull(jobs.duplicateOf), inArray(jobs.duplicateOf, cardIds)))
+          .all()
+      : []
+    const alsoOnFor = (ids: number[]) => [...new Set(repeats.filter(r => r.of != null && ids.includes(r.of)).map(r => r.source))]
+
     const results = rows.map(({ appId: aId, appStatus: aStatus, appFormError, groupKey: key, ...row }) => ({
       ...row,
+      alsoOn: alsoOnFor([row.id, ...siblings.filter(s => s.groupKey === key).map(s => s.id)]),
       application: toJobApplication(aId, aStatus, appFormError),
       // The card's own posting first, then the others in the order they were found.
       postings: row.postingCount > 1

@@ -159,6 +159,9 @@ export default defineNuxtConfig({
     aiStepModels: '',
     // Hard stop for Claude spend per local day, in dollars
     dailyAiBudgetUsd: '10',
+    // Background work (scheduled steps, per-job read and score items) stops at this share of the
+    // daily budget, leaving the rest for what Devin starts by hand.
+    backgroundBudgetShare: '0.7',
     // uid of the unprivileged user that runs demo build commands in the container
     demoUid: '10001',
     // Safety switch for real employer submits. 'false' lets the approve path submit only to the

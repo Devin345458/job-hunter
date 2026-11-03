@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { JobListItem } from '~/composables/useJobs'
 import { ATS_LABELS, formatMoneyShort, jobStateMeta, postingLocations, uniqueTags } from './format'
+import { properName } from '#shared/utils/names'
 
 const props = defineProps<{
   job: JobListItem
@@ -10,6 +11,9 @@ const props = defineProps<{
 const state = computed(() => jobStateMeta(props.job.status, props.job.application))
 
 const tags = computed(() => uniqueTags(props.job.tags))
+
+/** Other sources that listed the same job, by product name. */
+const alsoOnText = computed(() => (props.job.alsoOn ?? []).map(properName).join(', '))
 
 // One card can stand for several postings of the same role at the same company.
 const postingCount = computed(() => props.job.postingCount ?? 1)
@@ -76,6 +80,16 @@ const remoteIcon = computed(() =>
         :aria-label="`${postingCount} postings of this role: ${locations.join(', ') || 'same location'}`"
       >
         {{ postingCount }} postings
+      </v-chip>
+
+      <v-chip
+        v-if="job.alsoOn?.length"
+        size="small"
+        variant="outlined"
+        prepend-icon="mdi-content-duplicate"
+        :aria-label="`The same job is also listed on ${alsoOnText}`"
+      >
+        Also on {{ alsoOnText }}
       </v-chip>
 
       <v-chip

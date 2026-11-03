@@ -19,6 +19,8 @@ export type JobListItem = Pick<Job,
   postingCount?: number
   /** Every posting the card stands for, this one first. Empty when it stands for one. */
   postings?: Array<{ id: number; location: string | null }>
+  /** Other sources that brought the same job (stored as duplicates, never read or scored). */
+  alsoOn?: string[]
 }
 
 /** A job's own status, plus in_review: a filter for jobs whose application is under way. */
