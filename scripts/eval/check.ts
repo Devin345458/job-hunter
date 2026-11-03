@@ -1,14 +1,15 @@
 // Mechanical checks on the eval results, plus blinded packets for human-style judging.
 //
-//   npx tsx --tsconfig scripts/eval/tsconfig.json scripts/eval/check.ts <snapshotCopy.db> <tag>
+//   npx tsx --tsconfig scripts/eval/tsconfig.json scripts/eval/check.ts <snapshotCopy.db> <tag> [outDir] [--no-packets]
 //
 // Reads data/eval/results/<tag>-<model>.json for every model present and writes:
-// - data/eval/judge/mechanical.json: per model and job, the counts code can decide on its own
+// Output goes to outDir (default data/eval/judge):
+// - <outDir>/mechanical.json: per model and job, the counts code can decide on its own
 //   (format failures, evidence keys the app had to discard, quotes or figures the app dropped,
 //   dashes and third person pronouns in text Devin reads), plus cost and latency per step.
-// - data/eval/judge/packets/job-<id>.md: the posting, the knowledge base, the fixed input
+// - <outDir>/packets/job-<id>.md: the posting, the knowledge base, the fixed input
 //   requirements, and the four outputs under letters A to D in a random order per job.
-// - data/eval/judge/key.json: which letter is which model. Judges never see it.
+// - <outDir>/key.json: which letter is which model. Judges never see it.
 //
 // Everything is written under data/, which is gitignored: packets hold posting text and the
 // knowledge base.
@@ -16,7 +17,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { setupGlobals } from './globals'
 
-const [dbPath, tag = 'full'] = process.argv.slice(2)
+const args = process.argv.slice(2).filter(a => !a.startsWith('--'))
+const [dbPath, tag = 'full', outDir = 'data/eval/judge'] = args
+const writePackets = !process.argv.includes('--no-packets')
 if (!dbPath) {
   console.error('usage: check.ts <snapshotCopy.db> [tag]')
   process.exit(2)
@@ -156,8 +159,8 @@ for (const m of models) {
   }
 }
 
-mkdirSync('data/eval/judge/packets', { recursive: true })
-writeFileSync('data/eval/judge/mechanical.json', JSON.stringify(mechanical, null, 2))
+mkdirSync(`${outDir}/packets`, { recursive: true })
+writeFileSync(`${outDir}/mechanical.json`, JSON.stringify(mechanical, null, 2))
 
 // ── Blinded packets ──
 const letters = ['A', 'B', 'C', 'D']
@@ -172,7 +175,7 @@ function shuffle<T>(xs: T[]): T[] {
 }
 const fence = (obj: unknown) => '```json\n' + JSON.stringify(obj, null, 1) + '\n```'
 
-for (const id of jobIds) {
+for (const id of writePackets ? jobIds : []) {
   const job = jobById.get(id)!
   const order = shuffle(models)
   key[id] = Object.fromEntries(order.map((m, i) => [letters[i]!, m]))
@@ -222,9 +225,9 @@ for (const id of jobIds) {
       if (gp.questionsCreated?.length) parts.push('New questions it would ask Devin:', '', fence(gp.questionsCreated.map((q: any) => ({ kind: q.kind, subject: q.subject, question: q.question }))), '')
     }
   }
-  writeFileSync(`data/eval/judge/packets/job-${id}.md`, parts.join('\n'))
+  writeFileSync(`${outDir}/packets/job-${id}.md`, parts.join('\n'))
 }
-writeFileSync('data/eval/judge/key.json', JSON.stringify(key, null, 2))
+if (writePackets) writeFileSync(`${outDir}/key.json`, JSON.stringify(key, null, 2))
 
 for (const m of models) {
   const mm = mechanical.models[m]
@@ -235,4 +238,4 @@ for (const m of models) {
   }
   for (const e of mm.callErrors.slice(0, 10)) console.log(`  ! ${e}`)
 }
-console.log(`packets: ${jobIds.length} written to data/eval/judge/packets`)
+console.log(writePackets ? `packets: ${jobIds.length} written to ${outDir}/packets` : 'packets skipped')

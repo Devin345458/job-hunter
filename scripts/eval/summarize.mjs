@@ -6,6 +6,9 @@
 // data/eval/judge/verdicts/job-<id>.json. Writes data/eval/judge/summary.json.
 // Error count per step is the number of jobs (out of the jobs judged) whose output had at least one
 // error, plus the total number of errors. Style codes (M4, G7) are counted apart from accuracy.
+// data/eval/judge/adjudications.json (optional) holds errors added after unblinding, for cases the
+// rubric did not name, as [{ jobId, model, kind: "comp" | "reqs", code, detail }]. One is skipped
+// when the judge already gave that output the same code.
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 
@@ -14,10 +17,11 @@ const mech = JSON.parse(readFileSync('data/eval/judge/mechanical.json', 'utf8'))
 const dir = 'data/eval/judge/verdicts'
 const files = existsSync(dir) ? readdirSync(dir).filter(f => /^job-\d+\.json$/.test(f)) : []
 const STYLE = new Set(['M4', 'G7'])
+const adjudications = existsSync('data/eval/judge/adjudications.json') ? JSON.parse(readFileSync('data/eval/judge/adjudications.json', 'utf8')) : []
 
 const models = Object.keys(mech.models)
 const agg = Object.fromEntries(models.map(m => [m, {
-  enrich: { jobsWithError: 0, compErrors: 0, reqErrors: 0, byCode: {}, benefitsMissed: 0, benefitsDroppedByApp: 0, mustHavesMissed: 0, judged: 0, failed: 0 },
+  enrich: { jobsWithError: 0, compJobs: 0, reqJobs: 0, compErrors: 0, reqErrors: 0, byCode: {}, benefitsMissed: 0, benefitsDroppedByApp: 0, mustHavesMissed: 0, judged: 0, failed: 0 },
   match: { jobsWithError: 0, errors: 0, style: 0, byCode: {}, wording: [], judged: 0, failed: 0 },
   gaps: { jobsWithError: 0, errors: 0, style: 0, byCode: {}, wording: [], judged: 0, failed: 0 },
 }]))
@@ -38,8 +42,14 @@ for (const f of files) {
     if (pj?.enrich?.ok === false) a.enrich.failed++
     else if (o.enrich) {
       a.enrich.judged++
-      const comp = o.enrich.comp ?? []
-      const reqs = o.enrich.reqs ?? []
+      const comp = [...(o.enrich.comp ?? [])]
+      const reqs = [...(o.enrich.reqs ?? [])]
+      for (const adj of adjudications.filter(x => x.jobId === id && x.model === model && !x.remove)) {
+        const list = adj.kind === 'reqs' ? reqs : comp
+        if (!list.some(e => e.code === adj.code)) list.push({ code: adj.code, detail: `[adjudicated] ${adj.detail}` })
+      }
+      if (comp.length) a.enrich.compJobs++
+      if (reqs.length) a.enrich.reqJobs++
       a.enrich.compErrors += comp.length
       a.enrich.reqErrors += reqs.length
       for (const e of [...comp, ...reqs]) a.enrich.byCode[e.code] = (a.enrich.byCode[e.code] ?? 0) + 1
@@ -52,7 +62,8 @@ for (const f of files) {
       if (pj?.[step]?.ok === false) { a[step].failed++; continue }
       if (!o[step]) continue
       a[step].judged++
-      const errs = o[step].errors ?? []
+      const removals = adjudications.filter(x => x.remove && x.jobId === id && x.model === model && x.kind === step)
+      const errs = (o[step].errors ?? []).filter(e => !removals.some(x => x.code === e.code && String(e.detail).includes(x.match)))
       const acc = errs.filter(e => !STYLE.has(e.code))
       a[step].errors += acc.length
       a[step].style += errs.length - acc.length
@@ -75,8 +86,8 @@ for (const step of ['enrich', 'match', 'gaps']) {
   for (const m of models) {
     const a = agg[m][step]
     const p = mech.models[m].perStep[step]
-    const errs = step === 'enrich' ? `${a.compErrors} comp + ${a.reqErrors} req` : `${a.errors}${a.style ? ` (+${a.style} style)` : ''}`
-    lines.push(`${m}: ${a.jobsWithError}/${a.judged} jobs with an error, ${errs} errors, ${a.failed} failed, $${p.costPerJob?.toFixed(4)} per job, median ${(p.medianMs / 1000).toFixed(1)}s${a.wording ? `, wording ${avg(a.wording)}` : ''} ${JSON.stringify(a.byCode)}`)
+    const errs = step === 'enrich' ? `comp ${a.compJobs} jobs/${a.compErrors} errors, reqs ${a.reqJobs} jobs/${a.reqErrors} errors, benefits missed ${a.benefitsMissed}, must-haves missed ${a.mustHavesMissed}` : `${a.errors}${a.style ? ` (+${a.style} style)` : ''}`
+    lines.push(`${m}: ${a.jobsWithError}/${a.judged} jobs with an error, ${errs}${step === 'enrich' ? '' : ' errors'}, ${a.failed} failed, $${p.costPerJob?.toFixed(4)} per job, median ${(p.medianMs / 1000).toFixed(1)}s${a.wording ? `, wording ${avg(a.wording)}` : ''} ${JSON.stringify(a.byCode)}`)
   }
 }
 console.log(lines.join('\n'))
