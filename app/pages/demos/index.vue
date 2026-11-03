@@ -10,6 +10,7 @@ const demos = ref<DemoDetail[]>([])
 const loading = ref(true)
 const loadError = ref<string | null>(null)
 const rebuilding = ref<number | null>(null)
+const discarding = ref<number | null>(null)
 
 /** Something is running on the server, so the list refreshes itself. */
 const active = computed(() => demos.value.some(d => d.progress || d.preview.status === 'building'))
@@ -57,6 +58,22 @@ async function rebuild(demo: DemoDetail) {
   }
 }
 
+/** Discard from the card, after the same confirm as the detail page. */
+async function discard(demo: DemoDetail) {
+  discarding.value = demo.id
+  try {
+    const updated = await $fetch<DemoDetail>(`/api/demos/${demo.id}/discard`, { method: 'POST' })
+    demos.value = demos.value.map(d => d.id === demo.id ? { ...updated, buildLog: null, gap: null } : d)
+    snackbar.success('Demo discarded and removed from the tailored resume')
+  }
+  catch (e: any) {
+    snackbar.error(e?.data?.statusMessage || 'Could not discard the demo')
+  }
+  finally {
+    discarding.value = null
+  }
+}
+
 onMounted(() => load())
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
@@ -99,7 +116,9 @@ onBeforeUnmount(() => {
         :demo="d"
         :job-label="`${d.job.title} at ${d.job.company}`"
         :rebuilding="rebuilding === d.id"
+        :discarding="discarding === d.id"
         @rebuild="rebuild(d)"
+        @discard="discard(d)"
       />
     </div>
   </div>

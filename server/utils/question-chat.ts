@@ -370,7 +370,7 @@ async function chatMemory(ctx: QuestionChatContext): Promise<{ use: ChatMemoryUs
     excerpts.push(e)
     if (excerpts.length >= LEAD_LIMITS.perChat) break
   }
-  return { use: live.available ? (excerpts.length ? 'used' : 'none') : 'unreachable', excerpts }
+  return { use: live.available ? (excerpts.length ? 'used' : 'none') : live.busy ? 'busy' : 'unreachable', excerpts }
 }
 
 function memorySection(excerpts: ChatExcerpt[]): string {

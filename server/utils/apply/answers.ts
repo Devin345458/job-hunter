@@ -11,7 +11,7 @@ import { nowSql, parseJson, setApplicationStatus } from '../review'
 import { ATS_LABELS } from './ats'
 import { joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims } from './evidence'
 import { bestOption } from './fill'
-import { normalizeLabel, scrubDashes, splitSentences, truncate, unsupportedNumbers } from './text'
+import { dropRepeatsInValue, normalizeLabel, scrubDashes, splitSentences, truncate, unsupportedNumbers } from './text'
 import { cleanFieldLabel } from '#shared/utils/plain-text'
 
 type JobRow = InferSelectModel<typeof jobs>
@@ -529,7 +529,15 @@ ${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'
   // already covers a field is used before anything new is created.
   for (const [id, a] of await resolveAsks(ctx, asks, ats, ref)) results.set(id, a)
 
-  return snapshot.fields.map(f => results.get(f.id) ?? answer(f, { value: null, source: 'skipped', sourceDetail: 'No answer', confidence: 'low' }))
+  return withoutRepeats(snapshot.fields.map(f => results.get(f.id) ?? answer(f, { value: null, source: 'skipped', sourceDetail: 'No answer', confidence: 'low' })))
+}
+
+/** The last guard before answers are stored: a paragraph or sentence repeated inside one text answer is dropped (dropRepeats). */
+export function withoutRepeats(answers: FormAnswer[]): FormAnswer[] {
+  return answers.map((a) => {
+    const value = dropRepeatsInValue(a.value)
+    return value === a.value ? a : { ...a, value }
+  })
 }
 
 // ── Blockers and refresh ─────────────────────────────────────
@@ -581,7 +589,7 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
   let updated = 0
   const needModel: Array<{ field: FormField; fact: string; index: number; source: 'knowledge' | 'question'; detail: string; answerText: string | null }> = []
 
-  const next = answers.map((original, index) => {
+  let next = answers.map((original, index) => {
     const qid = questionIdOf(original)
     if (!qid) return original
     const field = snapshot.fields.find(f => f.id === original.fieldId)
@@ -683,6 +691,7 @@ export async function refreshStoredAnswers(applicationId: number): Promise<{ upd
     return f?.required && a.needsQuestionId && !hasValue(a.value) && !blocking.includes(a.needsQuestionId) && statusOf(a.needsQuestionId) !== 'pending'
   })
   let status = app.status
+  next = withoutRepeats(next)
   const extra: Record<string, unknown> = { answersJson: JSON.stringify(next) }
   if (app.status === 'needs_input' && blocking.length === 0 && unresolvedRequired.length === 0) {
     status = 'proposed'

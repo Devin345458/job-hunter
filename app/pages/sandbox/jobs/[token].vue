@@ -3,7 +3,9 @@
 definePageMeta({ layout: false })
 const route = useRoute()
 const token = String(route.params.token || '')
-const { data: job, error } = await useFetch('/api/sandbox/job', { query: { token } })
+// ?job=<id>: a seeded variant (its own title, location, and pay). Without it, the default posting.
+const variant = typeof route.query.job === 'string' ? route.query.job : undefined
+const { data: job, error } = await useFetch('/api/sandbox/job', { query: { token, job: variant } })
 if (error.value) throw createError({ statusCode: 404, statusMessage: 'Not found', fatal: true })
 useHead({ title: job.value?.title || 'Job' })
 </script>

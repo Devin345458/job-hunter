@@ -6,7 +6,7 @@ import { aiStructured } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { profileValue } from './knowledge'
 import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, verifyClaims, type ClaimOutcome } from './apply/evidence'
-import { scrubDashes, splitSentences } from './apply/text'
+import { dropRepeats, scrubDashes, splitSentences } from './apply/text'
 import { postingTextOf } from './tailor'
 
 type JobRow = InferSelectModel<typeof jobs>
@@ -66,6 +66,8 @@ ${posting}`,
   const body = joinKeptParagraphs(paragraphs, evidence, (i, j) => `P${i + 1}.S${j + 1}`)
 
   const name = profileValue(entries, 'Full Name', 'name') || 'Devin Hollister-Graham'
-  const text = [`Dear Hiring Team at ${job.company},`, ...body, `Sincerely,\n${name}`].join('\n\n')
+  // Last guard: a paragraph or sentence that already appeared is dropped before the letter is stored.
+  const kept = dropRepeats(body.join('\n\n')).split(/\n{2,}/).filter(p => p.trim())
+  const text = [`Dear Hiring Team at ${job.company},`, ...kept, `Sincerely,\n${name}`].join('\n\n')
   return { text, evidence, notes: evidenceReport('Cover letter evidence check', evidence) }
 }

@@ -367,25 +367,7 @@ onBeforeUnmount(() => {
       </v-card>
     </template>
 
-    <v-dialog v-model="discardOpen" max-width="440">
-      <v-card>
-        <v-card-title class="text-h6 pt-5 px-5">
-          Discard this demo?
-        </v-card-title>
-        <v-card-text class="text-body-2 px-5">
-          It comes off the tailored resume for this application and is never published. The files stay on the server.
-        </v-card-text>
-        <v-card-actions class="px-5 pb-4">
-          <v-spacer />
-          <v-btn variant="text" @click="discardOpen = false">
-            Keep it
-          </v-btn>
-          <v-btn color="error" variant="tonal" :loading="discarding" @click="discard">
-            Discard
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <DemoDiscardDialog v-model="discardOpen" :loading="discarding" @confirm="discard" />
   </div>
 </template>
 

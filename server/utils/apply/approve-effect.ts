@@ -29,7 +29,7 @@ function parse<T>(raw: string | null): T | null {
 export function approveEffect(app: AppLike, job: JobLike, demoStatus: string | null | undefined): ApproveEffect {
   const config = useRuntimeConfig()
   const demoBlocked = demoStatus === 'built' && !String(config.githubToken || '')
-    ? 'The demo project cannot be published because NUXT_GITHUB_TOKEN is not set in Coolify'
+    ? 'The demo project cannot be published because the GitHub token is not set'
     : null
   const snapshot = parse<FormSnapshot>(app.formSnapshotJson)
   const target = snapshot?.finalUrl || job.applyUrl

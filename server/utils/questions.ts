@@ -28,6 +28,7 @@ import { ruleTerm, ruleWordMatch } from './learned-score'
 import { nowSql, parseJson, referencedQuestionIds } from './review'
 import { queueSkillRescore, rescoreJobs } from './scoring'
 import { applyAnswerToOpenJobs } from './skill-claims'
+import { NOT_A_GAP } from '#shared/utils/requirement-kinds'
 import { queueRepoSuggest, repoSuggestionsFor } from './repos/suggest-store'
 
 export type QuestionRow = InferSelectModel<typeof questions>
@@ -885,12 +886,6 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number } {
   }
   return { reworded, skipped }
 }
-
-/**
- * Requirements that are facts in the profile, never skill or experience gaps: work authorization,
- * sponsorship, citizenship, residency, relocation, clearance, location, time zone, and degrees.
- */
-export const NOT_A_GAP = /\b(work(ing)? authori[sz]ation|authori[sz]ed to work|right to work|work permit|visa|sponsorship|citizen(ship)?|green card|permanent(ly)? resid\w*|residency|relocat\w*|security clearance|clearance|time ?zones?|degree|bachelor'?s|master'?s)\b/i
 
 /** Closes pending gap questions about profile facts (NOT_A_GAP). Idempotent. */
 export function closeNonGapQuestions(): number {

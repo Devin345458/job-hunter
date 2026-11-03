@@ -55,6 +55,25 @@ Compensation and benefits
 `,
 }
 
+const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`
+
+/**
+ * The sandbox posting text for one seeded variant. A salary override replaces the base pay line,
+ * so the posting page, the stored posting text, and the compensation read from them all agree with
+ * the listing's figures (a "low pay" case really is low pay). A location override replaces the
+ * location line under the title. Without overrides it is SANDBOX_JOB.description unchanged.
+ */
+export function sandboxDescription(overrides: { salaryMin?: number | null; salaryMax?: number | null } = {}): string {
+  const { salaryMin: min, salaryMax: max } = overrides
+  const hasMin = typeof min === 'number' && min > 0
+  const hasMax = typeof max === 'number' && max > 0
+  if (!hasMin && !hasMax) return SANDBOX_JOB.description
+  const pay = hasMin && hasMax
+    ? `Base salary: ${usd(min!)} to ${usd(max!)} per year.`
+    : hasMin ? `Base salary: from ${usd(min!)} per year.` : `Base salary: up to ${usd(max!)} per year.`
+  return SANDBOX_JOB.description.replace(/^- Base salary: .*$/m, `- ${pay}`)
+}
+
 /** True when the URL is this app's own sandbox form with the configured token. */
 export function isOwnSandbox(url: string | null | undefined): boolean {
   const token = sandboxToken()

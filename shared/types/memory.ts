@@ -33,8 +33,11 @@ export interface MemoryLeadsResponse {
   byQuestion: Record<number, { checkedAt: string; leads: MemoryLead[] }>
 }
 
-/** off: NUXT_MEMORY_MCP_URL is empty. reachable or unreachable: what the last check found. */
-export type MemoryState = 'off' | 'reachable' | 'unreachable' | 'unknown'
+/**
+ * off: NUXT_MEMORY_MCP_URL is empty. reachable or unreachable: what the last check found.
+ * busy: the last check timed out, so the laptop's memory server is busy or asleep (not an error).
+ */
+export type MemoryState = 'off' | 'reachable' | 'busy' | 'unreachable' | 'unknown'
 
 /** GET /api/memory/status (and POST to check now). */
 export interface MemoryStatus {
@@ -53,6 +56,8 @@ export type ChatMemoryUse =
   | 'used'
   /** The memory server could not be reached; the saved leads, if any, were still used. */
   | 'unreachable'
+  /** The memory server did not answer in time (busy or asleep); the saved leads, if any, were still used. */
+  | 'busy'
   /** Memory was searched and nothing useful came back. */
   | 'none'
   /** Memory was not asked: the feature is off, or the message did not ask for help writing. */

@@ -34,7 +34,7 @@ export async function publishDemo(demoId: number): Promise<PublishResult> {
   const sandbox = row.app.isSandbox
   const token = String(useRuntimeConfig().githubToken || '')
   if (!sandbox && !token) {
-    throw new Error('NUXT_GITHUB_TOKEN is not set, so the demo cannot be published to GitHub. Nothing was pushed.')
+    throw new Error('The GitHub token is not set, so the demo cannot be published to GitHub. Nothing was pushed.')
   }
 
   updateDemo(demoId, { status: 'publishing' })

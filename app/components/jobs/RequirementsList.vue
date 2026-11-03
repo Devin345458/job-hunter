@@ -2,6 +2,8 @@
 import type { Requirement, SkillClaimSource } from '#shared/types/pipeline'
 import { plainKnowledgeRefs } from '#shared/utils/plain-text'
 import { knowledgeRef } from '~/composables/review/format'
+import { skillSets } from '#shared/utils/skill-sets'
+import { isProfileFact } from '#shared/utils/requirement-kinds'
 
 // The posting's requirements, judged against the knowledge base. A requirement that is not Have
 // is a button: tapping it opens the skill panel the page hosts, to say whether you have it.
@@ -33,11 +35,23 @@ function evidenceText(evidence: string): string {
 
 const mustHave = computed(() => props.requirements.filter(r => r.mustHave))
 const niceToHave = computed(() => props.requirements.filter(r => !r.mustHave))
+/**
+ * The counts come from skill-sets, the same sets as the Matched and Missing chips on this page and
+ * on the review card: Partly counts as matched; Missing and Not in profile count as missing; soft
+ * skills and profile facts (work authorization, location, degrees) are not counted as missing.
+ */
 const counts = computed(() => {
-  const out = { have: 0, partial: 0, lack: 0, unknown: 0 }
-  for (const r of mustHave.value) out[r.status]++
-  return out
+  const sets = skillSets(props.requirements, null)
+  return { matched: sets.matched.length, missing: sets.missing.length, mustMissing: sets.missing.filter(c => c.mustHave).length, soft: sets.soft.length }
 })
+const countLine = computed(() => {
+  const c = counts.value
+  const parts = [`${c.matched} matched`, `${c.missing} missing${c.mustMissing ? ` (${c.mustMissing} must ${c.mustMissing === 1 ? 'have' : 'haves'})` : ''}`]
+  if (c.soft) parts.push(`${c.soft} soft ${c.soft === 1 ? 'skill' : 'skills'} not counted`)
+  return parts.join(', ')
+})
+/** Work authorization, location, and degree lines are profile facts: shown, but not a skill to claim. */
+const tappable = (r: Requirement) => r.status !== 'have' && !isProfileFact(r.text)
 </script>
 
 <template>
@@ -46,8 +60,8 @@ const counts = computed(() => {
       <v-card-title class="text-subtitle-1 font-weight-medium">
         Requirements
       </v-card-title>
-      <v-card-subtitle v-if="mustHave.length" class="text-caption requirements__subtitle">
-        Must-haves: {{ counts.have }} have, {{ counts.partial }} partial, {{ counts.lack }} missing, {{ counts.unknown }} not in your profile
+      <v-card-subtitle v-if="requirements.length" class="text-caption requirements__subtitle">
+        {{ countLine }}
       </v-card-subtitle>
     </v-card-item>
     <v-card-text>
@@ -57,25 +71,26 @@ const counts = computed(() => {
             {{ group.title }}
           </div>
           <component
-            :is="r.status === 'have' ? 'div' : 'button'"
+            :is="tappable(r) ? 'button' : 'div'"
             v-for="(r, i) in group.items"
             :key="i"
-            :type="r.status === 'have' ? undefined : 'button'"
+            :type="tappable(r) ? 'button' : undefined"
             class="requirements__item"
-            :class="{ 'requirements__item--tap': r.status !== 'have' }"
-            :aria-label="r.status === 'have' ? undefined : `${r.text}. ${STATUS[r.status].label}. Say whether you have it`"
-            @click="r.status !== 'have' && emit('claim', r.text, 'requirement')"
+            :class="{ 'requirements__item--tap': tappable(r) }"
+            :aria-label="tappable(r) ? `${r.text}. ${STATUS[r.status].label}. Say whether you have it` : undefined"
+            @click="tappable(r) && emit('claim', r.text, 'requirement')"
           >
-            <v-icon :icon="STATUS[r.status].icon" :color="STATUS[r.status].color" size="18" class="requirements__icon" />
+            <v-icon :icon="isProfileFact(r.text) ? 'mdi-card-account-details-outline' : STATUS[r.status].icon" :color="isProfileFact(r.text) ? 'grey' : STATUS[r.status].color" size="18" class="requirements__icon" />
             <span class="requirements__body">
               <span class="d-block text-body-2">
                 {{ r.text }}
               </span>
               <span class="d-block text-caption text-medium-emphasis">
-                {{ STATUS[r.status].label }}{{ r.evidence ? `, from ${evidenceText(r.evidence)}` : '' }}
+                <template v-if="isProfileFact(r.text)">Profile fact, not a skill</template>
+                <template v-else>{{ STATUS[r.status].label }}{{ r.evidence ? `, from ${evidenceText(r.evidence)}` : '' }}</template>
               </span>
             </span>
-            <v-icon v-if="r.status !== 'have'" icon="mdi-chevron-right" size="18" class="requirements__go" />
+            <v-icon v-if="tappable(r)" icon="mdi-chevron-right" size="18" class="requirements__go" />
           </component>
         </div>
       </template>

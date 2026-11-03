@@ -12,10 +12,14 @@ import { scrubDashes } from './apply/text'
 // question chat.
 
 export const MEMORY_LIMITS = {
-  /** The server must start answering within this long. */
-  connectMs: 4000,
+  /**
+   * The server must start answering within this long. The laptop daemon is shared with every
+   * Claude session on it and stalls for several seconds under load, so 4 seconds flipped the
+   * status between reachable and not.
+   */
+  connectMs: 10000,
   /** The whole search (all three requests) must finish within this long. */
-  totalMs: 15000,
+  totalMs: 30000,
   /** Results asked for; the filters below usually keep a handful. */
   fetchLimit: 15,
   /** Characters of one excerpt kept for the chat. */
@@ -51,19 +55,23 @@ export interface MemoryResult {
 
 export type MemorySearch =
   | { available: true; results: MemoryResult[]; found: number; dropped: Record<string, number> }
-  | { available: false; reason: string }
+  /** busy: the server did not answer in time (it is busy or the laptop is asleep), not an error. */
+  | { available: false; reason: string; busy?: boolean }
+
+/** What a timeout means on Devin's laptop: the shared daemon is busy, or the laptop is asleep. */
+export const MEMORY_BUSY = 'your laptop\'s memory server is busy or asleep'
 
 // ── Last check, for Settings ────────────────────────────────
 
-let lastCheck: { at: string; ok: boolean; reason: string | null } | null = null
+let lastCheck: { at: string; ok: boolean; reason: string | null; busy: boolean } | null = null
 
 /** The last time this server process reached (or failed to reach) the memory server. */
 export function memoryLastCheck() {
   return lastCheck
 }
 
-function noteCheck(ok: boolean, reason: string | null) {
-  lastCheck = { at: new Date().toISOString(), ok, reason }
+function noteCheck(ok: boolean, reason: string | null, busy = false) {
+  lastCheck = { at: new Date().toISOString(), ok, reason, busy }
 }
 
 // ── MCP over streamable HTTP ────────────────────────────────
@@ -95,8 +103,8 @@ export function hostHeaderFor(target: MemoryTarget): string | null {
 
 /** A few plain words for why the memory server could not answer. Never includes excerpt text. */
 function reasonFor(e: unknown, timedOut: { connect: boolean; total: boolean }): string {
-  if (timedOut.connect) return `it did not answer within ${MEMORY_LIMITS.connectMs / 1000} seconds`
-  if (timedOut.total) return `the search took longer than ${MEMORY_LIMITS.totalMs / 1000} seconds`
+  // A timeout is not an error: the daemon is busy or the laptop sleeps. It answers again later.
+  if (timedOut.connect || timedOut.total) return MEMORY_BUSY
   if (e instanceof MemoryError) return e.message
   const code = (e as any)?.code ?? (e as any)?.cause?.code
   if (code === 'ECONNREFUSED') return 'nothing is listening at that address'
@@ -278,7 +286,7 @@ function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
  * Runs fn inside a fresh session with the connect and total timeouts, then closes the session.
  * Never throws and never retries: a timeout means "not reachable right now".
  */
-function withSession<T>(target: MemoryTarget, fn: (s: Session) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+function withSession<T>(target: MemoryTarget, fn: (s: Session) => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string; busy: boolean }> {
   return oneAtATime(async () => {
     const timedOut = { connect: false, total: false }
     const total = new AbortController()
@@ -295,8 +303,10 @@ function withSession<T>(target: MemoryTarget, fn: (s: Session) => Promise<T>): P
     }
     catch (e) {
       const reason = reasonFor(e, timedOut)
-      noteCheck(false, reason)
-      return { ok: false as const, reason }
+      const busy = timedOut.connect || timedOut.total
+      if (busy) console.info(`[memory] no answer within ${timedOut.connect ? `${MEMORY_LIMITS.connectMs / 1000} seconds of connecting` : `${MEMORY_LIMITS.totalMs / 1000} seconds in all`}`)
+      noteCheck(false, reason, busy)
+      return { ok: false as const, reason, busy }
     }
     finally {
       clearTimeout(timer)
@@ -596,7 +606,7 @@ export async function searchMemory(target: string | MemoryTarget, queries: strin
     const { kept, dropped } = filterMemoryResults([...byText.values()], { question: opts.question })
     return { found: all.length, kept, dropped }
   })
-  if (!out.ok) return { available: false, reason: out.reason }
+  if (!out.ok) return { available: false, reason: out.reason, busy: out.busy }
   const results = out.value.kept.map(({ rawExcerpt: _raw, ...r }) => r)
   const value: MemorySearch = { available: true, results, found: out.value.found, dropped: out.value.dropped }
   remember(key, value)
@@ -604,11 +614,11 @@ export async function searchMemory(target: string | MemoryTarget, queries: strin
 }
 
 /** Opens a session and closes it: is the memory server there? Never throws. */
-export async function pingMemory(target: string | MemoryTarget): Promise<{ ok: boolean; reason: string | null }> {
+export async function pingMemory(target: string | MemoryTarget): Promise<{ ok: boolean; reason: string | null; busy?: boolean }> {
   const t = toTarget(target)
   if (!t.url) return { ok: false, reason: 'memory is off' }
   const out = await withSession(t, async () => true)
-  return out.ok ? { ok: true, reason: null } : { ok: false, reason: out.reason }
+  return out.ok ? { ok: true, reason: null } : { ok: false, reason: out.reason, busy: out.busy }
 }
 
 /** NUXT_MEMORY_MCP_URL, or an empty string when the feature is off. */
@@ -623,7 +633,7 @@ export function memoryTarget(): MemoryTarget {
 
 /** One log line with counts only, never excerpt text or the query. */
 export function memoryLogLine(what: string, search: MemorySearch): string {
-  if (!search.available) return `[memory] ${what}: not reachable (${search.reason})`
+  if (!search.available) return `[memory] ${what}: ${search.busy ? 'busy or asleep' : `not reachable (${search.reason})`}`
   const dropped = Object.entries(search.dropped).map(([k, v]) => `${v} ${k}`).join(', ')
   return `[memory] ${what}: ${search.found} found, ${search.results.length} kept${dropped ? ` (dropped: ${dropped})` : ''}`
 }

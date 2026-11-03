@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { aiStructured } from '../ai'
 import type { KnowledgeEntry } from '../knowledge'
-import { numbersIn, scrubDashes, unsupportedNumbers } from './text'
+import { numbersIn, rewriteProblem, scrubDashes, unsupportedNumbers } from './text'
 
 // The evidence check every generated line goes through before it can reach an employer:
 // resume summary sentences and bullets, cover letter sentences, and free-text form answers.
@@ -61,6 +61,7 @@ Plain enthusiasm or intent ("I would like to bring this to your team") is not a 
 Numbers must match the source exactly. "Over 6 years" is supported by "6+ years". "8 years" is not.
 
 For each unsupported line, write a rewrite that keeps only the supported facts and adds nothing new, in the line's own voice (a first-person line stays in first person), or set rewrite to null when nothing supported remains.
+A rewrite replaces only its own line: one sentence at most for a one-sentence line, and never a copy of another line's text.
 Never use an em dash or an en dash in a rewrite.
 Return one check for every line id, in order.`
 
@@ -179,8 +180,18 @@ export async function verifyClaims(
     if (!c) return { id: line.id, original: line.text, final: null, status: 'dropped', evidence: [], problem: 'The checker did not return a verdict for this line' }
     const failed = c.supported ? groundCheck(line, c, g) : null
     if (c.supported && !failed) return { id: line.id, original: line.text, final: line.text, status: 'supported', evidence: evidenceOf(c), problem: null }
-    const rewrite = c.rewrite?.trim() ? scrubDashes(c.rewrite.trim()) : null
-    return { id: line.id, original: line.text, final: rewrite, status: rewrite ? 'rewritten' : 'dropped', evidence: evidenceOf(c), problem: failed ?? c.problem }
+    const proposed = c.rewrite?.trim() ? scrubDashes(c.rewrite.trim()) : null
+    const copied = proposed ? rewriteProblem(line.text, proposed, lines.filter(l => l.id !== line.id).map(l => l.text)) : null
+    const rewrite = copied ? null : proposed
+    const problem = failed ?? c.problem
+    return {
+      id: line.id,
+      original: line.text,
+      final: rewrite,
+      status: rewrite ? 'rewritten' : 'dropped',
+      evidence: evidenceOf(c),
+      problem: copied ? `${asSentence(problem ?? 'Unsupported')} ${copied}` : problem,
+    }
   })
 
   // A rewrite is new text, so it gets the same check, model and grounding, before it is kept.

@@ -8,6 +8,8 @@ const props = defineProps<{
   item: ReviewItem
   approving: boolean
   refreshing: boolean
+  /** Where the card shows the questions approve waits on: "below the skills" on desktop, "above" on a phone. */
+  questionsPlace?: string
 }>()
 
 const emit = defineEmits<{
@@ -15,6 +17,8 @@ const emit = defineEmits<{
   reject: []
   /** Open the card's Demo project section and scroll to it. */
   showDemo: []
+  /** Scroll the questions approve waits on into view and focus the first one. */
+  showQuestions: []
 }>()
 
 const blocking = computed(() => props.item.openQuestions.filter(q => q.blocking).length)
@@ -28,12 +32,16 @@ const prepareFailed = computed(() => isManual.value && /^prepare_failed/.test(pr
 // off) can try the automated submit again; the server reuses the original approve decision.
 const canRetryManual = computed(() => isManual.value && !prepareFailed.value && props.item.submission?.method === 'manual')
 const demoWillPublish = computed(() => props.item.demo?.status === 'built')
-/** Approve will publish the demo: say which one, and how its tests went, beside the button, with a way to check it first. */
+/**
+ * Approve will publish the demo: say which one, and how its tests went, beside the button, with a
+ * way to check it first. A demo that cannot publish (no GitHub token) says so instead of "to publish".
+ */
 const demoLine = computed(() => {
   const d = props.item.demo
   if (!d || !demoWillPublish.value || isRetry.value || !CAN_APPROVE.includes(props.item.status)) return null
   const tests = d.testsPassed === true ? 'tests passed' : d.testsPassed === false ? 'tests failed' : 'tests not run'
-  return { id: d.id, title: d.title, tests, failed: d.testsPassed === false }
+  const lead = demoBlocked.value ? 'Demo (cannot be published: the GitHub token is not set)' : 'Demo to publish'
+  return { id: d.id, title: d.title, tests, failed: d.testsPassed === false, lead, blocked: !!demoBlocked.value }
 })
 
 const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item.approveEffect?.submit === 'manual' && !props.item.isSandbox ? 'Approve' : 'Approve and submit'))
@@ -46,7 +54,7 @@ const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item
 const blockedReasons = computed<string[]>(() => {
   const status = props.item.status
   const out: string[] = []
-  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} above to unlock approve.`)
+  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} ${props.questionsPlace ?? 'above'} to unlock approve.`)
   else if (status === 'needs_input') {
     out.push(props.refreshing ? 'Updating the form answers with what you said.' : 'Answers saved. Approve unlocks when the pipeline marks this ready.')
   }
@@ -90,14 +98,16 @@ const consequence = computed(() => {
   <div v-if="canApprove || canReject || isManual || item.status === 'needs_input'" class="bar" :class="{ 'bar--demo': demoLine }">
     <p v-if="demoLine" class="bar__demo">
       <v-icon icon="mdi-source-repository" size="15" class="bar__demo-icon" />
-      <span class="bar__demo-text">Demo to publish: <strong>{{ demoLine.title }}</strong>, <span :class="{ 'text-error': demoLine.failed }">{{ demoLine.tests }}</span>.</span>
+      <span class="bar__demo-text" :class="{ 'text-warning': demoLine.blocked }">{{ demoLine.lead }}: <strong>{{ demoLine.title }}</strong>, <span :class="{ 'text-error': demoLine.failed }">{{ demoLine.tests }}</span>.</span>
       <button type="button" class="bar__demo-link" @click="emit('showDemo')">Check it here</button>
       <NuxtLink :to="`/demos/${demoLine.id}`" class="bar__demo-link">Demo page</NuxtLink>
     </p>
     <div v-if="blockedReasons.length" class="bar__line bar__reasons" role="status">
-      <p v-for="r in blockedReasons" :key="r" class="bar__reason">
+      <p v-for="(r, i) in blockedReasons" :key="r" class="bar__reason">
         <v-icon icon="mdi-lock-outline" size="15" class="bar__reason-icon" />
-        <span>{{ r }}</span>
+        <!-- The questions line is a button: it scrolls the question into view and focuses it. -->
+        <button v-if="i === 0 && blocking > 0" type="button" class="bar__reason-go" @click="emit('showQuestions')">{{ r }}</button>
+        <span v-else>{{ r }}</span>
       </p>
     </div>
     <p v-else class="bar__line" :class="{ 'bar__line--long': hasShortForm, 'bar__line--open': detailsOpen }" role="status" :id="`bar-detail-${item.applicationId}`">
@@ -191,11 +201,10 @@ const consequence = computed(() => {
     color: rgb(var(--v-theme-primary));
   }
 
+  // Wraps rather than cutting the demo's name: a demo that cannot publish has a longer lead.
   &__demo-text {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
 
   &__demo-link {
@@ -237,6 +246,24 @@ const consequence = computed(() => {
   &__reason-icon {
     flex-shrink: 0;
     margin-top: 1px;
+  }
+
+  &__reason-go {
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    background: none;
+    border: 0;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+
+    &:focus-visible {
+      outline: 2px solid rgb(var(--v-theme-warning));
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
   }
 
   &__buttons {

@@ -565,6 +565,12 @@ export interface SkillClaimPreview {
   }
   /** The knowledge base entry on this subject today. Null when the knowledge base says nothing. */
   knowledge: SkillClaimKnowledge | null
+  /**
+   * Set when an answered question or the knowledge base already answers this skill but this job's
+   * requirement still shows the status from before (the job was scored before the answer). "Use my
+   * answer" applies it to this job (POST /api/jobs/:id/claim/apply) without asking again.
+   */
+  knownAnswer?: { answer: SkillClaimAnswer; from: 'question' | 'knowledge' } | null
   /** Sandbox jobs never write the knowledge base and never create questions. */
   isSandbox: boolean
   /** The application whose resume and cover letter an answer can make stale. Null without one. */
@@ -587,7 +593,14 @@ export interface SkillClaimRequest {
   example?: string | null
 }
 
-/** POST /api/jobs/:id/claim result. */
+/** POST /api/jobs/:id/claim/apply body: apply the answer already given (SkillClaimPreview.knownAnswer) to this job. */
+export interface SkillClaimApplyRequest {
+  text: string
+  source: SkillClaimSource
+  applicationId?: number | null
+}
+
+/** POST /api/jobs/:id/claim result (and POST /api/jobs/:id/claim/apply, with question null). */
 export interface SkillClaimResult {
   /** False on a sandbox job: nothing was written and no question was created. */
   written: boolean

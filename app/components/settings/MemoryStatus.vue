@@ -12,6 +12,7 @@ const checking = ref(false)
 const LABEL: Record<MemoryStatus['state'], { text: string; color: string; icon: string }> = {
   off: { text: 'Off', color: 'default', icon: 'mdi-power' },
   reachable: { text: 'Reachable', color: 'success', icon: 'mdi-check-circle-outline' },
+  busy: { text: 'Busy or asleep', color: 'default', icon: 'mdi-sleep' },
   unreachable: { text: 'Not reachable', color: 'warning', icon: 'mdi-lan-disconnect' },
   unknown: { text: 'Not checked yet', color: 'default', icon: 'mdi-help-circle-outline' },
 }
@@ -75,6 +76,9 @@ onMounted(load)
     <p v-if="error" class="text-body-2 text-error mt-2 mb-0" role="alert">{{ error }}</p>
     <p v-else-if="status?.state === 'off'" class="memory-status__text">
       Set NUXT_MEMORY_MCP_URL to your memory server's address to look up leads from your past Claude sessions on open questions.
+    </p>
+    <p v-else-if="status?.state === 'busy'" class="memory-status__text">
+      Your laptop's memory server is busy or asleep. It did not answer in time, which happens while other Claude sessions use it or the laptop sleeps. Check now tries again. Leads already saved on questions still show, and the chat works without new ones.
     </p>
     <p v-else-if="status?.state === 'unreachable'" class="memory-status__text">
       {{ status.reason ? `${status.reason.charAt(0).toUpperCase()}${status.reason.slice(1)}.` : 'It did not answer.' }}

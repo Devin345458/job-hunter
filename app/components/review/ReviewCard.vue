@@ -2,7 +2,7 @@
 import type { ReviewItem, SkillClaimSource } from '#shared/types/pipeline'
 import { answerText, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
 import { demoStopKind, fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
-import { skillSets } from '#shared/utils/skill-sets'
+import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
@@ -73,7 +73,39 @@ function questionHint(id: number) {
 
 /** Matched and Missing from the posting requirements, so the chips agree with the checklist (shared/utils/skill-sets.ts). */
 const sets = computed(() => skillSets(props.item.requirements, props.item.score))
-const hasSkills = computed(() => !!props.item.score || sets.value.matched.length > 0 || sets.value.missing.length > 0)
+const hasSkills = computed(() => !!props.item.score || sets.value.matched.length > 0 || sets.value.missing.length > 0 || sets.value.soft.length > 0)
+
+/**
+ * Soft skills that are not matched, as one neutral line under the Missing chips: never red and
+ * never in the Missing count. The open questions that ask about them, when there are any, are
+ * one tap away under Optional questions (or Answer first).
+ */
+const softLine = computed(() => {
+  const soft = sets.value.soft
+  if (!soft.length) return null
+  const asked = questionsAbout(soft, props.item.openQuestions)
+  return { count: softSkillsCount(soft.length), names: soft.map(c => c.name).join('; '), asked: asked.length, blocking: asked.some(q => q.blocking) }
+})
+const optionalSection = ref<{ show: () => void } | null>(null)
+function showSoftQuestions() {
+  if (softLine.value?.blocking) showQuestions()
+  else optionalSection.value?.show()
+}
+
+/** The block of questions approve waits on; the decision bar's lock line scrolls here. */
+const answerFirst = ref<HTMLElement | null>(null)
+const answerFirstAfter = ref<HTMLElement | null>(null)
+/** Where Answer first sits, for the bar's wording: under the skills on desktop, above the score on a phone. */
+const questionsPlace = computed(() => (props.fill ? 'below the skills' : 'above'))
+function showQuestions() {
+  const el = props.fill ? answerFirstAfter.value : answerFirst.value
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // The first answer control, not the "Ask about this" chat button at the top of the question.
+  const controls = [...el.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])')]
+  const control = controls.find(c => !c.closest('.qs__ask, .qs__top')) ?? controls[0]
+  control?.focus({ preventScroll: true })
+}
 
 const skillsSummary = computed(() => {
   if (!hasSkills.value) return 'Not scored yet'
@@ -211,7 +243,7 @@ const letterPreview = computed(() => {
         <ReviewProgress :item="item" :preparing="preparing" @prepare="emit('prepare')" />
       </div>
 
-      <div v-if="!fill && showAnswerFirst" class="rc__block rc__block--first">
+      <div v-if="!fill && showAnswerFirst" ref="answerFirst" class="rc__block rc__block--first">
         <h2 class="rc__h">Answer first</h2>
         <ReviewQuestions
           :questions="blockingQs"
@@ -251,7 +283,7 @@ const letterPreview = computed(() => {
             :dense="fill"
           />
         </div>
-        <!-- Desktop: Matched count and every Missing skill, full width under the score and pay. -->
+        <!-- Desktop: Matched count and every Missing skill by its whole name, full width under the score and pay. -->
         <div v-if="fill && hasSkills" class="rc__strip">
           <p class="rc__strip-head">
             <span><span class="rc__strip-label">Matched</span> <span class="tabular">{{ sets.matched.length }}</span></span>
@@ -271,18 +303,25 @@ const letterPreview = computed(() => {
               prepend-icon="mdi-minus"
               append-icon="mdi-chevron-right"
               class="rc__strip-chip"
-              :title="c.text !== c.label ? c.text : undefined"
-              :aria-label="`${c.label}: say whether you have it`"
+              :title="c.text !== c.name ? c.text : undefined"
+              :aria-label="`${c.name}: say whether you have it`"
               @click="openClaim(c.text, c.source)"
             >
-              {{ c.label }}
+              {{ c.name }}
             </v-chip>
           </div>
+          <p v-if="softLine" class="rc__strip-soft">
+            <v-icon icon="mdi-account-voice" size="14" class="rc__strip-soft-icon" />
+            <span>
+              {{ softLine.count }}, not counted as missing: {{ softLine.names }}.
+              <button v-if="softLine.asked" type="button" class="rc__strip-soft-link" @click="showSoftQuestions">{{ softLine.asked === 1 ? 'Asked as a question' : 'Asked as questions' }}</button>
+            </span>
+          </p>
         </div>
       </div>
 
       <!-- Desktop: the verdict and every Missing skill above, then the questions approve waits on. -->
-      <div v-if="fill && showAnswerFirst" class="rc__block rc__block--after">
+      <div v-if="fill && showAnswerFirst" ref="answerFirstAfter" class="rc__block rc__block--after">
         <h2 class="rc__h">Answer first</h2>
         <ReviewQuestions
           :questions="blockingQs"
@@ -349,6 +388,7 @@ const letterPreview = computed(() => {
 
         <ReviewSection
           v-if="optionalQs.length"
+          ref="optionalSection"
           title="Optional questions"
           icon="mdi-comment-question-outline"
           :summary="`${optionalQs.length} open, answering improves future matches`"
@@ -384,9 +424,11 @@ const letterPreview = computed(() => {
       :item="item"
       :approving="approving"
       :refreshing="refreshing"
+      :questions-place="questionsPlace"
       @approve="emit('approve')"
       @reject="emit('reject')"
       @show-demo="demoSection?.show()"
+      @show-questions="showQuestions"
     />
   </article>
 </template>
@@ -530,9 +572,10 @@ const letterPreview = computed(() => {
   }
 
   // Desktop: the Matched count and every Missing skill across the card's width, under the score and pay.
+  // Whole names (never cut) need the room, so the strip is tighter than the panels above it.
   &__strip {
     grid-column: 1 / -1;
-    padding: 12px 16px 14px;
+    padding: 10px 14px 10px;
     border-radius: 8px;
     background: rgb(var(--v-theme-background));
     border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
@@ -543,7 +586,7 @@ const letterPreview = computed(() => {
     flex-wrap: wrap;
     align-items: baseline;
     gap: 4px 16px;
-    margin: 0 0 8px;
+    margin: 0 0 6px;
     font-size: 0.875rem;
   }
 
@@ -559,15 +602,47 @@ const letterPreview = computed(() => {
   &__strip-chips {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px 6px;
 
+    // A whole name wraps inside its chip (two lines for a very long one), never an ellipsis.
     :deep(.v-chip) {
       max-width: 100%;
       height: auto;
-      min-height: 26px;
-      padding-top: 2px;
-      padding-bottom: 2px;
+      min-height: 22px;
+      padding-top: 1px;
+      padding-bottom: 1px;
+      line-height: 1.3;
       white-space: normal;
+    }
+  }
+
+  // Soft skills: one neutral line, never red chips, never in the Missing count.
+  &__strip-soft {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 8px 0 0;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__strip-soft-icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+
+  &__strip-soft-link {
+    font: inherit;
+    font-weight: 600;
+    color: rgb(var(--v-theme-primary));
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline;
     }
   }
 
@@ -679,7 +754,8 @@ const letterPreview = computed(() => {
   }
 
   &--fill &__verdict {
-    margin-top: 14px;
+    margin-top: 10px;
+    gap: 10px;
   }
 }
 

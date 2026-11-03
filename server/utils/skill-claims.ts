@@ -21,6 +21,7 @@ import {
   askQuestion,
   EXAMPLE_MAX_CHARS,
   findKnowledgeEntry,
+  isNegativeKnowledge,
   knowledgeCovers,
   knowledgeTargetFor,
   knowsQuestionText,
@@ -326,15 +327,51 @@ function toKnowledge(e: KnowledgeEntry | null): SkillClaimKnowledge | null {
   return e ? { category: e.category, key: e.key, value: e.value } : null
 }
 
+const YN_ANSWER: Record<YesNo, SkillClaimAnswer> = { yes: 'Yes', some: 'Some experience', no: 'No' }
+
+/** What an existing knowledge base entry says, as a yes or no answer: "Does not know X" is No, "Some experience with X" is Some experience, any other entry is Yes. */
+function knowledgeYesNo(e: KnowledgeEntry): YesNo {
+  if (isNegativeKnowledge(e.value)) return 'no'
+  if (/^\s*(?:some experience with|has partly done)\b/i.test(e.value)) return 'some'
+  return 'yes'
+}
+
+/** The status a requirement takes after an answer: a Have is never lowered (the rule applyToRequirements and applyAnswerToOpenJobs follow). */
+function statusAfter(status: Requirement['status'], yn: YesNo): Requirement['status'] {
+  if (yn === 'yes' && status !== 'have') return 'have'
+  if (yn === 'some' && (status === 'unknown' || status === 'lack')) return 'partial'
+  if (yn === 'no' && (status === 'unknown' || status === 'partial')) return 'lack'
+  return status
+}
+
+/**
+ * The answer Devin already gave on this subject (an answered question first, else the knowledge
+ * base entry), when this job's requirement still shows a status from before it: the job was scored
+ * before the answer. Null when nothing answers it, or when the requirement already agrees.
+ */
+function knownAnswerFor(ctx: SkillClaimContext, entry: KnowledgeEntry | null): { yn: YesNo; from: 'question' | 'knowledge' } | null {
+  const req = ctx.requirement
+  if (!req || ctx.isSandbox) return null
+  const q = ctx.question
+  const fromQuestion = q?.status === 'answered' && q.answer ? parseYesNo(q.answer) : null
+  const known = fromQuestion ? { yn: fromQuestion, from: 'question' as const } : entry ? { yn: knowledgeYesNo(entry), from: 'knowledge' as const } : null
+  if (!known) return null
+  // A chip linked to a requirement only takes a Yes or Some experience (applyToRequirements' "linked" rule).
+  if (ctx.source === 'missing' && known.yn === 'no') return null
+  return statusAfter(req.status, known.yn) !== req.status ? known : null
+}
+
 export function skillClaimPreview(ctx: SkillClaimContext): SkillClaimPreview {
   const q = ctx.question
+  const entry = claimKnowledge(ctx)
+  const known = knownAnswerFor(ctx, entry)
   // A long name that is the requirement minus a few lead words ("A record of building ...") needs no second copy.
   const repeats = !!ctx.requirement && (norm(ctx.requirement.text) === norm(ctx.name)
     || (ctx.name.split(' ').length > 6 && norm(ctx.requirement.text).includes(norm(ctx.name))))
   const requirement = ctx.requirement && !repeats ? ctx.requirement.text : null
   return {
     name: ctx.name,
-    why: ctx.why,
+    why: known ? 'This job was scored before your answer.' : ctx.why,
     requirement,
     question: {
       id: q?.id ?? null,
@@ -346,10 +383,29 @@ export function skillClaimPreview(ctx: SkillClaimContext): SkillClaimPreview {
       example: q ? questionExample(q) : null,
       repoSuggestion: q && q.status === 'pending' && !ctx.isSandbox ? repoSuggestionsFor([q.id]).get(q.id) ?? null : null,
     },
-    knowledge: toKnowledge(claimKnowledge(ctx)),
+    knowledge: toKnowledge(entry),
+    knownAnswer: known ? { answer: YN_ANSWER[known.yn], from: known.from } : null,
     isSandbox: ctx.isSandbox,
     materials: materials(ctx.app),
   }
+}
+
+/**
+ * "Use my answer": applies the answer Devin already gave (knownAnswerFor) to this job's requirement
+ * statuses, the same way a fresh answer does (applyToRequirements), and to the other open jobs that
+ * name the same skill (applyAnswerToOpenJobs). Nothing is asked and the knowledge base is not
+ * written. The panel then scores this job again (POST /api/jobs/:id/rescore). Sandbox jobs write nothing.
+ */
+export function applyKnownSkillClaim(ctx: SkillClaimContext): SkillClaimResult {
+  if (ctx.isSandbox) return { written: false, question: null, knowledge: null, requirementsChanged: 0 }
+  const entry = claimKnowledge(ctx)
+  const known = knownAnswerFor(ctx, entry)
+  if (!known) throw createError({ statusCode: 409, statusMessage: 'This job already reads your answer, or there is no answer on this skill yet. Reload the page.' })
+  const target = claimTarget(ctx)
+  const knowledge: SkillClaimKnowledge = toKnowledge(entry) ?? { category: target.category, key: target.key, value: ctx.question?.answer ?? '' }
+  const requirementsChanged = applyToRequirements(ctx, known.yn, knowledge)
+  applyAnswerToOpenJobs(ctx.subject, YN_ANSWER[known.yn], `${knowledge.category}/${knowledge.key.trim()}`)
+  return { written: true, question: null, knowledge, requirementsChanged }
 }
 
 /** The existing question, or a new pending one tied to this job and application. Never on a sandbox job. */

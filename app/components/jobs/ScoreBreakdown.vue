@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { plainQuestionRefs, plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
-import { skillSets } from '#shared/utils/skill-sets'
+import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
@@ -23,6 +23,12 @@ const props = defineProps<{
 }>()
 
 const sets = computed(() => skillSets(props.requirements, props.score))
+/** Soft skills that are not matched: one neutral line, never red chips, never in the Missing count. */
+const softLine = computed(() => {
+  const soft = sets.value.soft
+  if (!soft.length) return null
+  return { count: softSkillsCount(soft.length), names: soft.map(c => c.name).join('; '), asked: questionsAbout(soft, props.questions ?? []).length }
+})
 
 // A Missing chip is a button: tapping it opens the skill panel the page hosts.
 const emit = defineEmits<{
@@ -75,12 +81,15 @@ function signed(n: number) {
 
     <v-card-text v-else>
       <div class="score-breakdown__summary">
-        <v-progress-circular :model-value="score.final" :size="88" :width="7" :color="scoreColor(score.final)">
+        <v-progress-circular :model-value="score.final" :size="88" :width="7" :color="scoreColor(score.final)" :aria-label="`Match score ${score.final} out of 100`">
           <span class="text-h5 font-weight-bold">{{ score.final }}</span>
         </v-progress-circular>
         <div>
           <div class="text-body-1 font-weight-medium" :class="`text-${scoreColor(score.final)}`">
             {{ RECOMMENDATION_LABELS[score.recommendation] }}
+          </div>
+          <div class="text-caption text-medium-emphasis">
+            match score, out of 100
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ skillsWeight }}% skills, {{ compWeight }}% compensation{{ score.learned.total ? `, ${signed(score.learned.total)} learned` : '' }}
@@ -106,14 +115,24 @@ function signed(n: number) {
         <p class="text-body-2 score-breakdown__reasoning">
           {{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}
         </p>
+        <!-- Matched and Missing from skill-sets, the same as the review card: Partly counts as matched, with a half circle. -->
         <div v-if="sets.matched.length" class="score-breakdown__chips">
-          <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Has</span>
-          <v-chip v-for="c in sets.matched" :key="c.text" size="x-small" variant="tonal" color="success" :title="c.text !== c.label ? c.text : undefined">
+          <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Matched {{ sets.matched.length }}</span>
+          <v-chip
+            v-for="c in sets.matched"
+            :key="c.text"
+            size="x-small"
+            variant="tonal"
+            color="success"
+            :prepend-icon="c.status === 'partial' ? 'mdi-circle-half-full' : undefined"
+            :title="c.text !== c.label ? c.text : undefined"
+            :aria-label="c.status === 'partial' ? `${c.label}, partly` : undefined"
+          >
             {{ c.label }}
           </v-chip>
         </div>
         <div v-if="sets.missing.length" class="score-breakdown__chips">
-          <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing</span>
+          <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing {{ sets.missing.length }}</span>
           <v-chip
             v-for="c in sets.missing"
             :key="c.text"
@@ -133,6 +152,9 @@ function signed(n: number) {
         </div>
         <p v-if="sets.missing.length" class="text-caption text-medium-emphasis score-breakdown__hint">
           Tap a missing one you have to say so.
+        </p>
+        <p v-if="softLine" class="text-caption text-medium-emphasis score-breakdown__hint">
+          {{ softLine.count }}, not counted as missing: {{ softLine.names }}.<template v-if="softLine.asked"> <NuxtLink to="/questions" class="score-breakdown__link">{{ softLine.asked === 1 ? 'Asked as a question' : 'Asked as questions' }}</NuxtLink></template>
         </p>
       </section>
 
@@ -292,6 +314,16 @@ function signed(n: number) {
 
   &__hint {
     margin: 6px 0 0;
+  }
+
+  &__link {
+    font-weight: 600;
+    color: rgb(var(--v-theme-primary));
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
   }
 
   &__facts {

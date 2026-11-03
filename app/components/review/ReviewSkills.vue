@@ -2,7 +2,8 @@
 import type { Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { knowledgeSource } from '~/composables/review/format'
 import { plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
-import { skillSets } from '#shared/utils/skill-sets'
+import { skillSets, softSkillsCount } from '#shared/utils/skill-sets'
+import { isProfileFact } from '#shared/utils/requirement-kinds'
 
 // Skills fit: matched and missing skills first, then each posting requirement with what the
 // knowledge base says about it. The chips come from the requirements (skillSets), so they never
@@ -33,13 +34,15 @@ function chipName(s: string) {
 
 const sorted = computed(() => [...props.requirements].sort((a, b) => Number(b.mustHave) - Number(a.mustHave)))
 const sets = computed(() => skillSets(props.requirements, props.score))
+/** Work authorization, location, and degree lines are profile facts: listed, but not a skill to claim. */
+const tappable = (r: Requirement) => r.status !== 'have' && !isProfileFact(r.text)
 </script>
 
 <template>
   <div class="skills">
     <p v-if="score?.skills.reasoning" class="skills__reason">{{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}</p>
 
-    <div v-if="score || sets.matched.length || sets.missing.length" class="skills__sets">
+    <div v-if="score || sets.matched.length || sets.missing.length || sets.soft.length" class="skills__sets">
       <div class="skills__set">
         <div class="skills__set-label">Matched <span class="tabular">{{ sets.matched.length }}</span></div>
         <div class="skills__chips">
@@ -70,27 +73,29 @@ const sets = computed(() => skillSets(props.requirements, props.score))
           <span v-if="!sets.missing.length" class="skills__none">Nothing missing</span>
         </div>
         <p v-if="sets.missing.length" class="skills__hint">Tap one you have to say so.</p>
+        <p v-if="sets.soft.length" class="skills__hint">{{ softSkillsCount(sets.soft.length) }}, not counted as missing: {{ sets.soft.map(c => c.name).join('; ') }}.</p>
       </div>
     </div>
 
     <ul v-if="sorted.length" class="skills__reqs" aria-label="Posting requirements">
       <li v-for="(r, i) in sorted" :key="i" class="skills__req">
         <component
-          :is="r.status === 'have' ? 'div' : 'button'"
-          :type="r.status === 'have' ? undefined : 'button'"
+          :is="tappable(r) ? 'button' : 'div'"
+          :type="tappable(r) ? 'button' : undefined"
           class="skills__req-row"
-          :class="{ 'skills__req-row--tap': r.status !== 'have' }"
-          :aria-label="r.status === 'have' ? undefined : `${r.text}. ${STATUS[r.status].label}. Say whether you have it`"
-          @click="r.status !== 'have' && emit('claim', r.text, 'requirement')"
+          :class="{ 'skills__req-row--tap': tappable(r) }"
+          :aria-label="tappable(r) ? `${r.text}. ${STATUS[r.status].label}. Say whether you have it` : undefined"
+          @click="tappable(r) && emit('claim', r.text, 'requirement')"
         >
-          <v-icon :icon="STATUS[r.status].icon" :color="STATUS[r.status].color" size="16" class="skills__req-icon" />
+          <v-icon :icon="isProfileFact(r.text) ? 'mdi-card-account-details-outline' : STATUS[r.status].icon" :color="isProfileFact(r.text) ? 'secondary' : STATUS[r.status].color" size="16" class="skills__req-icon" />
           <span class="skills__req-body">
             <span class="skills__req-text">{{ r.text }}</span>
-            <span class="skills__req-meta">
+            <span v-if="isProfileFact(r.text)" class="skills__req-meta">{{ r.mustHave ? 'Must have' : 'Nice to have' }} · Profile fact, not a skill</span>
+            <span v-else class="skills__req-meta">
               {{ r.mustHave ? 'Must have' : 'Nice to have' }} · {{ STATUS[r.status].label }}{{ r.evidence ? ` · knowledge base: ${knowledgeSource(r.evidence)}` : '' }}
             </span>
           </span>
-          <v-icon v-if="r.status !== 'have'" icon="mdi-chevron-right" size="18" class="skills__req-go" />
+          <v-icon v-if="tappable(r)" icon="mdi-chevron-right" size="18" class="skills__req-go" />
         </component>
       </li>
     </ul>

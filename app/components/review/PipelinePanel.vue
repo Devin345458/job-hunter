@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
+import { DAILY_STEPS, PIPELINE_SCHEDULE_TEXT, type DailyStep } from '#shared/utils/schedule'
 import type { PipelineRunView } from '#shared/types/pipeline'
 import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsText } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
@@ -11,17 +11,21 @@ const health = usePipelineHealth()
 const snackbar = useSnackbar()
 
 interface TaskDef { id: string; label: string; detail: string; usesAi: boolean }
+const STEP_DEFS: Record<DailyStep, Omit<TaskDef, 'id'>> = {
+  'repos:index': { label: 'Index GitHub commits', detail: 'Reads your own commits in the repos switched on under GitHub evidence. Nothing is sent to Claude.', usesAi: false },
+  'learn:daily': { label: 'Learn from decisions', detail: 'Turns approve and reject reasons into scoring rules.', usesAi: false },
+  'jobs:search': { label: 'Search listings', detail: 'Pulls new postings from every active search.', usesAi: false },
+  'jobs:enrich': { label: 'Read postings', detail: 'Fetches full postings, apply links, pay, and benefits.', usesAi: true },
+  'jobs:match': { label: 'Score matches', detail: 'Scores skills and pay against your floor.', usesAi: true },
+  'applications:prepare': { label: 'Prepare applications', detail: 'Tailors the resume, writes the letter, fills the form without submitting.', usesAi: true },
+  'demos:build': { label: 'Build demo projects', detail: 'Builds and tests demos for gaps. Nothing is published until you approve.', usesAi: true },
+  'repos:suggest': { label: 'Suggest answers from GitHub', detail: 'Checks open skill and experience questions against your commits. Nothing is answered until you tap Use this and Save.', usesAi: true },
+  'memory:leads': { label: 'Leads from your Claude sessions', detail: 'Searches your laptop\'s memory for leads on open questions. Skipped when it is not reachable.', usesAi: false },
+}
+/** The full run, then every step in the order the daily run runs them (DAILY_STEPS). */
 const TASKS: TaskDef[] = [
   { id: 'pipeline:daily', label: 'Full run', detail: `Every step below, in order. This is what runs ${PIPELINE_SCHEDULE_TEXT}.`, usesAi: true },
-  { id: 'repos:index', label: 'Index GitHub commits', detail: 'Reads your own commits in the repos switched on under GitHub evidence. Nothing is sent to Claude.', usesAi: false },
-  { id: 'learn:daily', label: 'Learn from decisions', detail: 'Turns approve and reject reasons into scoring rules.', usesAi: false },
-  { id: 'memory:leads', label: 'Leads from your Claude sessions', detail: 'Searches your laptop\'s memory for leads on open questions. Skipped when it is not reachable.', usesAi: false },
-  { id: 'jobs:search', label: 'Search listings', detail: 'Pulls new postings from every active search.', usesAi: false },
-  { id: 'jobs:enrich', label: 'Read postings', detail: 'Fetches full postings, apply links, pay, and benefits.', usesAi: true },
-  { id: 'jobs:match', label: 'Score matches', detail: 'Scores skills and pay against your floor.', usesAi: true },
-  { id: 'applications:prepare', label: 'Prepare applications', detail: 'Tailors the resume, writes the letter, fills the form without submitting.', usesAi: true },
-  { id: 'demos:build', label: 'Build demo projects', detail: 'Builds and tests demos for gaps. Nothing is published until you approve.', usesAi: true },
-  { id: 'repos:suggest', label: 'Suggest answers from GitHub', detail: 'Checks open skill and experience questions against your commits. Nothing is answered until you tap Use this and Save.', usesAi: true },
+  ...DAILY_STEPS.map(id => ({ id, ...STEP_DEFS[id] })),
 ]
 
 const runs = computed<PipelineRunView[]>(() => health.runs.value?.runs ?? [])

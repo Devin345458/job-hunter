@@ -47,10 +47,16 @@ const loadError = ref<string | null>(null)
 const level = ref<SkillClaimAnswer | null>(null)
 const exampleOpen = ref(false)
 const exampleText = ref('')
-const saving = ref<'save' | 'without' | 'no' | null>(null)
+const saving = ref<'save' | 'without' | 'no' | 'known' | null>(null)
 const saveError = ref<string | null>(null)
 const result = ref<SkillClaimResult | null>(null)
 const savedAnswer = ref<SkillClaimAnswer | null>(null)
+
+/** "Use my answer" applied the answer already given, instead of a new one. */
+const appliedKnown = ref(false)
+/** With a known answer, the question stays folded until "Change my answer". */
+const changing = ref(false)
+const knownAnswer = computed(() => (preview.value && !preview.value.isSandbox ? preview.value.knownAnswer ?? null : null))
 
 const rescore = ref<'idle' | 'running' | 'done' | 'failed'>('idle')
 const rescoreResult = ref<JobRescoreResult | null>(null)
@@ -74,6 +80,8 @@ function reset() {
   saveError.value = null
   result.value = null
   savedAnswer.value = null
+  appliedKnown.value = false
+  changing.value = false
   rescore.value = 'idle'
   rescoreResult.value = null
   rescoreError.value = null
@@ -167,6 +175,37 @@ async function save(answer: SkillClaimAnswer, example: string | undefined, actio
   }
   catch (e: any) {
     if (mine === session) saveError.value = errorText(e, 'Could not save the answer')
+  }
+  finally {
+    if (mine === session) saving.value = null
+  }
+}
+
+/** "Use my answer": this job takes the answer already given, then Claude scores it again. Nothing is asked. */
+async function useKnownAnswer() {
+  const t = props.target
+  const known = knownAnswer.value
+  if (!t || !known || busy.value) return
+  const mine = session
+  saving.value = 'known'
+  saveError.value = null
+  try {
+    const res = await $fetch<SkillClaimResult>(`/api/jobs/${props.jobId}/claim/apply`, {
+      method: 'POST',
+      body: { text: t.text, source: t.source, applicationId: props.applicationId ?? null },
+    })
+    if (mine !== session) return
+    result.value = res
+    savedAnswer.value = known.answer
+    appliedKnown.value = true
+    view.value = 'saved'
+    if (res.written) {
+      emit('changed')
+      runRescore(mine)
+    }
+  }
+  catch (e: any) {
+    if (mine === session) saveError.value = errorText(e, 'Could not apply your answer')
   }
   finally {
     if (mine === session) saving.value = null
@@ -366,8 +405,32 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
             <span>This is a sandbox card. Nothing you answer here is written to your knowledge base, and no question is created.</span>
           </div>
 
+          <!-- Already answered, but this job was scored before the answer: apply it, without asking again. -->
+          <section v-if="view === 'ask' && knownAnswer" class="sc__known" aria-labelledby="sc-known">
+            <p id="sc-known" class="sc__known-text">
+              Your answer: <strong>{{ knownAnswer.answer }}</strong>. Use it for this job and score the job again.
+            </p>
+            <div class="sc__known-actions">
+              <v-btn
+                color="primary"
+                variant="flat"
+                height="44"
+                prepend-icon="mdi-check-decagram-outline"
+                :loading="saving === 'known'"
+                :disabled="busy"
+                @click="useKnownAnswer"
+              >
+                Use my answer
+              </v-btn>
+              <v-btn v-if="!changing" variant="text" height="44" :disabled="busy" @click="changing = true">
+                Change my answer
+              </v-btn>
+            </div>
+            <p v-if="saveError && !changing" class="sc__save-error" role="alert">{{ saveError }}</p>
+          </section>
+
           <!-- The question -->
-          <section v-if="view === 'ask'" class="sc__ask" aria-labelledby="sc-question">
+          <section v-if="view === 'ask' && (!knownAnswer || changing)" class="sc__ask" aria-labelledby="sc-question">
             <h3 id="sc-question" class="sc__question">{{ preview.question.text }}</h3>
             <p v-if="previousAnswer && !preview.isSandbox" class="sc__previous">You answered {{ previousAnswer }} before. A new answer replaces it.</p>
             <!-- Suggested from his own commits. Silent when there is nothing: no evidence is never a No. -->
@@ -458,7 +521,7 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
             <template v-if="result.written">
               <p class="sc__done-title">
                 <v-icon icon="mdi-check-circle-outline" color="success" size="20" />
-                Saved: {{ savedAnswer }}
+                {{ appliedKnown ? `Used your answer for this job: ${savedAnswer}` : `Saved: ${savedAnswer}` }}
               </p>
               <div v-if="result.knowledge" class="sc__kb">
                 <div class="sc__kb-label">Your knowledge base now says</div>
@@ -669,6 +732,25 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
     font-weight: 600;
     line-height: 1.4;
     margin: 0 0 4px;
+  }
+
+  &__known {
+    margin-bottom: 16px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-theme-primary), 0.35);
+    background: rgba(var(--v-theme-primary), 0.06);
+  }
+
+  &__known-text {
+    margin: 0 0 10px;
+    font-size: 0.875rem;
+  }
+
+  &__known-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   &__previous {

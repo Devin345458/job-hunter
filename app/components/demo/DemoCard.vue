@@ -9,8 +9,20 @@ const props = defineProps<{
   jobLabel?: string | null
   /** The Build again request is in flight. */
   rebuilding?: boolean
+  /** The Discard request is in flight. */
+  discarding?: boolean
 }>()
-const emit = defineEmits<{ rebuild: [] }>()
+const emit = defineEmits<{ rebuild: []; discard: [] }>()
+
+/**
+ * A demo the gap analysis no longer plans says "Discard it, or build it anyway", so the card
+ * offers Discard beside Build again, behind the same confirm as the detail page.
+ */
+const canDiscard = computed(() => props.demo.noLongerPlanned && !props.demo.progress && ['proposed', 'built', 'failed'].includes(props.demo.status))
+const discardOpen = ref(false)
+watch(() => props.demo.status, (s) => {
+  if (s === 'discarded') discardOpen.value = false
+})
 
 /** A build the server is running right now reads as building even before the row says so. */
 const shownStatus = computed(() => props.demo.progress ? 'building' as const : props.demo.status)
@@ -95,7 +107,12 @@ const testFacts = computed(() => {
       <v-btn v-if="demo.repoUrl && demo.repoUrl.startsWith('http')" variant="text" height="44" :href="demo.repoUrl" target="_blank" prepend-icon="mdi-open-in-new">
         Repository
       </v-btn>
+      <v-btn v-if="canDiscard" variant="text" color="error" height="44" prepend-icon="mdi-delete-outline" class="demo-card__discard" @click="discardOpen = true">
+        Discard
+      </v-btn>
     </v-card-actions>
+
+    <DemoDiscardDialog v-if="canDiscard" v-model="discardOpen" :loading="discarding" @confirm="emit('discard')" />
   </v-card>
 </template>
 
@@ -139,6 +156,10 @@ const testFacts = computed(() => {
   &__actions {
     flex-wrap: wrap;
     gap: 8px;
+  }
+
+  &__discard {
+    margin-inline-start: auto !important;
   }
 }
 </style>

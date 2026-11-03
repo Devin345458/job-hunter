@@ -6,6 +6,7 @@ import { availableToolchains, primaryLanguage } from './exec'
 import { getAppWithJob, storeGapAnalysis } from './store'
 import { demoLanguageName, noIdeaSentence, noToolchainSentence, oneDemoSentence, tooLargeSentence, wrongLanguageSentence } from './gap-text'
 import { plainQuestionContext } from '#shared/utils/plain-text'
+import { NOT_A_GAP } from '#shared/utils/requirement-kinds'
 
 // Owned by the demo-projects unit. Application prep calls analyzeGaps once per application
 // and stores the result in applications.gap_analysis_json; demos:build refreshes it when a

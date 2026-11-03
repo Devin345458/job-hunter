@@ -6,7 +6,7 @@ import { aiStructured } from './ai'
 import type { KnowledgeEntry } from './knowledge'
 import { htmlToText } from './review'
 import { evidenceReport, joinKeptParagraphs, knowledgeForPrompt, knowledgeText, verifyClaims, type ClaimLine, type ClaimOutcome } from './apply/evidence'
-import { normalizeLabel, periodText, scrubDashes, splitSentences } from './apply/text'
+import { dropRepeats, normalizeLabel, periodText, scrubDashes, splitSentences } from './apply/text'
 
 type JobRow = InferSelectModel<typeof jobs>
 
@@ -169,7 +169,8 @@ ${posting}`,
   const finalOf = (id: string) => evidence.find(o => o.id === id)?.final ?? null
   const stripContext = (s: string) => s.replace(/\s*\(as [^)]*\)\s*$/, '').trim()
 
-  const summary = joinKeptParagraphs([summarySentences], evidence, (_, j) => `S${j + 1}`).join(' ')
+  // dropRepeats is the last guard: a sentence that already appeared is dropped before the resume is stored.
+  const summary = dropRepeats(joinKeptParagraphs([summarySentences], evidence, (_, j) => `S${j + 1}`).join(' '))
     || entries.find(e => e.category === 'profile' && /summary/i.test(e.key))?.value
     || ''
   const verifiedExperience = experience.map((e, i) => {

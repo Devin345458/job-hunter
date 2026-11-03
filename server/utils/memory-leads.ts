@@ -81,6 +81,7 @@ export async function refreshMemoryLeads(log: (msg: string) => void, opts: { for
   const target = memoryTarget()
   if (!target.url) return { checked: 0, note: 'Memory is off (NUXT_MEMORY_MCP_URL is not set), so no leads were looked up.' }
   const ping = await pingMemory(target)
+  if (!ping.ok && ping.busy) return { checked: 0, note: 'Your laptop\'s memory server is busy or asleep, so no leads were looked up. The next run tries again.' }
   if (!ping.ok) return { checked: 0, note: `Your laptop's memory is not reachable right now (${ping.reason}), so no leads were looked up.` }
 
   const db = useDb()
@@ -104,7 +105,9 @@ export async function refreshMemoryLeads(log: (msg: string) => void, opts: { for
     const search = await searchMemory(target, memoryQueries(q), { question: q.question })
     log(memoryLogLine(`question ${q.id}`, search))
     if (!search.available) {
-      note = `Your laptop's memory stopped answering after ${checked} questions (${search.reason}); the rest are checked next time.`
+      note = search.busy
+        ? `Your laptop's memory server got busy or went to sleep after ${checked} questions; the rest are checked next time.`
+        : `Your laptop's memory stopped answering after ${checked} questions (${search.reason}); the rest are checked next time.`
       break
     }
     const leads = toStoredLeads(search.results, q.question, LEAD_LIMITS.perQuestion)
@@ -138,11 +141,13 @@ export function memoryStatus(): MemoryStatus {
     : null
   if (!memoryUrl()) return { state: 'off', checkedAt: null, reason: null, lastLeadsRun }
   const check = memoryLastCheck()
-  if (check) return { state: check.ok ? 'reachable' : 'unreachable', checkedAt: check.at, reason: check.reason, lastLeadsRun }
+  if (check) return { state: check.ok ? 'reachable' : check.busy ? 'busy' : 'unreachable', checkedAt: check.at, reason: check.reason, lastLeadsRun }
   // After a restart, the last leads run is the latest word.
   if (lastLeadsRun && stats) {
-    const down = typeof stats.note === 'string' && /not reachable|stopped answering/.test(stats.note)
-    return { state: down ? 'unreachable' : 'reachable', checkedAt: lastLeadsRun.at, reason: null, lastLeadsRun }
+    const note = typeof stats.note === 'string' ? stats.note : ''
+    const busy = /busy or asleep|got busy/.test(note)
+    const down = /not reachable|stopped answering/.test(note)
+    return { state: busy ? 'busy' : down ? 'unreachable' : 'reachable', checkedAt: lastLeadsRun.at, reason: null, lastLeadsRun }
   }
   return { state: 'unknown', checkedAt: null, reason: null, lastLeadsRun }
 }

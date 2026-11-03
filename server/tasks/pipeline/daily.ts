@@ -1,22 +1,11 @@
 import { runOutcome, runProblems } from '#shared/utils/run-outcome'
+import { DAILY_STEPS } from '#shared/utils/schedule'
 
-// The daily chain. One scheduled entry runs every step in order, so a slow search
-// never races the match step the way two fixed cron times would. repos:index runs first so the
-// day's questions can be checked against fresh commits. repos:suggest runs last so the questions
-// learn:daily and applications:prepare asked in this run get a suggestion too.
-export const DAILY_STEPS = [
-  'repos:index',
-  'learn:daily',
-  'jobs:search',
-  'jobs:enrich',
-  'jobs:match',
-  'applications:prepare',
-  'demos:build',
-  // Last, so the questions this run asked (match and prepare create them) get suggestions and leads.
-  'repos:suggest',
-  // Best effort: off or unreachable memory records a plain note and the chain carries on.
-  'memory:leads',
-] as const
+// The daily chain. One scheduled entry runs every step in order, so a slow search never races
+// the match step the way two fixed cron times would. The order lives in shared/utils/schedule.ts
+// (DAILY_STEPS) so Settings lists the steps in the order they run; it is re-exported here for the
+// API routes that import it from this file.
+export { DAILY_STEPS }
 
 /**
  * What one chained step reported back to the daily run: its status and, when it finished, the

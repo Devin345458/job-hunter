@@ -40,6 +40,8 @@ export interface ChatMessage {
 
 /** Said once per conversation when the memory server cannot be reached; the chat carries on without it. */
 export const MEMORY_UNREACHABLE = 'Your laptop\'s memory is not reachable right now.'
+/** Said instead when it timed out: the shared daemon is busy or the laptop is asleep, which is not an error. */
+export const MEMORY_BUSY = 'Your laptop\'s memory server is busy or asleep, so this reply has no new leads from it.'
 
 const THREADS_KEY = 'job-hunter:question-chat:threads:v1'
 const SELECTED_KEY = 'job-hunter:question-chat:selected:v1'
@@ -104,8 +106,8 @@ export function useQuestionChat() {
         body: { questionId, messages },
       })
       if (res.ok) {
-        if (res.memory === 'unreachable' && !(threads.value[key] ?? []).some(m => m.kind === 'memory_unreachable')) {
-          push(key, { id: newId(), role: 'notice', kind: 'memory_unreachable', content: MEMORY_UNREACHABLE })
+        if ((res.memory === 'unreachable' || res.memory === 'busy') && !(threads.value[key] ?? []).some(m => m.kind === 'memory_unreachable')) {
+          push(key, { id: newId(), role: 'notice', kind: 'memory_unreachable', content: res.memory === 'busy' ? MEMORY_BUSY : MEMORY_UNREACHABLE })
         }
         push(key, { id: newId(), role: 'assistant', content: res.reply, suggestedAnswer: res.suggestedAnswer, draft: res.draft, memory: res.memory ?? null })
       }
