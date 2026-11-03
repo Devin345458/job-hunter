@@ -78,11 +78,20 @@ export async function runMatchOne(payload: Record<string, unknown>): Promise<Sco
   return await scoreOne(job, { entries: loadKnowledge(), prefs: loadCompPreferences(), fresh }, itemLog(MATCH_ONE_TASK, jobId))
 }
 
-/** When the pipeline_runs row of the step being run started (its first attempt, when resumed). */
+/**
+ * Where the step's counts start: for a step of a full run, when the full run started; otherwise
+ * when the step's own pipeline_runs row started (its first attempt, when resumed). A job's score
+ * runs as soon as the job is read (claimNext takes scores before reads), so most scores of a full
+ * run end while the Read postings step still waits on reads, and reads that search queued end
+ * during the search step. Counting from the full run's start keeps them in its counts. Only one
+ * full run runs at a time and each step waits for its own items, so no earlier run's items count.
+ */
 function stepStartedAt(): string {
   const ctx = currentQueueContext()
   const item = ctx ? getItem(ctx.item.id) : null
-  const run = item?.pipelineRunId ? useDb().select({ at: pipelineRuns.startedAt }).from(pipelineRuns).where(eq(pipelineRuns.id, item.pipelineRunId)).get() : null
+  const parent = item?.parentId ? getItem(item.parentId) : null
+  const runId = parent?.pipelineRunId ?? item?.pipelineRunId
+  const run = runId ? useDb().select({ at: pipelineRuns.startedAt }).from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get() : null
   return run?.at ?? sqlTime()
 }
 
