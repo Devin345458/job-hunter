@@ -105,6 +105,10 @@ async function runSearch() {
   searching.value = true
   try {
     const result = await triggerSearch()
+    if (result.queued) {
+      snackbar.info(result.message, { text: 'View queue', handler: () => router.push('/settings#pipeline') })
+      return
+    }
     // New postings are not scored until the daily run, so under Best match they would sit at
     // the end. Show them first.
     if (result.jobsFound > 0 && sort.value !== 'date') sort.value = 'date'

@@ -254,14 +254,20 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
   }
 }
 
-/** Re-runs only the form dry run, with the stored resume and cover letter. */
-export async function refillApplicationForm(applicationId: number): Promise<PrepareOutcome> {
+/** Throws the 400 or 404 a refill of this application would end in: no link, or an account-only ATS. */
+export function assertRefillable(applicationId: number) {
   const db = useDb()
   const app = db.select().from(applications).where(eq(applications.id, applicationId)).get()
   if (!app) throw createError({ statusCode: 404, statusMessage: 'Application not found' })
   const job = db.select().from(jobs).where(eq(jobs.id, app.jobId)).get()!
   if (!job.applyUrl) throw createError({ statusCode: 400, statusMessage: 'The job has no application link' })
   if (requiresAccount(job.atsType)) throw createError({ statusCode: 400, statusMessage: 'This ATS requires an account; there is no form to fill' })
+  return { app, job }
+}
+
+/** Re-runs only the form dry run, with the stored resume and cover letter. */
+export async function refillApplicationForm(applicationId: number): Promise<PrepareOutcome> {
+  const { app, job } = assertRefillable(applicationId)
   if (inFlight.has(app.id)) return { applicationId: app.id, status: app.status }
   inFlight.add(app.id)
   try {
@@ -325,19 +331,25 @@ export function pickJobsToPrepare(threshold = DEFAULT_MATCH_THRESHOLD, limit = M
 
 /**
  * Applications to prepare again before new ones: failed preparations under the attempt limit,
- * and rows left in preparing by a crash or restart.
+ * and rows left in preparing by a crash or restart. Every preparation runs as a queue item, so a
+ * row in preparing that no queued or running item holds (Prepare again, Refill, approve) and that
+ * is not being prepared in this process was cut off: a run resumed after a restart continues it at
+ * once. Rows that predate the queue still wait STALE_PREPARING_MS.
  */
 export function pickRetries(limit = MAX_PER_RUN): AppRow[] {
   const now = Date.now()
+  const held = activeIds([PREPARE_ONE_TASK, REFILL_TASK, APPROVE_TASK], 'applicationId')
+  const queueStarted = firstQueueItemAt()
   return useDb().select().from(applications)
     .where(inArray(applications.status, ['needs_manual', 'preparing']))
     .all()
     .filter((a) => {
-      if (inFlight.has(a.id)) return false
+      if (inFlight.has(a.id) || held.has(a.id)) return false
       if (a.status === 'needs_manual') {
         const n = prepareAttempts(a.formError)
         return n > 0 && n < MAX_PREPARE_ATTEMPTS
       }
+      if (queueStarted && a.updatedAt >= queueStarted) return true
       const updated = Date.parse(`${a.updatedAt.replace(' ', 'T')}Z`)
       return Number.isFinite(updated) && now - updated > STALE_PREPARING_MS
     })

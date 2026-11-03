@@ -2,9 +2,12 @@ import { and, eq } from 'drizzle-orm'
 import { decisions } from '~~/server/db/schema'
 
 // The only route that leads to a submission. It records the decision, marks the
-// application approved, and starts the approval run in the background.
-// Retrying is allowed after a failed submit, and after an approved application came back as
-// "submit by hand" (captcha, or real submits switched off), reusing the original decision.
+// application approved, and adds the approval (publish the demo, submit the form) to the job
+// queue as applications:approve. A restart in the middle never runs it again; the application
+// then says to check the employer's site (server/utils/approval.ts, markApprovalInterrupted).
+// Retrying is allowed after a failed or interrupted submit, and after an approved application
+// came back as "submit by hand" (captcha, or real submits switched off), reusing the original
+// decision.
 export default defineEventHandler(async (event) => {
   const id = Number(getRouterParam(event, 'id'))
   const item = Number.isInteger(id) ? getReviewItem(id) : null
@@ -15,6 +18,9 @@ export default defineEventHandler(async (event) => {
   if (item.status !== 'proposed' && !retry) {
     throw createError({ statusCode: 409, statusMessage: `Only proposed applications can be approved (this one is ${item.status})` })
   }
+  if (activeItem([APPROVE_TASK, PREPARE_ONE_TASK, REFILL_TASK], 'applicationId', id)) {
+    throw createError({ statusCode: 409, statusMessage: 'This application is already in the queue' })
+  }
   const blocking = item.openQuestions.filter(q => q.blocking)
   if (blocking.length > 0) {
     throw createError({ statusCode: 409, statusMessage: `Answer ${blocking.length} open ${blocking.length === 1 ? 'question' : 'questions'} first` })
@@ -24,10 +30,13 @@ export default defineEventHandler(async (event) => {
   }
   if (!retry) {
     const decision = recordDecision(id, 'approve', null, null)
-    setApplicationStatus(id, 'approved', 'Approved, starting', { decidedAt: nowSql() })
+    setApplicationStatus(id, 'approved', 'Approved, waiting in the queue to submit', { decidedAt: nowSql() })
     await onDecision(decision.id).catch(e => console.error('[learning] onDecision failed', e))
   }
-  void runApproval(id)
+  else {
+    setApplicationStatus(id, 'approved', 'Approved again, waiting in the queue to submit')
+  }
+  enqueue(APPROVE_TASK, { applicationId: id }, { trigger: 'manual', existing: () => activeItem(APPROVE_TASK, 'applicationId', id) })
   setResponseStatus(event, 202)
   return getReviewItem(id)
 })

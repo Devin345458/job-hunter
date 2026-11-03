@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { DAILY_STEPS, PIPELINE_SCHEDULE_TEXT, type DailyStep } from '#shared/utils/schedule'
-import type { PipelineRunView } from '#shared/types/pipeline'
+import type { PipelineRunView, QueueItemView } from '#shared/types/pipeline'
 import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsText } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
+import { queueItemColor, queueItemText } from '#shared/utils/queue-text'
 
-// Settings > Pipeline: start any step by hand, watch it run, and read the recent run log.
-// Every trigger goes through POST /api/pipeline/run, which starts the task in the background.
+// Settings > Pipeline: start any step by hand, watch it wait in the job queue and run, and read
+// the recent run log. Every trigger goes through POST /api/pipeline/run, which adds the task to
+// the queue; the worker runs one item at a time, oldest first.
 const health = usePipelineHealth()
 const snackbar = useSnackbar()
 
@@ -38,35 +40,72 @@ function latest(task: string) {
   return runs.value.find(r => r.task === task) ?? null
 }
 
+const queue = computed(() => health.runs.value?.queue ?? null)
+const queueRunning = computed<QueueItemView[]>(() => queue.value?.running ?? [])
+const queueWaiting = computed<QueueItemView[]>(() => queue.value?.waiting ?? [])
+const queueDaily = computed<QueueItemView[]>(() => queue.value?.runs ?? [])
+const queueRecent = computed<QueueItemView[]>(() => queue.value?.recent ?? [])
+const queueEmpty = computed(() => !queueRunning.value.length && !queueWaiting.value.length && !queueDaily.value.length)
+
+/** 'running' or 'waiting' when this task is in the queue (a full run counts while its steps run). */
+function queued(task: string): 'running' | 'waiting' | null {
+  if (task === 'pipeline:daily' && queueDaily.value.length) return 'running'
+  if (queueRunning.value.some(i => i.task === task && !i.parentId)) return 'running'
+  if (queueWaiting.value.some(i => i.task === task && !i.parentId)) return 'waiting'
+  return null
+}
+
+/** "Full run under way, step 4 of 9, started today 9:00 AM by the schedule". */
+function dailyText(run: QueueItemView): string {
+  const step = [...queueRunning.value, ...queueWaiting.value].find(i => i.parentId === run.id)?.step
+  return `Full run under way${step ? `, step ${step.index} of ${step.total}` : ''}, started ${clockTime(run.startedAt)} by ${TRIGGER[run.trigger] ?? run.trigger}`
+}
+
 const starting = ref<string | null>(null)
+const canceling = ref<number | null>(null)
 const watching = ref(false)
 
 async function start(task: TaskDef) {
   starting.value = task.id
   try {
-    await $fetch('/api/pipeline/run', { method: 'POST', body: { task: task.id } })
-    snackbar.info(`Started: ${task.label}`)
+    const res = await $fetch<{ queued: boolean }>('/api/pipeline/run', { method: 'POST', body: { task: task.id } })
+    snackbar.info(res.queued ? `Queued: ${task.label}` : `${task.label} is already in the queue`)
     await follow()
   }
   catch (e: any) {
-    snackbar.notify(`${task.label} did not start: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+    snackbar.notify(`${task.label} was not queued: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
   }
   finally {
     starting.value = null
   }
 }
 
-/** Refresh the run log until nothing is running, fast at first, for up to two minutes. */
+async function cancel(item: QueueItemView) {
+  canceling.value = item.id
+  try {
+    await $fetch(`/api/pipeline/queue/${item.id}/cancel`, { method: 'POST' })
+    snackbar.info(item.task === 'pipeline:daily' ? 'The rest of the full run is canceled. The step running now finishes.' : `Canceled: ${item.label}`)
+    await health.refresh(30)
+  }
+  catch (e: any) {
+    snackbar.notify(`Not canceled: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+  }
+  finally {
+    canceling.value = null
+  }
+}
+
+/** Refresh the queue and the run log while anything waits or runs, for up to 30 minutes. */
 async function follow() {
   if (watching.value) return
   watching.value = true
   try {
-    const until = Date.now() + 120_000
+    const until = Date.now() + 30 * 60_000
     await new Promise(r => setTimeout(r, 600))
-    await health.refresh()
-    while (Date.now() < until && runs.value.some(r => r.status === 'running')) {
-      await new Promise(r => setTimeout(r, 2000))
-      await health.refresh()
+    await health.refresh(30)
+    while (Date.now() < until && (health.queueBusy.value || runs.value.some(r => r.status === 'running'))) {
+      await new Promise(r => setTimeout(r, 2500))
+      await health.refresh(30)
     }
   }
   finally {
@@ -92,7 +131,7 @@ const heartbeat = computed(() => health.runs.value?.lastHeartbeat ?? null)
 
 onMounted(() => {
   health.refresh(30).then(() => {
-    if (runs.value.some(r => r.status === 'running')) follow()
+    if (health.queueBusy.value || runs.value.some(r => r.status === 'running')) follow()
   })
 })
 </script>
@@ -131,14 +170,44 @@ onMounted(() => {
           :variant="t.id === 'pipeline:daily' ? 'flat' : 'tonal'"
           height="44"
           min-width="96"
-          :prepend-icon="latest(t.id)?.status === 'running' ? undefined : 'mdi-play'"
-          :loading="starting === t.id || latest(t.id)?.status === 'running'"
-          :disabled="starting !== null"
-          :aria-label="`Run ${t.label}`"
+          :prepend-icon="queued(t.id) ? undefined : 'mdi-play'"
+          :loading="starting === t.id || queued(t.id) === 'running'"
+          :disabled="starting !== null || queued(t.id) !== null"
+          :aria-label="queued(t.id) === 'waiting' ? `${t.label} is queued` : `Run ${t.label}`"
           @click="start(t)"
         >
-          Run
+          {{ queued(t.id) === 'waiting' ? 'Queued' : 'Run' }}
         </v-btn>
+      </li>
+    </ul>
+
+    <div class="pp__log-head">
+      <h3 class="pp__h">Queue</h3>
+    </div>
+    <p class="pp__queue-help">
+      The worker runs one item at a time, oldest first. A restart or deploy pauses it; the item it was on starts again when the server is back.
+    </p>
+    <p v-if="queueEmpty" class="pp__empty">Nothing is waiting.</p>
+    <ul v-else class="pp__queue" aria-label="Job queue">
+      <li v-for="i in queueDaily" :key="`run-${i.id}`" class="pp__qitem">
+        <span class="pp__dot bg-info" />
+        <span class="pp__qtext">{{ dailyText(i) }}</span>
+        <v-btn v-if="i.cancelable" variant="text" size="small" height="36" :loading="canceling === i.id" @click="cancel(i)">Cancel the rest</v-btn>
+      </li>
+      <li v-for="i in queueRunning" :key="i.id" class="pp__qitem">
+        <span class="pp__dot" :class="`bg-${queueItemColor(i)}`" />
+        <span class="pp__qtext pp__qtext--strong">{{ queueItemText(i) }}</span>
+      </li>
+      <li v-for="i in queueWaiting" :key="i.id" class="pp__qitem">
+        <span class="pp__dot" :class="`bg-${queueItemColor(i)}`" />
+        <span class="pp__qtext">{{ queueItemText(i) }}</span>
+        <v-btn v-if="i.cancelable && !i.parentId" variant="text" size="small" height="36" :loading="canceling === i.id" @click="cancel(i)">Cancel</v-btn>
+      </li>
+    </ul>
+    <ul v-if="queueRecent.length" class="pp__queue pp__queue--recent" aria-label="Interrupted, failed, and resumed items today">
+      <li v-for="i in queueRecent" :key="`recent-${i.id}`" class="pp__qitem">
+        <span class="pp__dot" :class="`bg-${queueItemColor(i)}`" />
+        <span class="pp__qtext" :class="{ 'text-error': i.status === 'interrupted' }">{{ queueItemText(i) }}</span>
       </li>
     </ul>
 
@@ -355,6 +424,44 @@ onMounted(() => {
   &__problems {
     margin: 4px 0;
     padding-left: 18px;
+  }
+
+  &__queue-help {
+    margin: 0 0 6px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__queue {
+    list-style: none;
+    margin: 0 0 4px;
+    padding: 0;
+
+    &--recent {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
+    }
+  }
+
+  &__qitem {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 36px;
+    font-size: 0.8125rem;
+  }
+
+  &__qtext {
+    flex: 1;
+    min-width: 0;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    overflow-wrap: anywhere;
+
+    &--strong {
+      font-weight: 600;
+      color: rgb(var(--v-theme-on-surface));
+    }
   }
 
   &__run-when,

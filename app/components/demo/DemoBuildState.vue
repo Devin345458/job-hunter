@@ -29,8 +29,8 @@ function elapsed(startedAt: string) {
     <div v-if="running" class="demo-build-state__running" role="status" aria-live="polite">
       <div class="demo-build-state__running-head text-body-2">
         <v-progress-circular indeterminate size="16" width="2" color="info" />
-        <span class="font-weight-medium">{{ running.phase === 'preview' ? 'Tests pass. Building the preview' : 'Building with Claude' }}</span>
-        <span v-if="running.phase === 'build' && running.maxTurns" class="text-medium-emphasis">Turn {{ running.turn }} of {{ running.maxTurns }}</span>
+        <span class="font-weight-medium">{{ running.waiting || (running.phase === 'preview' ? 'Tests pass. Building the preview' : 'Building with Claude') }}</span>
+        <span v-if="!running.waiting && running.phase === 'build' && running.maxTurns" class="text-medium-emphasis">Turn {{ running.turn }} of {{ running.maxTurns }}</span>
         <span class="text-medium-emphasis">{{ elapsed(running.startedAt) }}</span>
       </div>
       <v-progress-linear

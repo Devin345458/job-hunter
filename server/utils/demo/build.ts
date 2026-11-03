@@ -386,13 +386,13 @@ const GITIGNORE: Record<string, string> = {
 }
 
 /**
- * For POST /api/demos/:id/rebuild: builds one demo in the background and records the build in
- * pipeline_runs as demos:rebuild (trigger manual), with the demo and how the build ended, so the
- * run log explains a build started from the demo page. withRun calls buildDemo before its first
- * await, so isDemoBuilding() is true once this returns, as the route relies on.
+ * The demos:rebuild queue item (POST /api/demos/:id/rebuild queues it): builds one demo and
+ * records the build in pipeline_runs as demos:rebuild (trigger manual), with the demo and how the
+ * build ended, so the run log explains a build started from the demo page. Resumed after a
+ * restart, it starts the build over in a fresh directory.
  */
-export function startRebuild(demoId: number): void {
-  void withRun('demos:rebuild', 'manual', async (log) => {
+export function runDemoRebuild(demoId: number) {
+  return withRun('demos:rebuild', 'manual', async (log) => {
     const done = await buildDemo(demoId, log)
     const cost = Number(demoCost(demoId).toFixed(4))
     const built = done.status === 'built'
@@ -411,8 +411,8 @@ export function startRebuild(demoId: number): void {
 /**
  * Build one demo. Returns the final row; never throws for a build failure (the row is
  * marked failed with the reason), only for programming errors before the build starts.
- * Everything up to the first await runs synchronously, so a caller that does not await it
- * (POST /api/demos/:id/rebuild) can rely on isDemoBuilding() being true once it returns.
+ * Everything up to the first await runs synchronously, so isDemoBuilding() is true once it
+ * returns its promise.
  */
 export async function buildDemo(demoId: number, runLog: (msg: string) => void = () => {}): Promise<DemoRow> {
   const demo = getDemo(demoId)
@@ -602,6 +602,9 @@ export function readCardFacts(demo: DemoRow): { highlights: Array<{ title: strin
 
 // ── The demos:build task body ───────────────────────────────
 
+/** The error a demo left in building by a restart gets. demos:build builds such a demo again first. */
+export const BUILD_INTERRUPTED = 'The build was interrupted (the server restarted while it ran)'
+
 export interface DemoRunOptions {
   /** Only this application. Also allows rebuilding after a failed demo. */
   applicationId?: number
@@ -614,9 +617,10 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
   const db = useDb()
   const max = Math.max(0, Number(opts.max ?? useRuntimeConfig().demoMaxPerRun) || 1)
 
-  // A demo left in building by a server restart is not building anymore.
+  // A demo left in building by a server restart is not building anymore. It is built again first,
+  // like a build the budget stopped: a restart says nothing about the demo.
   const stuck = db.select().from(demoProjects).where(eq(demoProjects.status, 'building')).all().filter(d => !isDemoBuilding(d.id))
-  for (const d of stuck) updateDemo(d.id, { status: 'failed', error: 'The build was interrupted (the server restarted while it ran)' })
+  for (const d of stuck) updateDemo(d.id, { status: 'failed', error: BUILD_INTERRUPTED })
 
   const apps = db.select({ app: applications, job: jobs })
     .from(applications)
@@ -648,15 +652,15 @@ export async function runDemoBuilds(opts: DemoRunOptions, log: (msg: string) => 
     stats.recommended++
     const existing = demosForApplication(app.id)
     const active = existing.find(d => ['building', 'built', 'publishing', 'published'].includes(d.status))
-    // A demo that failed only because Claude was out of credit or over the daily budget is
-    // retried automatically; any other failure waits for a manual retry.
-    const failedBefore = existing.find(d => d.status === 'failed' && !isBudgetFailure(d.error))
+    // A demo that failed only because Claude was out of credit or over the daily budget, or because
+    // a restart cut the build off, is retried automatically; any other failure waits for a manual retry.
+    const failedBefore = existing.find(d => d.status === 'failed' && !isBudgetFailure(d.error) && d.error !== BUILD_INTERRUPTED)
     if (active || (failedBefore && !opts.retryFailed && !opts.applicationId)) {
       stats.skipped++
       continue
     }
     // A build stopped by the account (credit, key, budget) was promised a retry: it goes first.
-    const retry = existing.some(d => d.status === 'failed' && isBudgetFailure(d.error))
+    const retry = existing.some(d => d.status === 'failed' && (isBudgetFailure(d.error) || d.error === BUILD_INTERRUPTED))
     queue.push({ applicationId: app.id, item, retry })
   }
   // Stable: retries first, then the rest by match score as the query ordered them.

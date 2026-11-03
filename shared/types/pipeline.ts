@@ -427,6 +427,8 @@ export interface DemoBuildProgress {
   maxTurns: number
   /** The newest build log lines, oldest first. */
   recent: string[]
+  /** Set while the build or preview waits in the job queue: "Waiting in the queue behind Read postings". */
+  waiting?: string | null
 }
 
 export interface DemoTestCase {
@@ -521,6 +523,47 @@ export interface PipelineRunView {
   outcome?: 'running' | 'succeeded' | 'partial' | 'failed' | 'skipped'
   /** What went wrong, a few plain words each ("38 failed", "stopped: out of credit"). Empty when clean. */
   problems?: string[]
+}
+
+// ── Job queue (task_queue, migration 0005) ─────────────────
+
+/** queued: waiting; running: claimed by a worker (a daily run stays running while its steps run); interrupted: an approval stopped by a restart, never run again. */
+export type QueueStatus = 'queued' | 'running' | 'done' | 'failed' | 'canceled' | 'interrupted'
+
+export interface QueueItemView {
+  id: number
+  task: string
+  /** "Score matches", "Prepare an application: Acme". */
+  label: string
+  trigger: string
+  status: QueueStatus
+  /** Times a restart interrupted it. */
+  attempts: number
+  createdAt: string
+  startedAt: string | null
+  finishedAt: string | null
+  /** Its pipeline_runs row, once it started. */
+  runId: number | null
+  /** The daily run it is a step of. */
+  parentId: number | null
+  /** Its place in a daily run: step 4 of 9. */
+  step: { index: number; total: number } | null
+  /** "Resumed after a restart". */
+  note: string | null
+  /** One plain sentence. */
+  error: string | null
+  cancelable: boolean
+}
+
+export interface QueueSnapshot {
+  /** Items a worker is running now (a daily run shows its running step, not itself). */
+  running: QueueItemView[]
+  /** Items waiting, in the order they will run. */
+  waiting: QueueItemView[]
+  /** Daily runs working through their steps. */
+  runs: QueueItemView[]
+  /** The last day's interrupted, failed, canceled, and resumed items, newest first. */
+  recent: QueueItemView[]
 }
 
 // ── Skill claims: tap a Missing skill to say you have it ─────

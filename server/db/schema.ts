@@ -332,3 +332,31 @@ export const appSettings = sqliteTable('app_settings', {
   valueJson: text('value_json').notNull(),
   updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
 })
+
+// Durable job queue (migration 0005). Every scheduled run, manual trigger, and background job is a
+// row here; a worker process claims the oldest due row with a lease and runs it. A daily run is a
+// parent row with one child row per step. Times are UTC, 'YYYY-MM-DD HH:MM:SS' like datetime('now').
+export const taskQueue = sqliteTable('task_queue', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  task: text('task').notNull(), // a Nitro task name, or applications:approve, demos:rebuild, ...
+  payloadJson: text('payload_json'),
+  trigger: text('trigger').notNull().default('manual'), // schedule, manual, chained
+  status: text('status').notNull().default('queued'), // QueueStatus in shared/types/pipeline.ts
+  attempts: integer('attempts').notNull().default(0),
+  maxAttempts: integer('max_attempts').notNull().default(3),
+  leaseOwner: text('lease_owner'),
+  leaseExpiresAt: text('lease_expires_at'),
+  runAfter: text('run_after').notNull().default(sql`(datetime('now'))`),
+  createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  startedAt: text('started_at'),
+  finishedAt: text('finished_at'),
+  pipelineRunId: integer('pipeline_run_id'),
+  parentId: integer('parent_id'),
+  lastError: text('last_error'), // one plain sentence (plainError)
+  note: text('note'), // "Resumed after a restart", shown beside the item
+  progressJson: text('progress_json'), // live progress the worker shares with the web process
+  resultJson: text('result_json'), // what the item returned, for callers that wait on it
+}, (table) => [
+  index('task_queue_status_run_after_idx').on(table.status, table.runAfter),
+  index('task_queue_parent_idx').on(table.parentId),
+])

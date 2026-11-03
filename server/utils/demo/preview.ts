@@ -286,15 +286,15 @@ export async function refreshPreview(demoId: number, log: (line: string) => void
 }
 
 /**
- * For POST /api/demos/:id/preview: claims the preview now (so a second click gets a 409), builds in
- * the background, and records the run in pipeline_runs as demos:preview (trigger manual) with the
- * demo and the preview's outcome, so the run log explains a preview started from the demo page.
- * withRun calls the build before its first await, so the claim still happens before this returns.
+ * The demos:preview queue item (POST /api/demos/:id/preview queues it): builds the preview and
+ * records the run in pipeline_runs as demos:preview (trigger manual) with the demo and the
+ * preview's outcome, so the run log explains a preview started from the demo page.
  */
-export function startPreview(demoId: number): void {
+export function runDemoPreview(demoId: number) {
   const lines: string[] = []
   const demo = getDemo(demoId)
-  void withRun('demos:preview', 'manual', async (log) => {
+  if (!demo) throw new Error(`Demo ${demoId} not found`)
+  return withRun('demos:preview', 'manual', async (log) => {
     try {
       const { shape, record } = await refreshPreview(demoId, (line) => {
         lines.push(line)

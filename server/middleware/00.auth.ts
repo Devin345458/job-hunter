@@ -23,6 +23,12 @@ const PUBLIC_EXACT = new Set(['/login', '/favicon.ico', '/robots.txt'])
 export default defineEventHandler(async (event) => {
   const path = getRequestURL(event).pathname
 
+  // A worker process (NUXT_ROLE=worker) runs the schedule and the job queue and serves nothing but
+  // its health check; the web process serves the app.
+  if (!servesApp() && path !== '/api/health') {
+    throw createError({ statusCode: 404, statusMessage: 'This process is the job worker; it serves only /api/health' })
+  }
+
   // Cloudflare tells us the visitor's scheme. Keep the session cookie on https only.
   const visitor = getRequestHeader(event, 'cf-visitor')
   if (visitor && visitor.includes('"http"') && !import.meta.dev) {

@@ -395,7 +395,8 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
   const eligible = found ? rows.filter(r => hasCommits(r) && !r.isFork && !r.included) : []
   const progress = findProgress()
   const findView: RepoFindView = {
-    running: !!progress,
+    // Waiting in the job queue counts as running: the search is on its way.
+    running: !!progress || !!activeItem(FIND_TASK),
     progress,
     at: find?.at || null,
     seconds: find?.at ? find.seconds : null,

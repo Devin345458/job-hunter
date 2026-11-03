@@ -121,13 +121,9 @@ export default defineNuxtConfig({
     experimental: {
       tasks: true,
     },
-    // Cron times are in the container's TZ (America/Chicago, set in the Dockerfile).
-    // One daily chain runs every step in order: learn, search, enrich, match, prepare, demos.
-    scheduledTasks: {
-      // Keep in step with shared/utils/schedule.ts (PIPELINE_CRON), which the screens read.
-      '0 6-21/3 * * *': ['pipeline:daily'],
-      '*/15 * * * *': ['system:heartbeat'],
-    },
+    // No scheduledTasks: server/plugins/queue.ts adds pipeline:daily (PIPELINE_CRON in
+    // shared/utils/schedule.ts) and the 15 minute heartbeat to the job queue, in the roles that
+    // keep the schedule. Tasks stay enabled because the queue worker runs them with runTask.
     externals: {
       // Playwright resolves its browser binaries and driver files at runtime; bundling breaks that.
       external: ['playwright', 'playwright-core', 'pdfmake', 'pdfkit'],
@@ -167,6 +163,17 @@ export default defineNuxtConfig({
     // 'false' turns off the cron schedule (Orca worktrees set it), so a laptop copy never runs the
     // pipeline on its own; manual runs still work. Production leaves it unset.
     schedulerEnabled: 'true',
+    // Which parts this process runs (NUXT_ROLE, server/utils/role.ts): all (default: web, schedule,
+    // and worker), web (serves the app and adds work to the queue), worker (schedule and worker;
+    // answers only /api/health). One image; a web and a worker container share the data volume.
+    role: 'all',
+    // Queue items the worker runs at once (NUXT_WORKER_CONCURRENCY, 1 to 4). Demo builds and form
+    // fills never run two at a time whatever this says.
+    workerConcurrency: '1',
+    // Test overrides for the schedule (NUXT_PIPELINE_CRON, NUXT_HEARTBEAT_CRON). Empty uses
+    // PIPELINE_CRON and every 15 minutes. Production leaves them unset.
+    pipelineCron: '',
+    heartbeatCron: '',
     // Devin's claude-self-reflect memory server (MCP over streamable HTTP, reached over Tailscale in
     // production). Empty turns the feature off: no leads on question cards, no memory in the chat.
     memoryMcpUrl: '',
