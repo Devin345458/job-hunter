@@ -461,6 +461,9 @@ The section "What the GitHub search found" holds what the app found in Devin's G
 - When "Searched for" is nothing, ask him what to look for.
 - Never set suggestedAnswer from the findings, and never put a finding in a draft until Devin confirms it in his own words in this conversation. A draft then says only what he said about it.`
 
+const GITHUB_ASK_WHAT = `
+Devin asked you to search his GitHub, but nothing in this conversation says what to look for. In one sentence, ask him which skill, technology, or project to look for. Never say you cannot search his GitHub.`
+
 const GITHUB_UNAVAILABLE = `
 Searching Devin's GitHub is not set up on this server (no GitHub read token and no repos switched on). If he asks you to look in his GitHub, say the search needs a read token (NUXT_GITHUB_READ_TOKENS in Coolify) and repos switched on in Settings, GitHub evidence.`
 
@@ -730,12 +733,15 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   const searchContext = [ctx?.question.subject, ctx?.question.question, latest].filter(Boolean).join('\n')
   const searchLog = (m: string) => console.info(`[question-chat] github: ${m}`)
   let github: GithubChatSearch | null = null
+  /** He asked for a search but nothing says what to look for, so there was none to run. */
+  let askWhat = false
   type ChatOut = { reply: string; suggestedAnswer?: string | null; suggestionEvidence?: string | null; draft?: string | null; githubSearch?: TermSet | null }
   const ask = (githubTool: boolean) => aiStructured(schemaFor(ctx, githubTool), {
     purpose: 'question_chat',
     system: BASE_SYSTEM + extras
       + (githubTool ? githubToolRules(skillQuestion) : '')
       + (github ? GITHUB_RESULT_RULES : '')
+      + (askWhat ? GITHUB_ASK_WHAT : '')
       + (!canSearch ? GITHUB_UNAVAILABLE : ''),
     prompt: buildPrompt(ctx, entries, input.messages, memory.excerpts, github),
     effort: 'low',
@@ -745,6 +751,10 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   try {
     if (canSearch && asksGithub(latest)) {
       github = await githubChatSearch(await chatSearchTerms(ctx, input.messages), searchContext, searchLog)
+      if (!github.terms.length) {
+        github = null
+        askWhat = true
+      }
     }
     let out = await ask(canSearch && !github)
     if (!github && hasTerms(out.githubSearch)) {

@@ -66,7 +66,7 @@ function escapeEre(s: string) {
 }
 
 /** Terms that are plain short words match as whole words, so "Go" never matches "good". */
-function termPattern(t: string) {
+export function termPattern(t: string) {
   const e = escapeJs(t)
   return /^[a-z0-9]{1,4}$/i.test(t) ? `(?<![A-Za-z0-9])${e}(?![A-Za-z0-9])` : e
 }
@@ -81,6 +81,8 @@ const GENERIC_CODE = new Set([
   'json', 'error', 'errors', 'index', 'util', 'utils', 'helper', 'helpers', 'service', 'services', 'store', 'state', 'app',
   'auth', 'token', 'tokens', 'endpoint', 'endpoints', 'route', 'routes', 'controller', 'component', 'components', 'event',
   'events', 'value', 'values', 'item', 'items', 'list', 'update', 'create', 'delete', 'save', 'load', 'build', 'deploy',
+  'image', 'images', 'container', 'containers', 'volume', 'volumes', 'network', 'compose', 'setup', 'install', 'version',
+  'subscription', 'subscriptions', 'fragment', 'fragments', 'directive', 'directives', 'field', 'fields', 'object', 'objects',
 ])
 
 export function cleanTerms(t: TermSet, max = 12): TermSet {

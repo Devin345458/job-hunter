@@ -1,8 +1,8 @@
-import { eq } from 'drizzle-orm'
-import { repoSources } from '../../db/schema'
+import { eq, inArray } from 'drizzle-orm'
+import { repoCommits, repoSources } from '../../db/schema'
 import type { GithubChatSearch, GithubFinding } from '#shared/types/repos'
 import { CodeSearchLimited, GithubApiError, isSsoError, isSsoSkip, readTokens, searchCode, tokenAccounts, tokenAt } from './github'
-import { cleanTerms, searchEvidence, withSignatures, type TermSet } from './search'
+import { cleanTerms, pathMatches, searchEvidence, termPattern, withSignatures, type TermSet } from './search'
 import { currentIdentities, storedFind, type RepoRow } from './settings'
 
 // The question chat's GitHub search (server/utils/question-chat.ts), in order:
@@ -70,7 +70,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   const indexed = included.filter(r => r.indexedAt)
 
   const result: GithubChatSearch = {
-    terms: [...terms.code, ...terms.paths, ...terms.packages].slice(0, 16),
+    terms: [...new Map([...terms.code, ...terms.paths, ...terms.packages].map(t => [t.toLowerCase(), t])).values()].slice(0, 16),
     findings: [],
     pathSummaries: [],
     coverage: {
@@ -85,7 +85,15 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
 
   // 1 and 2: his indexed commits (messages and paths) and the repo facts.
   const evidence = await searchEvidence(terms, log, { diffs: false })
-  const commits: GithubFinding[] = evidence.hits.slice(0, CHAT_SEARCH_LIMITS.commits).map(h => ({
+  // Strongest first, taken in turn from each repo so one busy repo does not fill the list.
+  const byRepo = new Map<string, typeof evidence.hits>()
+  for (const h of evidence.hits) byRepo.set(h.repo, [...(byRepo.get(h.repo) ?? []), h])
+  const shown = interleave([...byRepo.values()]).slice(0, CHAT_SEARCH_LIMITS.commits)
+  const messages = shown.length
+    ? new Map(db.select({ sha: repoCommits.sha, message: repoCommits.message }).from(repoCommits).where(inArray(repoCommits.sha, shown.map(h => h.sha))).all().map(r => [r.sha, r.message] as const))
+    : new Map<string, string>()
+  const textTerms = [...terms.code, ...terms.packages]
+  const commits: GithubFinding[] = shown.map(h => ({
     kind: 'commit',
     repo: h.repo,
     url: h.url,
@@ -93,9 +101,9 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
     date: h.date,
     detail: h.reasons.includes('path') && h.paths.length
       ? `files: ${h.paths.slice(0, 3).join(', ')}${h.paths.length > 3 ? ` and ${h.paths.length - 3} more` : ''}`
-      : 'commit message',
+      : messageMatch(messages.get(h.sha) ?? h.subject, textTerms),
   }))
-  result.pathSummaries = evidence.pathSummaries.map(s => ({ repo: s.repo, commits: s.commits, first: s.first, last: s.last }))
+  result.pathSummaries = pathSummaries(indexed.map(r => r.fullName), terms.paths)
   const dependencies: GithubFinding[] = evidence.dependencies.slice(0, CHAT_SEARCH_LIMITS.dependencies).map(d => ({
     kind: 'dependency',
     repo: d.repo,
@@ -189,6 +197,52 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   return result
 }
 
+/** Which search word a commit message holds, as the panel shows it: 'message has "GraphQL"'. */
+function messageMatch(message: string, words: string[]): string {
+  for (const w of words) {
+    const m = new RegExp(termPattern(w), 'i').exec(message)
+    if (m) return `message has "${m[0]}"`
+  }
+  return 'commit message'
+}
+
+/**
+ * Per repo, how many of his commits change a file matching the path terms, whatever their
+ * messages say, with the matching file names they change most.
+ */
+function pathSummaries(repos: string[], paths: string[]) {
+  if (!paths.length || !repos.length) return []
+  const out: Array<{ repo: string; commits: number; first: string; last: string; files: string[] }> = []
+  const rows = useDb().select({ repo: repoCommits.repo, authoredAt: repoCommits.authoredAt, pathsJson: repoCommits.pathsJson })
+    .from(repoCommits).where(inArray(repoCommits.repo, repos)).all()
+  for (const repo of repos) {
+    let count = 0
+    let first = ''
+    let last = ''
+    const files = new Map<string, number>()
+    for (const r of rows) {
+      if (r.repo !== repo) continue
+      let list: string[] = []
+      try {
+        list = JSON.parse(r.pathsJson ?? '[]')
+      }
+      catch {}
+      const matched = list.filter(p => pathMatches(p, paths))
+      if (!matched.length) continue
+      count++
+      const day = r.authoredAt.slice(0, 10)
+      if (!first || day < first) first = day
+      if (!last || day > last) last = day
+      for (const p of matched) {
+        const name = p.split('/').pop() ?? p
+        files.set(name, (files.get(name) ?? 0) + 1)
+      }
+    }
+    if (count) out.push({ repo, commits: count, first, last, files: [...files.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n]) => n) })
+  }
+  return out.sort((a, b) => b.commits - a.commits)
+}
+
 /**
  * Up to `max` files, taken in turn from each searched word and, within a word, from each repo, so
  * one busy word or repo does not fill the list.
@@ -229,7 +283,7 @@ export function githubPromptSection(s: GithubChatSearch): string {
     lines.push('\nHis own commits (authored by Devin, checked against his emails and logins):')
     commits.forEach((f, i) => lines.push(`[C${i + 1}] ${f.repo} | ${f.date} | ${f.title} | matched: ${f.detail}`))
   }
-  for (const p of s.pathSummaries) lines.push(`${p.repo}: ${p.commits} of his commits change matching files, from ${p.first} to ${p.last}`)
+  for (const p of s.pathSummaries) lines.push(`${p.repo}: ${p.commits} of his commits change ${p.files.join(', ')}, from ${p.first} to ${p.last}`)
   if (files.length) {
     lines.push('\nFiles GitHub code search found in switched-on repos that hold some of his commits. Leads only: someone else may have written them:')
     files.forEach((f, i) => lines.push(`[F${i + 1}] ${f.repo} | ${f.title}${f.detail ? ` | ${f.detail}` : ''}`))

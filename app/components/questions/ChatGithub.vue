@@ -37,7 +37,7 @@ function plural(n: number, one: string, many: string) {
 function meta(f: GithubFinding) {
   const parts = [f.repo]
   if (f.date) parts.push(monthYear(f.date))
-  if (f.kind === 'commit' && f.detail) parts.push(f.detail === 'commit message' ? 'matched in the message' : `matched ${f.detail}`)
+  if (f.kind === 'commit' && f.detail) parts.push(f.detail === 'commit message' ? 'matched in the message' : f.detail.startsWith('files:') ? `changed ${f.detail.slice(7)}` : f.detail)
   if (f.kind === 'dependency' && f.detail) parts.push(`in ${f.detail}`)
   if (f.kind === 'file') {
     if (f.detail) parts.push(f.detail)
@@ -94,7 +94,7 @@ const missingText = computed(() => {
     </p>
 
     <p v-for="p in search.pathSummaries" :key="p.repo" class="chat-github__note">
-      {{ plural(p.commits, 'of your commits', 'of your commits') }} in {{ p.repo }} change matching files, {{ monthYear(p.first) }} to {{ monthYear(p.last) }}.
+      {{ plural(p.commits, 'of your commits', 'of your commits') }} in {{ p.repo }} {{ p.commits === 1 ? 'changes' : 'change' }} {{ p.files.join(', ') }}, {{ monthYear(p.first) }} to {{ monthYear(p.last) }}.
     </p>
     <p v-if="hasLeads" class="chat-github__note">
       A lead is a file in a repo that holds your commits. Someone else may have written it, so open it before you count it.

@@ -49,10 +49,12 @@ export interface GithubFinding {
   detail: string | null
 }
 
-/** Repos where many of his commits change files matching the path terms. */
+/** A repo where his commits change files matching the path terms, whatever their messages say. */
 export interface GithubPathSummary {
   repo: string
   commits: number
+  /** The matching file names his commits change most, up to three. */
+  files: string[]
   /** YYYY-MM-DD */
   first: string
   last: string
