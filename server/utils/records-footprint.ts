@@ -1,13 +1,13 @@
 import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { repoCommits, repoSources } from '../db/schema'
 import type { KnowledgeEntry } from './knowledge'
-import { anchorPattern, cleanTerms, messageBody, pathMatches, subjectAnchors, subjectParts, withSignatures, type TermSet } from './repos/search'
+import { anchorPattern, messageBody, pathMatches, subjectAnchors, subjectParts, type TermSet } from './repos/search'
 import { isAppRepo } from './repos/settings'
 
 // What a records draft says about scale: how much of Devin's own work touches a subject, counted by
 // code over every one of his indexed commits (not the few the chat search shows), and which roles in
 // his knowledge base name it. A draft states scope ("in more than 50 projects since 2022") only from
-// these counts or from his own words, and checkScope() below holds every sentence to that.
+// these counts or from his own words, and unsupportedScope() below holds every sentence to that.
 
 export const FOOTPRINT_LIMITS = {
   /** Commits added to the draft's records beside the chat search's, one per project, busiest projects first. */
@@ -35,13 +35,13 @@ export interface SubjectFootprint {
 }
 
 /**
- * The anchors the chat search uses for this draft (githubChatSearch, then searchEvidence): Claude's
- * terms with the signatures added, bounded, then cut to what can make a commit a hit. Built from the
- * same inputs so the counts and the commits cited beside them come from one rule.
+ * The anchors the counts use: the subject's own words and its signatures (known aliases, files,
+ * packages), from the subject alone (the question when there is none). Never the search plan's
+ * terms, which Claude picks anew each time: the same records always give the same counts.
  */
-export function draftAnchors(planTerms: TermSet, subject: string | null, context: string, signatureText: string): TermSet {
-  const terms = cleanTerms(withSignatures(cleanTerms(planTerms, 20), signatureText), 80, false)
-  return subjectAnchors(terms, subject, context, signatureText)
+export function draftAnchors(subject: string | null, question: string): TermSet {
+  const text = subject?.trim() || question
+  return subjectAnchors({ code: [], paths: [], packages: [] }, subject?.trim() || null, text, text)
 }
 
 /** A count rounded down to a figure a person would say: 52 to 50, 377 to 350, 1,240 to 1,200. */

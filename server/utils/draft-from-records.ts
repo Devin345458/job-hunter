@@ -405,11 +405,49 @@ function saidSentence(said: string, sentence: string): string {
   return best.length > 200 ? `${best.slice(0, 197).replace(/\s+\S*$/, '')}...` : best
 }
 
-/** Share of the sentence's content words (stemmed) that its records or the question use. */
-function supportShare(sentence: string, sourceText: string): number {
-  const words = contentWords(sentence).map(stemWord)
+/**
+ * Plain words for a tool or a mechanism a record names, the words a hiring manager reads: "S3
+ * storage" for MinIO, "a virus scanner" for ClamAV, "isolated environments per branch" for worktree
+ * stacks, "a deployment pipeline" for a deploy workflow. They count as the record's own words, but
+ * only when a cited record names the tool.
+ */
+const PLAIN_WORDS: Array<{ when: RegExp; words: string[] }> = [
+  { when: /\b(?:minio|localstack|mailpit|mailhog|clamd|clamav|azurite|stripe-cli|soketi)\b/i, words: ['local', 'stand', 'standin', 'standins', 'cloud', 'service', 'services', 'emulator', 'emulators'] },
+  { when: /\bminio\b/i, words: ['s3', 'storage', 'object', 'bucket', 'buckets', 'file', 'files'] },
+  { when: /\bclam(?:av|d)\b/i, words: ['virus', 'viruses', 'scanner', 'scanners', 'scanning', 'scan', 'antivirus', 'malware', 'upload', 'uploads'] },
+  { when: /\b(?:traefik|caddy|nginx)\b/i, words: ['reverse', 'proxy', 'routing', 'route', 'routes', 'hostname', 'hostnames', 'domain', 'domains', 'traffic'] },
+  { when: /\bworktrees?\b/i, words: ['isolated', 'environment', 'environments', 'branch', 'branches', 'parallel', 'side', 'copy', 'copies', 'separate'] },
+  { when: /\.github\/|github actions|\bworkflows?\b|\bruns-on\b|\bfastlane\b|\bci\/cd\b|\bdeploy/i, words: ['pipeline', 'pipelines', 'deployment', 'deployments', 'deploy', 'deploys', 'release', 'releases', 'automated', 'automation', 'continuous', 'integration', 'delivery'] },
+  { when: /\b(?:coolify|dokku|forge|vapor)\b/i, words: ['hosting', 'hosted', 'host', 'server', 'servers', 'deployment', 'deployments', 'deploy'] },
+  { when: /\bsentry\b/i, words: ['error', 'errors', 'crash', 'crashes', 'reporting', 'monitoring', 'tracking', 'exception', 'exceptions'] },
+  { when: /\b(?:loki|prometheus|grafana|mimir|opentelemetry|otel)\b/i, words: ['logs', 'logging', 'metrics', 'monitoring', 'dashboards', 'dashboard', 'alerting', 'alerts', 'observability', 'stack'] },
+  { when: /\b(?:dependabot|renovate)\b/i, words: ['dependency', 'dependencies', 'updates', 'update', 'upgrade', 'upgrades', 'automated'] },
+  { when: /\b(?:stripe|revenuecat|cashier|braintree|paypal)\b/i, words: ['payment', 'payments', 'billing', 'subscription', 'subscriptions', 'checkout', 'purchases', 'purchase'] },
+  { when: /\bredis\b/i, words: ['cache', 'caching', 'queue', 'queues'] },
+  { when: /\b(?:docker|compose|dockerfile|container)/i, words: ['container', 'containers', 'containerized', 'stack', 'stacks', 'image', 'images', 'environment', 'environments'] },
+  { when: /\b(?:kubernetes|k8s|helm)\b/i, words: ['cluster', 'clusters', 'orchestration', 'container', 'containers'] },
+  { when: /\bvitepress\b/i, words: ['documentation', 'docs', 'site'] },
+]
+
+/** Words that join a grouped sentence ("That work includes writing..."), not claims of their own. */
+const OVERLAP_FREE = new Set(['includes', 'including', 'kinds', 'writing', 'wrote', 'written'])
+
+/** A word as the overlap compares it: stemmed, a doubled last consonant and a final e dropped ("capped" and "cap", "images" and "image"). */
+function overlapKey(w: string): string {
+  return stemWord(w).replace(/([b-df-hj-np-tv-z])\1$/, '$1').replace(/e$/, '')
+}
+
+/**
+ * Share of the sentence's content words that the union of its cited records (or the question) use,
+ * as words of three letters or more ("add" for "adding") or as plain words for a tool they name.
+ */
+export function recordsSupportShare(sentence: string, sourceText: string): number {
+  const words = contentWords(sentence).filter(w => !OVERLAP_FREE.has(w)).map(overlapKey)
   if (!words.length) return 1
-  const have = new Set(contentWords(sourceText).map(stemWord))
+  const have = new Set([
+    ...(sourceText.toLowerCase().replace(/[‘’']/g, '').match(/[a-z]{3,}/g) ?? []),
+    ...PLAIN_WORDS.filter(p => p.when.test(sourceText)).flatMap(p => p.words),
+  ].map(overlapKey))
   return words.filter(w => have.has(w)).length / words.length
 }
 
@@ -434,7 +472,8 @@ type Verdict = { ok: true; records: EvidenceRecord[] } | { ok: false; why: strin
  *   session folders) unless the knowledge base or his own words name it;
  * - a description of a client or project ("a floral distribution client") uses words its records,
  *   the knowledge base, or Devin give;
- * - enough of its words come from its records or the question that it restates them.
+ * - enough of its words come from the union of its records (or the question) that it restates
+ *   them; plain words for a tool a cited record names ("S3 storage" for MinIO) count (recordsSupportShare).
  */
 function checkSentence(s: DraftSentenceOut, byId: Map<string, EvidenceRecord>, allowed: string, questionText: string, recordNames: RecordNameWords): Verdict {
   const records = [...new Set(s.sources.map(id => id.trim().replace(/^\[|\]$/g, '').toUpperCase()))]
@@ -462,7 +501,7 @@ function checkSentence(s: DraftSentenceOut, byId: Map<string, EvidenceRecord>, a
     if (!(declared && hasWord(lowerSessions, lower))) return { ok: false, why: 'a name no record gives' }
   }
   if (unsupportedDescriptions(s.text, sourceText, allowed).length) return { ok: false, why: 'a description no record gives' }
-  if (supportShare(s.text, sourceText) < RECORDS_LIMITS.minSupport) return { ok: false, why: 'words its records do not use' }
+  if (recordsSupportShare(s.text, sourceText) < RECORDS_LIMITS.minSupport) return { ok: false, why: 'words its records do not use' }
   return { ok: true, records }
 }
 
@@ -491,7 +530,7 @@ const CheckShape = z.object({
 const CHECK_SYSTEM = `You check a draft answer against the records each sentence cites, before Devin sees it. The draft goes into his knowledge base and onto job applications, so a sentence may say only what its cited records state.
 
 For each sentence:
-- supported: every detail is stated by its cited records. Plain paraphrase is fine, and so is a generic description of a client ("a floral distribution client") when a record shows that kind of client, or the description a commit's record says the draft may use for its project.
+- supported: every detail is stated by its cited records. Plain paraphrase is fine, and so is a generic description of a client ("a floral distribution client") when a record shows that kind of client, or the description a commit's record says the draft may use for its project. Plain words for a tool or a mechanism a cited record names are paraphrase, not an unstated detail: "isolated environments per branch" for worktree stacks, "S3 storage" for MinIO, "a virus scanner" for ClamAV, "a deployment pipeline" for a deploy workflow.
 - trim: some details are not stated (a setting such as "in production" or "across services", a purpose such as "for incident investigation", a scale, a kind of client, a tool, a stronger verb such as "designed" for "used", an outcome or effect). Give the rewrite with those details taken out and nothing added. Use trim only when what is left still says something true and useful.
 - unsupported: the core claim is not stated, or the only records it cites do not show work Devin did: a quote, proposal, or plan; research or a comparison; documentation of a product; Claude's own suggestion; or what someone else did. Also unsupported: work that does not bear on the question asked.
 
@@ -595,6 +634,7 @@ Every sentence rests on records:
 - Cover each piece of work Devin's message names. A sentence about something he said restates what he said; add a detail from another record only when that record is about the same piece of work or is a count record for the question's subject, never a general entry that happens to share a tool.
 - Prefer the work his commits and sessions show over a knowledge base line that only names a tool. A session in one of his projects whose code, logs, or notes show a feature being built or run (an incident scanner, alert routing, a monitor) is work he did on that project.
 - Describe the work at the level a hiring manager follows: what he built, set up, or ran, and what it does. Leave out code-level detail such as versions, image names and tags, file paths, function names, flags, and which errors count as handled.
+- Name internal tooling in plain terms a hiring manager knows: "isolated environments per branch", not "worktrees"; "a deployment pipeline", not a workflow file or a tool's internal name; "local stand-ins for S3 storage and a virus scanner", not "MinIO and clamd". Widely known tools (Docker, Kubernetes, Sentry, Stripe, GitHub Actions) may be named.
 - Devin's message supports exactly what it says, read plainly. "Our" means his employer or his team, never a client.
 - No numbers, dates, durations, team sizes, client counts, percentages, outcomes, or results unless a cited record states them; a count record states its counts, years, and rounded counts. No added purpose, scope, frequency, or setting either ("for incident investigation", "across services", "in production", "daily") unless a record states it. Add no benefit or effect ("which reduced", "so that", "ensuring", "improving") that a record does not state.
 - Never name a client, a repo, a GitHub organization, or a product, even one Devin typed, and never write the word repo. Describe the project instead, in the words given beside each commit's repo ("car wash management software", "a telehealth application"), or generically ("a floral distribution client", "a behavioral health provider"). Employers in the knowledge base may be named. Session project names are usually client names too. People are named by role only ("a teammate", "the client's IT vendor"), never by name.
@@ -667,9 +707,9 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
     ])
     if (memory) console.info(memoryLogLine(`records draft, question ${q.id}`, memory))
 
-    // Counts across all his commits, by the same anchors the search used, and the roles that name it.
+    // Counts across all his commits, from the subject's own anchors (the same every run), and the roles that name it.
     const subject = q.subject?.trim() || q.question
-    const anchors = draftAnchors(plan.terms, q.subject ?? null, context, signatureText)
+    const anchors = draftAnchors(q.subject ?? null, q.question)
     const footprint = githubSearchAvailable() ? subjectFootprint(subject, anchors) : null
     const roles = roleMentions(entries, subject, anchors)
     const commits = draftCommits(github, footprint)
