@@ -10,11 +10,12 @@ const props = defineProps<{
   dense?: boolean
 }>()
 
-const RECOMMENDATION: Record<ScoreBreakdown['recommendation'], { label: string; color: string }> = {
-  strong_match: { label: 'Strong match', color: 'success' },
-  good_match: { label: 'Good match', color: 'primary' },
-  partial_match: { label: 'Partial match', color: 'warning' },
-  weak_match: { label: 'Weak match', color: 'error' },
+// The verdict reads in ink: the score's own hue carries the measure, and a weak match is not an error.
+const RECOMMENDATION: Record<ScoreBreakdown['recommendation'], { label: string }> = {
+  strong_match: { label: 'Strong match' },
+  good_match: { label: 'Good match' },
+  partial_match: { label: 'Partial match' },
+  weak_match: { label: 'Weak match' },
 }
 
 const rec = computed(() => RECOMMENDATION[props.score.recommendation] ?? RECOMMENDATION.partial_match)
@@ -42,10 +43,7 @@ function pct(w: number) {
     <div class="ledger__head">
       <div class="ledger__total tabular" :aria-label="`Match score ${score.final} out of 100`">{{ score.final }}</div>
       <div class="ledger__verdict">
-        <div class="ledger__rec" :class="`text-${rec.color}`">
-          <span class="ledger__dot" :class="`bg-${rec.color}`" />
-          {{ rec.label }}
-        </div>
+        <div class="ledger__rec">{{ rec.label }}</div>
         <div class="ledger__of">match score, out of 100</div>
       </div>
     </div>
@@ -101,11 +99,13 @@ function pct(w: number) {
     margin-bottom: 12px;
   }
 
+  // The answer figure: the largest number on the card, in the one data hue.
   &__total {
-    font-size: 2.75rem;
+    font-size: 2.25rem;
     line-height: 1;
-    font-weight: 700;
-    letter-spacing: -0.03em;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: rgb(var(--v-theme-score));
   }
 
   &__rec {
@@ -114,12 +114,6 @@ function pct(w: number) {
     gap: 6px;
     font-weight: 600;
     font-size: 0.9375rem;
-  }
-
-  &__dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 2px;
   }
 
   &__of {
@@ -132,15 +126,16 @@ function pct(w: number) {
     height: 6px;
     border-radius: 3px;
     overflow: hidden;
-    background: rgba(var(--v-theme-on-surface), 0.08);
+    background: rgb(var(--v-theme-surface-light));
     margin-bottom: 12px;
   }
 
   &__seg {
     height: 100%;
 
-    &--base { background: rgb(var(--v-theme-primary)); }
-    &--minus { background: repeating-linear-gradient(135deg, rgba(var(--v-theme-error), 0.9) 0 3px, rgba(var(--v-theme-error), 0.35) 3px 6px); }
+    &--base { background: rgb(var(--v-theme-score)); }
+    // Points learning took off: the negative color, flat and dimmer than a fill, so it reads as removed.
+    &--minus { background: rgba(var(--v-theme-error), 0.55); }
     &--plus { background: rgb(var(--v-theme-success)); }
   }
 
@@ -165,7 +160,7 @@ function pct(w: number) {
     }
 
     &--sub {
-      border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+      border-top: 1px solid rgb(var(--v-theme-surface-light));
       margin-top: 2px;
       padding-top: 7px;
       color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));

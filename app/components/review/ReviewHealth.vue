@@ -5,12 +5,14 @@ import { taskLabel } from '#shared/utils/run-outcome'
 import { bulkText, queueItemName, queueItemText } from '#shared/utils/queue-text'
 import { appLimitPauseText, subscriptionPauseText } from '#shared/utils/subscription'
 
-// Pipeline health, kept small: did the last run work, how much of today's Claude limit is gone,
-// and how many questions are waiting. Detail lives in Settings and on the Questions page.
+// Pipeline health, folded to one line above the queue so the list starts near the top: the line
+// names the state that matters most (an account problem, a pause, a limit, an interrupted
+// approval, else the last run) in its color, keeps the Runs and Queue links, and opens the detail
+// on click. Detail lives in Settings and on the Questions page.
 const props = withDefaults(defineProps<{
-  /** inline: one tappable line that opens the detail (phones). panel: always open (desktop). */
-  variant?: 'panel' | 'inline'
-}>(), { variant: 'panel' })
+  /** line: one line that opens the detail (the queue, desktop and phone). panel: always open (empty queue). */
+  variant?: 'panel' | 'line' | 'inline'
+}>(), { variant: 'line' })
 
 const health = usePipelineHealth()
 const open = ref(props.variant === 'panel')
@@ -56,17 +58,22 @@ const blocking = computed(() => health.stats.value?.questions.blocking ?? 0)
 
 // Closed, the line is a summary. Open, the body says everything, so the line becomes a plain
 // heading instead of repeating (and cutting off) the same text above the detail.
-const inlineSummary = computed(() => {
-  if (open.value) return 'Pipeline health'
+const interruptedApproval = computed(() => health.runs.value?.queue?.recent.find(i => i.status === 'interrupted') ?? null)
+const lineSummary = computed(() => {
+  if (open.value) return 'Pipeline'
   if (aiProblem.value) return aiProblem.value.message
   if (pausedText.value) return pausedText.value
   if (limitText.value) return limitText.value
-  const parts = [run.value ? `${runLabel.value} ${clockTime(run.value.startedAt)}` : 'No runs yet']
-  parts.push(subLimits.value ? `est. $${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} Claude` : `$${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} AI`)
-  if (pending.value) parts.push(`${pending.value} question${pending.value === 1 ? '' : 's'}`)
-  return parts.join(' · ')
+  if (interruptedApproval.value) return queueItemText(interruptedApproval.value, now.value)
+  return run.value ? `${runLabel.value}, ${clockTime(run.value.startedAt)}` : 'No runs yet'
 })
-const summaryTone = computed(() => (aiProblem.value ? 'error' : pausedText.value || limitText.value ? 'warning' : runTone.value))
+const summaryTone = computed(() => {
+  if (aiProblem.value || interruptedApproval.value) return 'error'
+  if (pausedText.value || limitText.value) return 'warning'
+  return runTone.value
+})
+/** The line's text takes the state's color only for a stop or a failure, not for a routine run. */
+const lineTone = computed(() => (open.value ? 'neutral' : summaryTone.value === 'error' || summaryTone.value === 'warning' ? summaryTone.value : 'neutral'))
 
 // The job queue in one or two lines: what runs now and what waits, or an approval a restart
 // interrupted today. The clock ticks so "queued 2 minutes ago" stays true between refreshes.
@@ -103,18 +110,22 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
 
 <template>
   <div class="hl" :class="`hl--${variant}`">
-    <button
-      v-if="variant === 'inline'"
-      type="button"
-      class="hl__toggle"
-      :aria-expanded="open"
-      aria-controls="pipeline-health"
-      @click="open = !open"
-    >
-      <span class="hl__dot" :class="`bg-${summaryTone}`" />
-      <span class="hl__toggle-text" :class="{ 'hl__toggle-text--open': open }">{{ inlineSummary }}</span>
-      <v-icon :icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" />
-    </button>
+    <div v-if="variant !== 'panel'" class="hl__line">
+      <button
+        type="button"
+        class="hl__toggle"
+        :aria-expanded="open"
+        aria-controls="pipeline-health"
+        :title="open ? undefined : lineSummary"
+        @click="open = !open"
+      >
+        <span class="hl__dot" :class="`bg-${summaryTone}`" />
+        <span class="hl__toggle-text" :class="[`hl__toggle-text--${lineTone}`, { 'hl__toggle-text--open': open }]">{{ lineSummary }}</span>
+        <v-icon :icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" class="hl__chev" />
+      </button>
+      <NuxtLink to="/settings/pipeline#runs" class="hl__link hl__link--line">Runs</NuxtLink>
+      <NuxtLink to="/settings/pipeline#queue" class="hl__link hl__link--line">Queue</NuxtLink>
+    </div>
 
     <v-expand-transition>
       <div v-show="open" id="pipeline-health" class="hl__body">
@@ -172,8 +183,7 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
           <v-icon icon="mdi-comment-question-outline" size="16" class="hl__icon" />
           <div class="hl__text">
             <div class="hl__strong">
-              <span class="tabular">{{ pending }}</span> question{{ pending === 1 ? '' : 's' }} waiting
-              <span v-if="blocking" class="text-warning">({{ blocking }} blocking)</span>
+              <span class="tabular">{{ pending.toLocaleString('en-US') }}</span> question{{ pending === 1 ? '' : 's' }} waiting<template v-if="blocking">, <span class="text-warning">{{ blocking.toLocaleString('en-US') }} blocking an approval</span></template>
             </div>
             <div class="hl__links">
               <NuxtLink to="/questions" class="hl__link">Questions</NuxtLink>
@@ -189,42 +199,65 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
 <style scoped lang="scss">
 .hl {
   &--panel {
-    padding: 12px;
-    border-radius: 10px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    padding: 16px;
+    border-radius: 16px;
     background: rgb(var(--v-theme-surface));
   }
 
-  &--inline {
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    background: rgb(var(--v-theme-surface));
+  // The folded line: 40px on the ground, no box. Opening it lays the detail on a card below.
+  &__line {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 40px;
   }
 
   &__toggle {
-    width: 100%;
-    min-height: 44px;
+    flex: 1;
+    min-width: 0;
+    min-height: 40px;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 0 8px;
+    margin-left: -8px;
+    border-radius: 8px;
     color: inherit;
     text-align: left;
+
+    &:hover {
+      background: rgb(var(--v-theme-surface));
+    }
   }
 
   &__toggle-text {
     flex: 1;
     min-width: 0;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
+    &--warning {
+      color: rgb(var(--v-theme-warning));
+      font-weight: 500;
+    }
+
+    &--error {
+      color: rgb(var(--v-theme-error));
+      font-weight: 500;
+    }
+
     &--open {
       font-weight: 600;
       color: rgb(var(--v-theme-on-surface));
     }
+  }
+
+  &__chev {
+    flex: none;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__problems {
@@ -235,14 +268,18 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     overflow-wrap: anywhere;
   }
 
-  &--inline &__body {
-    padding: 0 12px 12px;
-  }
-
   &__body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+  }
+
+  &--line &__body,
+  &--inline &__body {
+    margin-top: 4px;
+    padding: 14px;
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface));
   }
 
   &__row {
@@ -297,7 +334,7 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     height: 4px;
     border-radius: 2px;
     overflow: hidden;
-    background: rgba(var(--v-theme-on-surface), 0.08);
+    background: rgb(var(--v-theme-surface-light));
 
     span {
       display: block;
@@ -311,10 +348,11 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     margin-top: 2px;
   }
 
+  // Links read in ink, underlined on hover.
   &__link {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: rgb(var(--v-theme-primary));
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: rgb(var(--v-theme-on-surface));
     text-decoration: none;
     display: inline-flex;
     align-items: center;
@@ -323,17 +361,20 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     &:hover {
       text-decoration: underline;
     }
-  }
 
-  // Phone shell, either variant (the empty queue shows the panel on a phone too): 44px targets.
-  &--inline &__link {
-    min-height: 44px;
-    min-width: 44px;
-    justify-content: center;
-    padding: 0 4px;
+    &--line {
+      flex: none;
+      min-height: 40px;
+      padding: 0 6px;
+    }
   }
 
   @media (max-width: 959.98px) {
+    &__line,
+    &__toggle {
+      min-height: 44px;
+    }
+
     &__link {
       min-height: 44px;
       min-width: 44px;
@@ -343,7 +384,7 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
   }
 
   &__err {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: rgb(var(--v-theme-error));
     overflow-wrap: anywhere;
   }
@@ -354,11 +395,10 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     gap: 6px;
     padding: 8px 10px;
     border-radius: 8px;
-    border: 1px solid rgba(var(--v-theme-warning), 0.45);
-    background: rgba(var(--v-theme-warning), 0.08);
+    background: rgba(var(--v-theme-warning), 0.12);
     color: rgb(var(--v-theme-warning));
     font-size: 0.8125rem;
-    font-weight: 600;
+    font-weight: 500;
     line-height: 1.35;
     overflow-wrap: anywhere;
   }

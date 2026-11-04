@@ -43,13 +43,15 @@ const deciding = computed(() => [...groups.value.decide, ...groups.value.send])
 /** Where the open card sits in the whole queue, for previous and next. */
 const orderedIndex = computed(() => ordered.value.findIndex(x => x.applicationId === selectedId.value))
 
+// The group's name after the position ("1 of 83 to decide"): the card's own state pill sits on
+// its meta line, so the position names the group without repeating the state above the heading.
 const GROUP_POSITION: Record<'decide' | 'preparing' | 'send' | 'attention' | 'sending' | 'sent', string> = {
-  decide: 'To decide:',
-  preparing: 'Preparing:',
-  send: 'Ready to send:',
-  attention: 'Needs you:',
-  sending: 'Sending:',
-  sent: 'Submitted:',
+  decide: 'to decide',
+  preparing: 'preparing',
+  send: 'ready to send',
+  attention: 'need you',
+  sending: 'sending',
+  sent: 'submitted',
 }
 
 /**
@@ -60,7 +62,7 @@ const position = computed(() => {
   for (const key of ['decide', 'preparing', 'send', 'attention', 'sending', 'sent'] as const) {
     const list = groups.value[key]
     const i = list.findIndex(x => x.applicationId === selectedId.value)
-    if (i >= 0) return { label: GROUP_POSITION[key], count: `${i + 1} of ${list.length}` }
+    if (i >= 0) return { label: GROUP_POSITION[key], count: `${(i + 1).toLocaleString('en-US')} of ${list.length.toLocaleString('en-US')}` }
   }
   return null
 })
@@ -299,10 +301,10 @@ const leftParts = computed(() => [
           <h1 class="rv__title">Review</h1>
           <p class="rv__left" :class="{ 'rv__left--done': !deciding.length }">
             <template v-if="!leftParts.length">All decided</template>
-            <template v-else><template v-for="(p, i) in leftParts" :key="p.text"><span class="tabular">{{ p.n }}</span> {{ p.text }}{{ i < leftParts.length - 1 ? ', ' : '' }}</template></template>
+            <template v-else><template v-for="(p, i) in leftParts" :key="p.text">{{ p.n.toLocaleString('en-US') }} {{ p.text }}{{ i < leftParts.length - 1 ? ', ' : '' }}</template></template>
           </p>
         </header>
-        <ReviewHealth />
+        <ReviewHealth variant="line" />
         <ReviewQueueList :groups="groups" :selected-id="selectedId" class="rv__list" @select="id => select(id)" />
         <p class="rv__keys">Keys: J next, K previous</p>
       </aside>
@@ -317,6 +319,7 @@ const leftParts = computed(() => [
           :saving-question-id="null"
           :preparing="preparingId === selected.applicationId"
           fill
+          title-tag="h2"
           @approve="approve"
           @apply="apply"
           @reject="openReject"
@@ -326,7 +329,7 @@ const leftParts = computed(() => [
           @refresh="qid => selected && queue.answeredElsewhere(selected.applicationId, qid)"
         >
           <template #nav>
-            <span v-if="position" class="rv__cardpos">{{ position.label }} <span class="tabular">{{ position.count }}</span></span>
+            <span v-if="position" class="rv__cardpos">{{ position.count }} {{ position.label }}</span>
             <v-btn variant="text" size="small" height="32" prepend-icon="mdi-chevron-left" aria-label="Previous card (K)" title="Previous card (K)" @click="step(-1)">Previous</v-btn>
             <v-btn variant="text" size="small" height="32" append-icon="mdi-chevron-right" aria-label="Next card (J)" title="Next card (J)" @click="step(1)">Next</v-btn>
           </template>
@@ -341,14 +344,15 @@ const leftParts = computed(() => [
 
     <!-- Phone: one card at a time -->
     <div v-else class="rv__single">
+      <!-- The app bar already reads "Review"; the h1 names the screen the same for assistive tech. -->
+      <h1 class="rv__sr">Review</h1>
       <div class="rv__mhead">
         <div>
           <p class="rv__left" :class="{ 'rv__left--done': !deciding.length }">
             <template v-if="!leftParts.length">All decided</template>
-            <template v-else><template v-for="(p, i) in leftParts" :key="p.text"><span class="tabular">{{ p.n }}</span> {{ p.text }}{{ i < leftParts.length - 1 ? ', ' : '' }}</template></template>
+            <template v-else><template v-for="(p, i) in leftParts" :key="p.text">{{ p.n.toLocaleString('en-US') }} {{ p.text }}{{ i < leftParts.length - 1 ? ', ' : '' }}</template></template>
           </p>
-          <!-- Tabular figures give punctuation a digit-wide slot in Schibsted Grotesk ("Sending : 1"), so only the numbers use them. -->
-          <p v-if="position" class="rv__pos">{{ position.label }} <span class="tabular">{{ position.count }}</span></p>
+          <p v-if="position" class="rv__pos">Card {{ position.count }} {{ position.label }}</p>
         </div>
         <div class="rv__nav">
           <v-btn icon="mdi-chevron-left" variant="tonal" width="44" height="44" aria-label="Previous card" @click="step(-1)" />
@@ -356,11 +360,12 @@ const leftParts = computed(() => [
           <v-btn variant="tonal" height="44" prepend-icon="mdi-format-list-bulleted" @click="sheetOpen = true">Queue</v-btn>
         </div>
       </div>
-      <ReviewHealth variant="inline" class="rv__mhealth" />
+      <ReviewHealth variant="line" class="rv__mhealth" />
 
       <ReviewCard
         v-if="selected"
         :key="selected.applicationId"
+        title-tag="h2"
         :item="selected"
         :approving="approvingId === selected.applicationId"
         :applying="applyingId === selected.applicationId"
@@ -422,7 +427,7 @@ const leftParts = computed(() => [
   &__side {
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 8px;
     min-height: 0;
     overflow-y: auto;
     padding-right: 4px;
@@ -430,28 +435,37 @@ const leftParts = computed(() => [
 
   &__side-head {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 8px;
+    flex-direction: column;
+    gap: 2px;
   }
 
   &__title {
-    font-size: 1.75rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.1;
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
     margin: 0;
   }
 
+  // One gray line about the data under the title.
   &__left {
     margin: 0;
     font-size: 0.875rem;
-    font-weight: 600;
-    color: rgb(var(--v-theme-primary));
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
     &--done {
       color: rgb(var(--v-theme-success));
     }
+  }
+
+  &__sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   &__keys {
@@ -520,14 +534,14 @@ const leftParts = computed(() => [
       height: 100%;
       justify-content: center;
       padding: 48px 16px;
-      border-radius: 12px;
-      border: 1px dashed rgba(var(--v-border-color), 0.25);
+      border-radius: 16px;
+      background: rgb(var(--v-theme-surface));
     }
   }
 
   &__state-title {
     font-size: 1.25rem;
-    font-weight: 700;
+    font-weight: 600;
     margin: 4px 0 0;
   }
 
@@ -570,7 +584,7 @@ const leftParts = computed(() => [
     align-items: center;
     justify-content: space-between;
     padding: 4px 4px 0 16px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   &__sheet-body {
