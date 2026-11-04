@@ -113,12 +113,13 @@ onBeforeUnmount(cancelTimers)
 </script>
 
 <template>
-  <v-card variant="outlined" class="job-filters">
+  <div class="job-filters">
     <div class="job-filters__row">
       <v-text-field
         v-model="search"
         class="job-filters__search"
-        label="Search jobs"
+        placeholder="Search jobs"
+        aria-label="Search jobs"
         prepend-inner-icon="mdi-magnify"
         clearable
         hide-details
@@ -128,7 +129,7 @@ onBeforeUnmount(cancelTimers)
       <v-btn
         class="job-filters__toggle"
         variant="outlined"
-        height="48"
+        height="40"
         :prepend-icon="expanded ? 'mdi-chevron-up' : 'mdi-tune-variant'"
         :aria-expanded="expanded ? 'true' : 'false'"
         aria-controls="job-filters-more"
@@ -143,7 +144,9 @@ onBeforeUnmount(cancelTimers)
           v-model="status"
           class="job-filters__status"
           :items="statusOptions"
-          label="Status"
+          placeholder="Status"
+          aria-label="Status"
+          persistent-placeholder
           multiple
           clearable
           hide-details
@@ -155,7 +158,9 @@ onBeforeUnmount(cancelTimers)
           v-model="remoteType"
           class="job-filters__work-type"
           :items="remoteOptions"
-          label="Work type"
+          placeholder="Work type"
+          aria-label="Work type"
+          persistent-placeholder
           clearable
           hide-details
         />
@@ -179,21 +184,21 @@ onBeforeUnmount(cancelTimers)
         <v-btn
           class="job-filters__clear"
           variant="text"
-          height="48"
-          prepend-icon="mdi-filter-remove"
+          height="40"
           :disabled="!hasAnyFilter"
+          :title="hasAnyFilter ? undefined : 'No filter is set'"
           @click="clearFilters"
         >
           Clear
         </v-btn>
       </div>
     </div>
-  </v-card>
+  </div>
 </template>
 
 <style scoped lang="scss">
+// A flat toolbar on the page ground: 40px controls in one row (44px on a phone).
 .job-filters {
-  padding: 16px;
 
   &__row,
   &__more {
@@ -215,22 +220,35 @@ onBeforeUnmount(cancelTimers)
   }
 
   &__status {
-    flex: 1 1 190px;
+    flex: 1 1 170px;
     min-width: 0;
   }
 
   &__work-type {
-    flex: 0 0 172px;
+    flex: 0 0 150px;
   }
 
+  // The label sits above the slider; the pair is as tall as a 40px field.
   &__score {
-    flex: 1 1 200px;
+    flex: 1 1 160px;
     min-width: 0;
-    padding-top: 2px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    height: 40px;
+
+    :deep(.v-slider.v-input--horizontal) {
+      margin-inline: 8px;
+    }
+
+    :deep(.v-input__control) {
+      min-height: 24px;
+    }
   }
 
   &__score-label {
     font-size: 0.75rem;
+    line-height: 1.2;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     padding-inline: 8px;
   }
@@ -252,15 +270,13 @@ onBeforeUnmount(cancelTimers)
     padding: 0 6px;
     border-radius: 4px;
     font-size: 0.75rem;
-    font-weight: 700;
+    font-weight: 600;
     background: rgb(var(--v-theme-primary));
     color: rgb(var(--v-theme-on-primary));
   }
 
   // Phone shell: search and a Filters toggle on one row; the rest opens below it.
   @media (max-width: 959.98px) {
-    padding: 12px;
-
     &__search {
       flex: 1 1 0;
     }

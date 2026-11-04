@@ -24,6 +24,11 @@ export type JobListItem = Pick<Job,
   | 'id' | 'source' | 'title' | 'company' | 'location' | 'remoteType' | 'salaryMin' | 'salaryMax' | 'salaryCurrency'
   | 'totalCompEstimate' | 'matchScore' | 'status' | 'tags' | 'applyUrl' | 'atsType' | 'isSandbox' | 'foundAt'> & {
   application?: JobApplicationRef | null
+  /** Yearly base and total estimate from the pay breakdown (null until the posting is read). */
+  baseAnnualMin?: number | null
+  baseAnnualMax?: number | null
+  totalEstimateMin?: number | null
+  totalEstimateMax?: number | null
   /** How many postings of this company and title the card stands for (1 for most). */
   postingCount?: number
   /** Every posting the card stands for, this one first. Empty when it stands for one. */
