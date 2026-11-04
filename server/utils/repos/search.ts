@@ -574,6 +574,15 @@ export function appRepoScope(subject: string | null | undefined, topics: AppRepo
 }
 
 /**
+ * The level after this app's repo has its say: a Yes that rests only on its commits, for a subject
+ * whose topics all count "Up to Some experience" (the frameworks the agents wrote in), becomes
+ * Some experience. Any other record behind the Yes keeps it.
+ */
+export function appRepoLevel<L extends string>(level: L, scope: AppRepoScope | null, onlyThisRepo: boolean): L | 'Some experience' {
+  return level === 'Yes' && onlyThisRepo && scope?.cap === 'some' ? 'Some experience' : level
+}
+
+/**
  * Its docs for coding agents and its task list (AGENTS.md, TASKS.md, CLAUDE.md, README.md) restate
  * every subject as data, so their names never make one of its commits a hit: "AGENTS.md" in a
  * message is a file, not agent work.

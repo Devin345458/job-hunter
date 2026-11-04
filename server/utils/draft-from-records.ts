@@ -19,7 +19,7 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { isLegacyQuestion, parseYesNo, takesExample, type QuestionRow } from './questions'
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
-import { appRepoScope, cleanTerms, messageBody, type TermSet } from './repos/search'
+import { appRepoLevel, appRepoScope, cleanTerms, messageBody, type TermSet } from './repos/search'
 import { APP_REPO_FACT, APP_REPO_HOW_TO_SAY, isAppRepo } from './repos/settings'
 import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
@@ -846,8 +846,7 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
     // This app's repo alone supports a framework topic as Some experience at most (agents he directed wrote it).
     const appOnly = kept.length > 0 && kept.every(s => s.sources.every(src => (src.kind === 'commit' && isAppRepo(src.label))
       || (src.kind === 'aggregate' && !!footprint && footprint.directed === footprint.commits)))
-    const capped = appOnly && appRepoScope(subject)?.cap === 'some'
-    const level: RecordsDraft['level'] = box === 'example' ? (out.level === 'Yes' && !capped ? 'Yes' : 'Some experience') : null
+    const level: RecordsDraft['level'] = box === 'example' ? (appRepoLevel(out.level, appRepoScope(subject), appOnly) === 'Yes' ? 'Yes' : 'Some experience') : null
     const reply = [
       `Drafted from ${listJoin(parts)}. Each sentence shows its source under the draft; check them, edit, then save.`,
       droppedCount ? `I left out ${nounCount(droppedCount, 'sentence', 'sentences')} that no record backed.` : null,

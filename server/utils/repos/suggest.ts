@@ -4,7 +4,7 @@ import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/s
 import type { RepoEvidence } from '#shared/types/repos'
 import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../ai'
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
-import { SEARCH_RULES, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
+import { SEARCH_RULES, appRepoLevel, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
 import { APP_REPO_FRAMING, isAppRepo } from './settings'
@@ -326,7 +326,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       }
       // This app's repo alone supports a framework topic as Some experience at most: agents he
       // directed wrote it. Another repo's commit among the evidence can carry a Yes.
-      const level = verdict.level === 'Yes' && found.appRepo?.cap === 'some' && evidence.every(e => isAppRepo(e.repo)) ? 'Some experience' : verdict.level
+      const level = appRepoLevel(verdict.level, found.appRepo, evidence.every(e => isAppRepo(e.repo)))
       upsert(q.id, { status: 'suggested', subject, termsJson, level, draft, evidenceJson: JSON.stringify(evidence), commitShasJson: JSON.stringify(hitShas), error: null })
       stats.suggested++
       stats.results.push({ questionId: q.id, subject, outcome: 'suggested', hits: hitShas.length, level })

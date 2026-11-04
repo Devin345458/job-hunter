@@ -1094,6 +1094,7 @@ onMounted(async () => {
   }
 
   &__topic-reset {
+    margin-left: 6px;
     padding: 0;
     border: 0;
     background: none;

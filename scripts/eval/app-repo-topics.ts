@@ -60,6 +60,22 @@ for (const [subject, want] of expected) {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${subject}: ${got ? got.join(', ') : 'no topic'}${ok ? '' : ` (expected ${want ? want.join(', ') : 'no topic'})`}`)
 }
 
+// The level cap: only this repo's commits behind a Yes on an "Up to Some experience" topic.
+const levels: Array<[string, string, boolean, string]> = [
+  ['Nuxt', 'Yes', true, 'Some experience'],
+  ['Nuxt', 'Yes', false, 'Yes'],
+  ['Drizzle ORM', 'Yes', true, 'Some experience'],
+  ['AI agents', 'Yes', true, 'Yes'],
+  ['Nuxt and AI agents', 'Yes', true, 'Yes'],
+  ['Nuxt', 'Some experience', true, 'Some experience'],
+  ['GraphQL', 'Yes', true, 'Yes'],
+]
+for (const [subject, level, only, want] of levels) {
+  const got = search.appRepoLevel(level, search.appRepoScope(subject, topics), only)
+  if (got !== want) bad++
+  console.log(`${got === want ? 'ok  ' : 'FAIL'} level ${subject}, ${level}, ${only ? 'only this repo' : 'other records too'}: ${got}${got === want ? '' : ` (expected ${want})`}`)
+}
+
 const sqlite = useDb().$client
 const rows = sqlite.prepare(`SELECT id, status, subject, question FROM questions WHERE kind IN ('knows', 'has_done') ORDER BY id`).all() as Array<{ id: number; status: string; subject: string | null; question: string }>
 const open = rows.map(r => ({ r, scope: search.appRepoScope((r.subject ?? r.question).trim(), topics) })).filter(x => x.scope)
@@ -84,7 +100,7 @@ if (indexed.n && on?.included && on.indexedAt) {
 }
 
 if (bad) {
-  console.error(`\n${bad} gate verdicts differ from the expected ones`)
+  console.error(`\n${bad} verdicts differ from the expected ones`)
   process.exit(1)
 }
-console.log('\nevery gate verdict matches')
+console.log('\nevery verdict matches')
