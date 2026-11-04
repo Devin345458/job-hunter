@@ -3,7 +3,8 @@ import { repoCommits, repoFacts, repoSources } from '../../db/schema'
 import { tokenAt } from './github'
 import { repoCacheDir, runGit } from './git'
 import { LARGE_COMMIT_FILES, excludedPathspecs } from './indexer'
-import { isAppRepo } from './settings'
+import type { AppRepoTopic } from '#shared/types/repos'
+import { appRepoTopics, isAppRepo } from './settings'
 
 // Searches Devin's indexed commits for the terms one question expands into: commit messages and
 // changed paths from the database, his diffs from the local clones (git log -G over his commit
@@ -52,6 +53,8 @@ export interface SearchResult {
   errors: string[]
   /** The terms that could make a commit a hit (subjectAnchors). */
   anchors: TermSet
+  /** The topics this app's own repo was searched for, when the subject names one (appRepoScope). */
+  appRepo: AppRepoScope | null
 }
 
 const MAX_HITS = 14
@@ -468,6 +471,162 @@ export function subjectAnchors(terms: TermSet, subject: string | null, text: str
   }, 80, false)
 }
 
+// ── This app's own repo ──
+// Its commits name every skill as data, so it is searched only for a subject that names one of the
+// topics Devin listed (appRepoTopics), and then only for what that part of the subject and the
+// topic itself anchor on: a commit message that says "GraphQL" is never a GraphQL hit here.
+
+export interface AppRepoScope {
+  /** The parts of the subject that named a topic. */
+  parts: string[]
+  /** The parts of the topics they named ("Drizzle" of "SQLite and Drizzle"), with the other name of an "X with Y" part. */
+  topicParts: string[]
+  topics: AppRepoTopic[]
+  /** The most its commits support on their own: yes when any matched topic allows Yes. */
+  cap: 'yes' | 'some'
+}
+
+/** Words that never decide a topic match: filler, levels, and words every subject uses. */
+const TOPIC_STOP = new Set([
+  'the', 'a', 'an', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'and', 'or', 'via', 'using', 'use', 'used', 'uses',
+  'experience', 'experienced', 'knowledge', 'proficient', 'proficiency', 'familiarity', 'familiar', 'skill', 'skills',
+  'development', 'developing', 'developer', 'engineering', 'engineer', 'building', 'build', 'built', 'design', 'designing',
+  'real', 'world', 'project', 'projects', 'production', 'work', 'working', 'modern', 'integration', 'integrations',
+  'integrating', 'integrate', 'integrated', 'leveraging', 'leverage', 'tool', 'tools', 'tooling', 'system', 'systems',
+  'platform', 'platforms', 'framework', 'frameworks', 'app', 'apps', 'application', 'applications', 'software', 'web',
+  'code', 'coding', 'based', 'driven', 'powered', 'strong', 'solid', 'deep', 'expert', 'expertise', 'understanding',
+  'hands', 'advanced', 'deploy', 'deploys', 'deploying', 'deployment', 'deployments',
+])
+
+/** Spellings that mean the same topic word: "agentic" is agents, "LLMs" is LLM, "Vue.js" is Vue. */
+const TOPIC_ALIASES: Record<string, string> = {
+  agentic: 'agent', llms: 'llm', genai: 'llm', evals: 'evaluation', eval: 'evaluation', evaluations: 'evaluation',
+  vuejs: 'vue', nuxtjs: 'nuxt', nodejs: 'node', ts: 'typescript', sqlite3: 'sqlite',
+}
+
+function topicWord(w: string): string {
+  let x = TOPIC_ALIASES[w] ?? w
+  if (/^[a-z]{3,}ies$/.test(x)) x = `${x.slice(0, -3)}y`
+  else if (/^[a-z]{3,}s$/.test(x) && !/ss$/.test(x)) x = x.slice(0, -1)
+  return TOPIC_ALIASES[x] ?? x
+}
+
+/** The words of one part that decide a match, normalized. */
+export function topicWords(text: string): string[] {
+  const t = text.toLowerCase()
+    .replace(/\blarge language models?\b|\bgenerative ai\b|\bgen ai\b/g, ' llm ')
+    .replace(/\b(vue|nuxt|node)\.js\b/g, '$1')
+  return [...new Set(t.split(/[^a-z0-9#+]+/).filter(Boolean).filter(w => !TOPIC_STOP.has(w)).map(topicWord).filter(w => !TOPIC_STOP.has(w)))]
+}
+
+/**
+ * Words that make a subject about AI without saying "AI": "Internal agents" names "AI agents",
+ * "LLM evaluation" names "AI evaluation", "Third-party vendor evaluation" does not.
+ */
+const IMPLIES_AI = new Set(['llm', 'agent', 'claude', 'anthropic', 'openai', 'gpt', 'chatgpt', 'gemini', 'copilot', 'prompt', 'rag', 'mcp', 'ml'])
+
+/** A subject or topic split into its parts: on commas, slashes, brackets, and, or, with. */
+export function topicParts(text: string): string[] {
+  return topicSegments(text).flat()
+}
+
+/**
+ * The same parts grouped: "X with Y" is one piece of work under two names ("browser automation
+ * with Playwright"), so naming either brings both; "SQLite and Drizzle" are two.
+ */
+function topicSegments(text: string): string[][] {
+  return text.split(/,|;|\/|\(|\)|&|\band\b|\bor\b|\bincluding\b|\bsuch as\b/i)
+    .map(seg => seg.split(/\bwith\b/i).map(p => p.replace(/\s+/g, ' ').trim()).filter(p => topicWords(p).length > 0))
+    .filter(seg => seg.length > 0)
+}
+
+/**
+ * The topics a subject names: a topic part matches a part of the subject when every word that
+ * decides it is in that part, AI counting as said when the subject names an AI word
+ * (IMPLIES_AI): "LLM" names "LLM integration", "Internal agents" names "AI agents", "Vue 3
+ * Composition API" names "Vue"; "REST API" names nothing, nor does "GraphQL" or "Third-party vendor
+ * evaluation". Null when it names none, and then this app's repo is not searched.
+ */
+export function appRepoScope(subject: string | null | undefined, topics: AppRepoTopic[] = appRepoTopics()): AppRepoScope | null {
+  const text = String(subject ?? '').trim()
+  if (!text || !topics.length) return null
+  const parts = new Set<string>()
+  const named = new Set<string>()
+  const matched = new Map<string, AppRepoTopic>()
+  const aboutAi = topicWords(text).some(w => w === 'ai' || IMPLIES_AI.has(w))
+  const subjectSide = topicParts(text).map(p => ({ p, words: new Set([...topicWords(p), ...(aboutAi ? ['ai'] : [])]) }))
+  for (const topic of topics) {
+    for (const seg of topicSegments(topic.name)) {
+      for (const tp of seg) {
+        const need = topicWords(tp)
+        for (const s of subjectSide) {
+          if (!need.every(w => s.words.has(w))) continue
+          parts.add(s.p)
+          for (const x of seg) named.add(x)
+          matched.set(topic.name.toLowerCase(), topic)
+        }
+      }
+    }
+  }
+  if (!matched.size) return null
+  const list = [...matched.values()]
+  return { parts: [...parts], topicParts: [...named], topics: list, cap: list.some(t => t.cap === 'yes') ? 'yes' : 'some' }
+}
+
+/**
+ * The level after this app's repo has its say: a Yes that rests only on its commits, for a subject
+ * whose topics all count "Up to Some experience" (the frameworks the agents wrote in), becomes
+ * Some experience. Any other record behind the Yes keeps it.
+ */
+export function appRepoLevel<L extends string>(level: L, scope: AppRepoScope | null, onlyThisRepo: boolean): L | 'Some experience' {
+  return level === 'Yes' && onlyThisRepo && scope?.cap === 'some' ? 'Some experience' : level
+}
+
+/**
+ * Its docs for coding agents and its task list (AGENTS.md, TASKS.md, CLAUDE.md, README.md) restate
+ * every subject as data, so their names never make one of its commits a hit: "AGENTS.md" in a
+ * message is a file, not agent work.
+ */
+const APP_REPO_DOCS = /\b(?:agents|tasks|claude|readme)\.md\b/gi
+
+/** One of this app's commit messages as its anchors read it: trailers and its docs file names left out. */
+export function appRepoMessage(message: string): string {
+  return messageBody(message).replace(APP_REPO_DOCS, ' ')
+}
+
+/** A changed path of this app's repo that can anchor a hit: never its docs files. */
+export function appRepoPath(path: string): boolean {
+  return !/(?:^|\/)(?:agents|tasks|claude|readme)\.md$/i.test(path)
+}
+
+/**
+ * What can make one of this app's commits a hit: the anchors of the subject parts that named a
+ * topic (as for every repo, with only Claude's terms those parts name), plus the words and
+ * signatures of the topic parts they named, so the topic decides what counts, never the rest of
+ * the question.
+ */
+export function appRepoAnchors(scope: AppRepoScope, terms: TermSet = { code: [], paths: [], packages: [] }): TermSet {
+  const subject = scope.parts.join(', ')
+  const own = subjectAnchors(terms, subject, scope.parts.join('\n'), subject)
+  const code: string[] = [...own.code]
+  const paths: string[] = [...own.paths]
+  const packages: string[] = [...own.packages]
+  // Only the topic parts the subject named, never the rest of the topic: a Drizzle question
+  // anchors on Drizzle, not on the SQLite of "SQLite and Drizzle".
+  const named = scope.topicParts.join(', ')
+  const t = subjectAnchors({ code: [], paths: [], packages: [] }, named, scope.topicParts.join('\n'), named)
+  code.push(...t.code)
+  paths.push(...t.paths)
+  packages.push(...t.packages)
+  // A part decided by one word besides AI anchors on that word too ("Coolify deploys" on
+  // Coolify, "AI agents" on agent).
+  for (const tp of scope.topicParts) {
+    const w = topicWords(tp).filter(x => x !== 'ai')
+    if (w.length === 1 && w[0]!.length >= 3) code.push(w[0]!, `${w[0]!}s`)
+  }
+  return cleanTerms({ code, paths: paths.filter(appRepoPath), packages }, 120, false)
+}
+
 function depMatches(name: string, terms: string[]): boolean {
   const n = name.toLowerCase()
   return terms.some((t) => {
@@ -522,9 +681,11 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
   const terms = cleanTerms(rawTerms, 80, false)
   const anchors = opts.anchors ? subjectAnchors(terms, opts.anchors.subject, opts.anchors.text, opts.anchors.signatureText) : terms
   const db = useDb()
-  // This app's own repo names every skill as data, so it is never evidence (isAppRepo).
+  // This app's own repo names every skill as data: it is searched only for a subject that names one
+  // of its topics, and never without a subject to check (appRepoScope).
+  const app = opts.anchors ? appRepoScope(opts.anchors.subject?.trim() || opts.anchors.signatureText || opts.anchors.text) : null
   const repos = db.select().from(repoSources).where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
-    .filter(r => !isAppRepo(r.fullName))
+    .filter(r => !isAppRepo(r.fullName) || !!app)
   const result: SearchResult = {
     hits: [],
     pathSummaries: [],
@@ -533,19 +694,25 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
     repos: repos.map(r => ({ repo: r.fullName, isPrivate: r.isPrivate, owner: r.owner })),
     errors: [],
     anchors,
+    appRepo: app && repos.some(r => isAppRepo(r.fullName)) ? app : null,
   }
   if (!repos.length) return result
-  const names = repos.map(r => r.fullName)
+  // Its packages and languages are never read: every one of them would match some subject.
+  const names = repos.map(r => r.fullName).filter(n => !isAppRepo(n))
 
   // Anchors make a hit; the other terms only rank one.
-  const anchorWords = [...anchors.code, ...anchors.packages]
-  const anchorRe = anchorWords.length ? new RegExp(anchorWords.map(anchorPattern).join('|'), 'i') : null
+  const matcher = (a: TermSet) => {
+    const words = [...a.code, ...a.packages]
+    return { anchors: a, words, re: words.length ? new RegExp(words.map(anchorPattern).join('|'), 'i') : null }
+  }
+  const main = matcher(anchors)
+  const appMatch = app ? matcher(appRepoAnchors(app, terms)) : null
   const anchorKeys = new Set([...anchors.code, ...anchors.packages, ...anchors.paths].map(t => t.toLowerCase()))
   const supportWords = [...terms.code, ...terms.packages].filter(t => !anchorKeys.has(t.toLowerCase()))
   const supportRe = supportWords.length ? new RegExp(supportWords.map(termPattern).join('|'), 'i') : null
   const supportPaths = terms.paths.filter(p => !anchorKeys.has(p.toLowerCase()))
 
-  for (const f of db.select().from(repoFacts).where(inArray(repoFacts.repo, names)).all()) {
+  for (const f of names.length ? db.select().from(repoFacts).where(inArray(repoFacts.repo, names)).all() : []) {
     if (f.kind === 'dependency' && (depMatches(f.name, terms.packages) || depMatches(f.name, terms.code))) {
       result.dependencies.push({ repo: f.repo, name: f.name, manifest: f.detail ?? '' })
     }
@@ -556,6 +723,8 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
 
   const all: Array<CommitHit & { score: number }> = []
   for (const repo of repos) {
+    const own = isAppRepo(repo.fullName)
+    const { anchors: repoAnchors, words: anchorWords, re: anchorRe } = own ? appMatch! : main
     const commits = db.select().from(repoCommits).where(eq(repoCommits.repo, repo.fullName)).all()
     if (!commits.length) continue
     const byRepo = new Map<string, CommitHit & { score: number }>()
@@ -586,11 +755,11 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
     // Messages (trailers left out) and paths, from the index.
     const pathOnly: typeof commits = []
     for (const c of commits) {
-      const paths = JSON.parse(c.pathsJson ?? '[]') as string[]
-      const inMessage = !!anchorRe && anchorRe.test(messageBody(c.message))
+      const paths = (JSON.parse(c.pathsJson ?? '[]') as string[]).filter(p => !own || appRepoPath(p))
+      const inMessage = !!anchorRe && anchorRe.test(own ? appRepoMessage(c.message) : messageBody(c.message))
       if (inMessage) add(c, 'message')
-      if (anchors.paths.length) {
-        const matched = paths.filter(p => pathMatches(p, anchors.paths))
+      if (repoAnchors.paths.length) {
+        const matched = paths.filter(p => pathMatches(p, repoAnchors.paths))
         if (matched.length) {
           if (inMessage) add(c, 'path', matched)
           else pathOnly.push(c)
@@ -602,12 +771,13 @@ export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void
       result.pathSummaries.push({ repo: repo.fullName, commits: pathOnly.length, first: sorted[0]!.authoredAt.slice(0, 10), last: sorted[sorted.length - 1]!.authoredAt.slice(0, 10) })
       // The earliest and the latest two stand for the rest.
       for (const c of [...new Set([sorted[0]!, sorted[1], sorted[sorted.length - 2], sorted[sorted.length - 1]!].filter(Boolean))] as typeof commits) {
-        add(c, 'path', (JSON.parse(c.pathsJson ?? '[]') as string[]).filter(p => pathMatches(p, anchors.paths)))
+        add(c, 'path', (JSON.parse(c.pathsJson ?? '[]') as string[]).filter(p => (!own || appRepoPath(p)) && pathMatches(p, repoAnchors.paths)))
       }
     }
 
-    // His diffs, from the clone: only his indexed commits, only searchable paths.
-    if (anchorRe && opts.diffs !== false) {
+    // His diffs, from the clone: only his indexed commits, only searchable paths. Never this app's
+    // own repo, whose files hold every skill name as data.
+    if (anchorRe && opts.diffs !== false && !own) {
       const shas = commits.filter(c => (JSON.parse(c.pathsJson ?? '[]') as string[]).length < LARGE_COMMIT_FILES).map(c => c.sha)
       const ere = `(${anchorWords.map(escapeEre).join('|')})`
       const r = await runGit([

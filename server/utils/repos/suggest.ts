@@ -4,9 +4,10 @@ import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/s
 import type { RepoEvidence } from '#shared/types/repos'
 import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../ai'
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
-import { SEARCH_RULES, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
+import { SEARCH_RULES, appRepoLevel, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
+import { APP_REPO_FRAMING, APP_REPO_FRAMING_SENTENCE, isAppRepo, saysDirected } from './settings'
 
 // repos:suggest. For each pending knows or has_done question: one cheap Claude call turns the
 // subject into search terms (cached per subject), the search runs over Devin's own commits, and
@@ -134,7 +135,7 @@ function judgePrompt(q: QuestionRow, terms: TermSet, found: SearchResult): strin
   lines.push(`Searched for: ${[...terms.code, ...terms.packages, ...terms.paths].join(', ')}`)
   const repos = [...new Set(found.hits.map(h => h.repo))]
   const described = loadRepoDescriptions()
-  lines.push(`\nRepos with matching commits, with how the draft describes each:\n${repos.map(r => `- ${r}: "${described[r]?.text || 'a client project'}"`).join('\n')}`)
+  lines.push(`\nRepos with matching commits, with how the draft describes each:\n${repos.map(r => `- ${r}: "${described[r]?.text || 'a client project'}"${isAppRepo(r) ? `. ${APP_REPO_FRAMING}${found.appRepo?.cap === 'some' ? ' For this subject its commits show Some experience at most.' : ''}` : ''}`).join('\n')}`)
   if (found.languages.length) lines.push(`Repo languages that match: ${found.languages.map(l => `${l.repo} (${l.name})`).join(', ')}`)
   if (found.dependencies.length) {
     lines.push(`Dependencies declared at the default branch that match: ${found.dependencies.slice(0, 20).map(d => `${d.repo}: ${d.name} in ${d.manifest}`).join('; ')}`)
@@ -313,7 +314,10 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         if (evidence.length >= 5) break
       }
       // Last guard: a repo, owner, or organization name left in the draft reads as its description.
-      const draft = withoutRecordNames(scrubDashes(verdict.draft.trim()), names).slice(0, DRAFT_MAX)
+      const named = withoutRecordNames(scrubDashes(verdict.draft.trim()), names)
+      // A draft resting on this app's own commits says how it was built (agents he directed).
+      const framed = evidence.some(e => isAppRepo(e.repo)) && named && !saysDirected(named) ? `${named} ${APP_REPO_FRAMING_SENTENCE}` : named
+      const draft = (framed.length <= DRAFT_MAX ? framed : named).slice(0, DRAFT_MAX)
       const invented = unsupportedNumbers(draft, sourceText(found))
       if (verdict.level === 'None' || !evidence.length || !draft || invented.length) {
         const why = invented.length ? `draft named numbers the commits do not show: ${invented.join(', ')}` : verdict.reason
@@ -323,10 +327,13 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         log(`question ${q.id} (${subject}): ${hitShas.length} hits, no suggestion: ${why}`)
         continue
       }
-      upsert(q.id, { status: 'suggested', subject, termsJson, level: verdict.level, draft, evidenceJson: JSON.stringify(evidence), commitShasJson: JSON.stringify(hitShas), error: null })
+      // This app's repo alone supports a framework topic as Some experience at most: agents he
+      // directed wrote it. Another repo's commit among the evidence can carry a Yes.
+      const level = appRepoLevel(verdict.level, found.appRepo, evidence.every(e => isAppRepo(e.repo)))
+      upsert(q.id, { status: 'suggested', subject, termsJson, level, draft, evidenceJson: JSON.stringify(evidence), commitShasJson: JSON.stringify(hitShas), error: null })
       stats.suggested++
-      stats.results.push({ questionId: q.id, subject, outcome: 'suggested', hits: hitShas.length, level: verdict.level })
-      log(`question ${q.id} (${subject}): ${verdict.level} from ${evidence.length} commits`)
+      stats.results.push({ questionId: q.id, subject, outcome: 'suggested', hits: hitShas.length, level })
+      log(`question ${q.id} (${subject}): ${level} from ${evidence.length} commits`)
     }
     catch (e: any) {
       if (e instanceof AiBudgetExceeded) {

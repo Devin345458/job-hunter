@@ -1,8 +1,8 @@
 import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { repoCommits, repoSources } from '../db/schema'
 import type { KnowledgeEntry } from './knowledge'
-import { anchorPattern, messageBody, pathMatches, subjectAnchors, subjectParts, type TermSet } from './repos/search'
-import { isAppRepo } from './repos/settings'
+import { anchorPattern, appRepoAnchors, appRepoMessage, appRepoPath, appRepoScope, messageBody, pathMatches, subjectAnchors, subjectParts, type TermSet } from './repos/search'
+import { APP_REPO_DESCRIPTION, isAppRepo } from './repos/settings'
 
 // What a records draft says about scale: how much of Devin's own work touches a subject, counted by
 // code over every one of his indexed commits (not the few the chat search shows), and which roles in
@@ -37,6 +37,8 @@ export interface SubjectFootprint {
   words: Array<{ word: string; commits: number }>
   /** One telling commit per project, busiest projects first: examples of the kinds of work. */
   sample: Array<{ repo: string; url: string; title: string; date: string }>
+  /** Of the commits, those in this app's own repo, which Claude Code agents he directed wrote. */
+  directed: number
   /**
    * The candidate stories: the projects with the most matching commits, each with its most telling
    * commits (the subject in the title, a long body, figures such as "257 to 0", recent), oldest
@@ -84,23 +86,29 @@ export function roundedDown(n: number): number | null {
 }
 
 /**
- * Counts Devin's own commits in switched-on, indexed repos (this app's repo left out) that match the
- * anchors the way the chat search does: a message (trailers left out) naming an anchor word, or a
- * changed path matching an anchor path. Null when none match.
+ * Counts Devin's own commits in switched-on, indexed repos that match the anchors the way the chat
+ * search does: a message (trailers left out) naming an anchor word, or a changed path matching an
+ * anchor path. This app's own repo counts only for a subject that names one of its topics, by its
+ * own anchors (appRepoScope, appRepoAnchors in repos/search.ts). Null when none match.
  */
 export function subjectFootprint(subject: string, anchors: TermSet): SubjectFootprint | null {
   const words = [...anchors.code, ...anchors.packages]
   const wordRe = words.length ? new RegExp(words.map(anchorPattern).join('|'), 'i') : null
-  if (!wordRe && !anchors.paths.length) return null
+  const app = appRepoScope(subject)
+  const appAnchors = app ? appRepoAnchors(app) : null
+  const appWords = appAnchors ? [...appAnchors.code, ...appAnchors.packages] : []
+  const appRe = appWords.length ? new RegExp(appWords.map(anchorPattern).join('|'), 'i') : null
+  if (!wordRe && !anchors.paths.length && !appRe) return null
   const db = useDb()
   const repos = db.select({ fullName: repoSources.fullName }).from(repoSources)
     .where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
-    .map(r => r.fullName).filter(n => !isAppRepo(n))
+    .map(r => r.fullName).filter(n => !isAppRepo(n) || !!app)
   if (!repos.length) return null
   const rows = db.select({ repo: repoCommits.repo, url: repoCommits.url, authoredAt: repoCommits.authoredAt, message: repoCommits.message, pathsJson: repoCommits.pathsJson })
     .from(repoCommits).where(inArray(repoCommits.repo, repos)).all()
 
   let commits = 0
+  let directed = 0
   const byRepo = new Map<string, number>()
   const years = new Map<string, { projects: Set<string>; commits: number }>()
   const files = new Map<string, { name: string; commits: number; folders: Map<string, number> }>()
@@ -111,16 +119,20 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
   const told = new Map<string, Array<{ url: string; title: string; date: string; body: string; inTitle: boolean; wordHit: boolean; pathShare: number }>>()
   const span = new Map<string, { first: string; last: string }>()
   for (const r of rows) {
-    const body = messageBody(r.message)
-    const wordHit = wordRe ? wordRe.exec(body) : null
+    const own = isAppRepo(r.repo)
+    const re = own ? appRe : wordRe
+    const anchorPaths = own ? appAnchors?.paths ?? [] : anchors.paths
+    const body = own ? appRepoMessage(r.message) : messageBody(r.message)
+    const wordHit = re ? re.exec(body) : null
     let paths: string[] = []
     try {
-      paths = JSON.parse(r.pathsJson ?? '[]')
+      paths = (JSON.parse(r.pathsJson ?? '[]') as string[]).filter(p => !own || appRepoPath(p))
     }
     catch {}
-    const pathHits = anchors.paths.length ? paths.filter(p => pathMatches(p, anchors.paths)) : []
+    const pathHits = anchorPaths.length ? paths.filter(p => pathMatches(p, anchorPaths)) : []
     if (!wordHit && !pathHits.length) continue
     commits++
+    if (own) directed++
     byRepo.set(r.repo, (byRepo.get(r.repo) ?? 0) + 1)
     const day = r.authoredAt.slice(0, 10)
     const sp = span.get(r.repo)
@@ -142,7 +154,8 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
       if (folder) f.folders.set(folder, (f.folders.get(folder) ?? 0) + 1)
       files.set(name.toLowerCase(), f)
     }
-    const title = body.split('\n')[0]!.trim()
+    // The title as written (docs file names kept); the match test reads it as the anchors do.
+    const title = messageBody(r.message).split('\n')[0]!.trim()
     if (/^merge\b/i.test(title) || title.length < 12) continue
     // A message that names the subject says what the work was. A commit matched by its files only
     // speaks for the subject when those files are most of what it changed; a docs commit records
@@ -150,7 +163,7 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
     const pathShare = paths.length ? pathHits.length / paths.length : 0
     if (!wordHit && pathShare < 0.5 && paths.length > 3) continue
     // The title naming it beats a long body that mentions it once.
-    const inTitle = !!wordRe && wordRe.test(title)
+    const inTitle = !!re && re.test(own ? appRepoMessage(title) : title)
     const score = (inTitle ? 100 : pathShare >= 0.5 ? 60 : wordHit ? 40 : 20)
       + Math.min(title.length, 80) / 8
       - (/^(?:\[[^\]]*\]\s*)?docs(?:\([^)]*\))?!?:/i.test(title) ? 60 : 0)
@@ -186,6 +199,7 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
     words: [...matchedWords.entries()].sort((a, b) => b[1] - a[1]).slice(0, FOOTPRINT_LIMITS.topWords).map(([word, n]) => ({ word, commits: n })),
     sample: busiest.map(repo => ({ repo, ...best.get(repo)! })).filter(s => s.url).slice(0, FOOTPRINT_LIMITS.sampleCommits)
       .map(({ repo, url, title, date }) => ({ repo, url, title, date })),
+    directed,
     stories,
   }
 }
@@ -212,6 +226,7 @@ export function footprintText(f: SubjectFootprint): string {
     `Commits in all: ${f.commits.toLocaleString('en-US')}.`,
     f.files.length ? `Files these commits change most: ${f.files.map(x => `${x.name} (${plural(x.commits, 'commit', 'commits')}${x.folder ? `, mostly in ${x.folder}` : ''})`).join(', ')}.` : null,
     f.words.length ? `Words their messages use most: ${f.words.map(x => `${x.word} (${plural(x.commits, 'commit', 'commits')})`).join(', ')}.` : null,
+    f.directed ? `${plural(f.directed, 'of these commits is', 'of these commits are')} in ${APP_REPO_DESCRIPTION.replace(/\bI\b/g, 'he')}.` : null,
   ]
   return lines.filter(Boolean).join(' ')
 }

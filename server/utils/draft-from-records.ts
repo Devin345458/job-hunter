@@ -22,8 +22,8 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { findKnowledgeEntry, isLegacyQuestion, isNegativeKnowledge, knowledgeCovers, knowledgeTargetFor, parseYesNo, takesExample, type QuestionRow } from './questions'
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
-import { cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
-import { isAppRepo } from './repos/settings'
+import { appRepoLevel, appRepoScope, cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
+import { APP_REPO_FACT, APP_REPO_FRAMING_SENTENCE, APP_REPO_HOW_TO_SAY, isAppRepo, saysDirected } from './repos/settings'
 import { repoSuggestionsFor } from './repos/suggest-store'
 import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
@@ -216,12 +216,14 @@ function commitRecords(commits: CommitRef[]): EvidenceRecord[] {
     const lead = c.evidence ? `What the code this commit changed shows: ${c.evidence}\n` : ''
     // The authored date is a fact the commit states ("in 2024").
     const dated = c.date ? `\nCommitted ${c.date}.` : ''
-    const short = `${c.repo}\n${title}\n${lead}${messageText(message, RECORDS_LIMITS.commitMessageChars)}${dated}`
+    // This app's own commits carry how they were made, so the draft and its checks frame them honestly.
+    const fact = isAppRepo(c.repo) ? `\n(${APP_REPO_FACT})` : ''
+    const short = `${c.repo}\n${title}\n${lead}${messageText(message, RECORDS_LIMITS.commitMessageChars)}${dated}${fact}`
     const full = c.story != null
     return {
       id: `C${i + 1}`,
       kind: 'commit',
-      text: full ? `${c.repo}\n${title}\n${lead}${messageText(message, RECORDS_LIMITS.storyMessageChars)}${dated}` : short,
+      text: full ? `${c.repo}\n${title}\n${lead}${messageText(message, RECORDS_LIMITS.storyMessageChars)}${dated}${fact}` : short,
       short: full ? short : undefined,
       story: c.story,
       source: { kind: 'commit', label: c.repo, detail: title, date: c.date, url: c.url },
@@ -864,7 +866,7 @@ function listJoin(items: string[]): string {
  */
 function commitSection(records: EvidenceRecord[], footprint: SubjectFootprint | null, described: Record<string, { text: string }>): string {
   const commits = records.filter(r => r.kind === 'commit')
-  const line = (r: EvidenceRecord) => `[${r.id}] ${r.source.label} (describe it as: ${described[r.source.label]?.text || 'a client project'}) | ${r.source.date ?? 'date unknown'} | ${r.text.split('\n').slice(2).join(' ')}`
+  const line = (r: EvidenceRecord) => `[${r.id}] ${r.source.label} (describe it as: ${described[r.source.label]?.text || 'a client project'}${isAppRepo(r.source.label) ? `. ${APP_REPO_HOW_TO_SAY}` : ''}) | ${r.source.date ?? 'date unknown'} | ${r.text.split('\n').slice(2).join(' ')}`
   const parts: string[] = []
   const judged = commits.filter(r => r.story === 0)
   if (judged.length) parts.push(`### His GitHub evidence for this question (judged from the code these commits changed; the most direct evidence)\n${judged.map(line).join('\n')}`)
@@ -1012,12 +1014,25 @@ export function devinSaidNo(q: QuestionRow, entries: KnowledgeEntry[], said: str
   }))
 }
 
-/** How many of his commits the counts read: switched-on, indexed repos, this app's repo left out. */
-function searchedCommitCount(): number {
+/**
+ * A draft that cites this app's own commits says he designed the system and directed Claude Code
+ * agents to build it. When no sentence says so, one plain sentence does, right after the first one
+ * that cites them, resting on the same commits.
+ */
+function withAppRepoFraming(kept: RecordsDraftSentence[]): RecordsDraftSentence[] {
+  const i = kept.findIndex(s => s.sources.some(src => src.kind === 'commit' && isAppRepo(src.label)))
+  if (i < 0 || saysDirected(kept.map(s => s.text).join(' '))) return kept
+  const sources = kept[i]!.sources.filter(src => src.kind === 'commit' && isAppRepo(src.label))
+  return [...kept.slice(0, i + 1), { text: APP_REPO_FRAMING_SENTENCE, sources }, ...kept.slice(i + 1)]
+}
+
+/** How many of his commits the counts read: switched-on, indexed repos, this app's repo only for a subject that names one of its topics. */
+function searchedCommitCount(subject: string): number {
   const db = useDb()
+  const app = !!appRepoScope(subject)
   const repos = db.select({ fullName: repoSources.fullName }).from(repoSources)
     .where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
-    .map(r => r.fullName).filter(n => !isAppRepo(n))
+    .map(r => r.fullName).filter(n => !isAppRepo(n) || app)
   if (!repos.length) return 0
   return db.select({ url: repoCommits.url }).from(repoCommits).where(inArray(repoCommits.repo, repos)).all().length
 }
@@ -1254,15 +1269,15 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
 
     const dropped = draft.dropped
     const droppedCount = Object.values(dropped).reduce((a, b) => a + b, 0)
-    const kept: RecordsDraftSentence[] = draft.kept.map(({ part: _part, ...k }) => k)
+    const kept: RecordsDraftSentence[] = withAppRepoFraming(draft.kept.map(({ part: _part, ...k }) => k))
     const missing = draft.out.missing?.trim() ? scrubDashes(draft.out.missing.trim()) : null
     if (absent(draft)) {
       // Nothing about the subject in what the app can see: say what was searched, pick no level,
       // and offer the nearest work as sentences he can use if he picks Some experience or No.
       const bridge = draft.kept.filter(k => k.part === 'bridge').map(({ part: _part, ...k }) => k)
       const line = suggestion
-        ? `Your records show ${q.subject?.trim() || 'this'} only in the GitHub lead on this question, and I could not write an answer from it (searched: ${searchedText(searchedCommitCount(), memoryUse)}).`
-        : `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(), memoryUse)}).`
+        ? `Your records show ${q.subject?.trim() || 'this'} only in the GitHub lead on this question, and I could not write an answer from it (searched: ${searchedText(searchedCommitCount(subject), memoryUse)}).`
+        : `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(subject), memoryUse)}).`
       console.info(`[draft-from-records] question ${q.id}: nothing found, ${bridge.length} sentences of nearest work offered, no level picked`)
       return {
         ok: true,
@@ -1305,6 +1320,9 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
       usedOf('said') ? 'what you said here' : null,
     ].filter((p): p is string => !!p)
     const text = kept.map(s => s.text).join(' ')
+    // This app's repo alone supports a framework topic as Some experience at most (agents he directed wrote it).
+    const appOnly = kept.length > 0 && kept.every(s => s.sources.every(src => (src.kind === 'commit' && isAppRepo(src.label))
+      || (src.kind === 'aggregate' && !!footprint && footprint.directed === footprint.commits)))
     const reply = [
       `Drafted from ${listJoin(sourceParts)}. Each sentence shows its source under the draft; check them, edit, then save.`,
       droppedCount ? `I left out ${nounCount(droppedCount, 'sentence', 'sentences')} that no record backed.` : null,
@@ -1312,7 +1330,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     ].filter(Boolean).join(' ')
     return {
       ok: true,
-      draft: { text, level: levelOf(draft.out.level), sentences: kept, box, coach },
+      draft: { text, level: levelOf(appRepoLevel(draft.out.level, appRepoScope(subject), appOnly)), sentences: kept, box, coach },
       reply,
       memory: memoryUse,
       memoryNote,
