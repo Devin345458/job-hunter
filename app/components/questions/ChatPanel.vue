@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
+import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, useDraftStepLine, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
@@ -36,6 +36,8 @@ const key = computed(() => chatThreadKey(props.question?.id))
 const messages = computed(() => chat.threads.value[key.value] ?? [])
 const busy = computed(() => !!chat.sending.value[key.value])
 const draftingRecords = computed(() => !!chat.drafting.value[key.value])
+/** "Searching your GitHub (12 seconds)" while a draft from records runs. */
+const draftStepLine = useDraftStepLine(key)
 /** This question can take a draft from his records. */
 const recordsDraftable = computed(() => draftsFromRecords(props.question))
 /** The first reply in this conversation that had memory excerpts in its prompt; it alone carries the note. */
@@ -324,7 +326,7 @@ defineExpose({ focus: () => input.value?.focus() })
 
       <div v-if="busy" class="question-chat__msg question-chat__msg--assistant question-chat__thinking">
         <v-progress-circular indeterminate size="16" width="2" color="primary" />
-        <span class="text-body-2 text-medium-emphasis">{{ draftingRecords ? 'Searching your knowledge base, GitHub, and past sessions, then drafting' : 'Claude is thinking' }}</span>
+        <span class="text-body-2 text-medium-emphasis" role="status">{{ draftingRecords ? draftStepLine : 'Claude is thinking' }}</span>
       </div>
     </div>
 

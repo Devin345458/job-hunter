@@ -93,5 +93,39 @@ for (const [sentence, records, ok] of cases) {
   if (!pass) failed++
   console.log(`${pass ? 'PASS' : 'FAIL'} expected ${ok ? 'ok' : 'flag'}${found.length ? ` ${JSON.stringify(found)}` : ''}: ${sentence}`)
 }
+// Candidate stories: the subject's busiest projects, each with commits whose whole messages the draft reads.
+console.log('\n=== candidate stories (Accessibility)')
+const a11y = fp.subjectFootprint('Accessibility', fp.draftAnchors('Accessibility', 'Have you used Accessibility in a real project?'))
+for (const st of a11y?.stories ?? []) console.log(`${st.repo}: ${st.commits} commits, ${st.picks.length} read whole (${st.picks.map(p => p.title.slice(0, 50)).join(' | ')})`)
+const storiesOk = !!a11y && a11y.stories.length > 0 && a11y.stories.every(st => st.picks.length > 0)
+if (!storiesOk) failed++
+console.log(`${storiesOk ? 'PASS' : 'FAIL'} every candidate story has commits to read`)
+
+// The records budget: whole, then shortened, then left out, in budgetRank order; ids numbered again.
+const { fitRecordBudget } = await import('../../server/utils/draft-from-records')
+const big = 'x'.repeat(4000)
+const fitted = fitRecordBudget([
+  { id: 'S1', kind: 'said', text: 'I ran the audit.' },
+  { id: 'C1', kind: 'commit', text: big, short: 'short one', story: 1 },
+  { id: 'C2', kind: 'commit', text: big, short: 'short two', story: 1 },
+  { id: 'C3', kind: 'commit', text: 'other commit', story: null },
+  { id: 'M1', kind: 'memory', text: big, short: 'excerpt', full: true },
+], 1100)
+const budgetOk = fitted.records.map(r => `${r.id}:${r.text.length}`).join(' ') === 'S1:16 C1:4000 C2:9 C3:12 M1:7' && fitted.cut.join(', ') === '2 shortened'
+if (!budgetOk) failed++
+console.log(`\n=== records budget\n${budgetOk ? 'PASS' : 'FAIL'} ${fitted.records.map(r => `${r.id}:${r.text.length}`).join(' ')} (cut: ${fitted.cut.join(', ')}, ${fitted.tokens} tokens)`)
+
+// GitHub code search: every query, the longest search word plus its repo: qualifiers, stays under
+// GitHub's 1,024 characters (CHAT_SEARCH_LIMITS.maxQueryChars), over this snapshot's switched-on repos.
+const { repoBatches, CHAT_SEARCH_LIMITS } = await import('../../server/utils/repos/chat-search')
+const names = (useDb().$client.prepare('SELECT full_name FROM repo_sources WHERE included = 1 ORDER BY commit_count DESC').all() as Array<{ full_name: string }>).map(r => r.full_name)
+const word = '"@axe-core/playwright"'
+const queries = repoBatches(names, CHAT_SEARCH_LIMITS.maxQueryChars - word.length - 1).map(b => `${word} ${b.map(n => `repo:${n}`).join(' ')}`)
+const longest = Math.max(...queries.map(q => q.length))
+const covered = new Set(queries.flatMap(q => q.split(' ').filter(t => t.startsWith('repo:')))).size
+const queryOk = longest <= 1024 && covered === names.length
+if (!queryOk) failed++
+console.log(`\n=== code search query length\n${queryOk ? 'PASS' : 'FAIL'} ${names.length} repos in ${queries.length} queries, longest ${longest} characters (GitHub refuses over 1,024)`)
+
 console.log(`\n${failed ? `${failed} not as expected` : 'all as expected'}`)
 process.exit(failed ? 1 : 0)

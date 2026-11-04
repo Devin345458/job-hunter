@@ -90,6 +90,20 @@ export interface RecordsDraftSentence {
 /** How the draft used Devin's past Claude sessions. */
 export type RecordsMemoryUse = 'used' | 'none' | 'unreachable' | 'busy' | 'off'
 
+/** The five dimensions an interview coach scores an answer on. */
+export type InterviewDimension = 'Substance' | 'Structure' | 'Relevance' | 'Credibility' | 'Differentiation'
+
+/**
+ * The coach pass on a finished draft: how an interviewer would score it, and at most two facts
+ * Devin could add to make it stronger, asked as questions ("Add if true: what prompted the audit?").
+ * The questions are never filled in for him.
+ */
+export interface RecordsDraftCoach {
+  scores: Array<{ dimension: InterviewDimension; score: number; line: string }>
+  /** "To make this stronger": at most two questions. */
+  questions: string[]
+}
+
 export interface RecordsDraft {
   /** The sentences joined, ready for the answer box or the example box. */
   text: string
@@ -98,6 +112,29 @@ export interface RecordsDraft {
   sentences: RecordsDraftSentence[]
   /** Where the draft goes on the card. */
   box: 'example' | 'answer'
+  /** The coach pass; null when it could not run. Absent on drafts made before it existed. */
+  coach?: RecordsDraftCoach | null
+}
+
+/** What a records draft is doing now, for the step line under the spinner. */
+export type RecordsDraftStep = 'planning' | 'searching' | 'projects' | 'writing' | 'checking' | 'coaching'
+
+/** GET /api/questions/:id/draft: the draft running for this question, or the one that just finished. */
+export interface RecordsDraftStatus {
+  running: boolean
+  step: RecordsDraftStep | null
+  /** One plain line: "Searching your past sessions and GitHub", "Checking each sentence against your records". */
+  label: string | null
+  /** ISO time the draft started. */
+  startedAt: string | null
+  /** The finished draft, kept a few minutes so a page whose request was cut off can still show it. */
+  result: RecordsDraftResponse | null
+}
+
+/** POST /api/questions/:id/draft when the draft is still running after the request's wait: poll the status. */
+export interface RecordsDraftPending {
+  pending: true
+  status: RecordsDraftStatus
 }
 
 export type RecordsDraftResponse =

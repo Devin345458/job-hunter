@@ -21,8 +21,13 @@ export const CHAT_SEARCH_LIMITS = {
   languages: 4,
   /** Code search requests in one chat search. GitHub allows 10 a minute per user. */
   codeRequests: 4,
-  /** repo: qualifiers in one code search request (40 come to about 1,300 characters). */
+  /** repo: qualifiers in one code search request, at most; the query length below decides first. */
   reposPerRequest: 40,
+  /**
+   * Characters in one code search query, the word and its repo: qualifiers together. GitHub answers
+   * 400 "query exceeds max length" past 1,024 (measured 2026-11-04: 994 passed, 1,025 failed).
+   */
+  maxQueryChars: 1000,
   /** Words searched, one request each: the REST code search ANDs words and has no OR. */
   codeTerms: 4,
 } as const
@@ -152,8 +157,10 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
     const batches: RepoRow[][] = []
     const byToken = new Map<number, RepoRow[]>()
     for (const r of eligible) byToken.set(r.tokenIndex!, [...(byToken.get(r.tokenIndex!) ?? []), r])
+    // Room for the longest word, so every word's query fits.
+    const room = CHAT_SEARCH_LIMITS.maxQueryChars - Math.max(...words.map(w => w.length)) - 1
     for (const list of byToken.values()) {
-      for (let i = 0; i < list.length; i += CHAT_SEARCH_LIMITS.reposPerRequest) batches.push(list.slice(i, i + CHAT_SEARCH_LIMITS.reposPerRequest))
+      for (const names of repoBatches(list.map(r => r.fullName), room)) batches.push(names.map(n => list.find(r => r.fullName === n)!))
     }
     const allowed = new Set(eligible.map(r => r.fullName.toLowerCase()))
     const seen = new Set<string>()
@@ -204,6 +211,28 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
 
   result.findings = [...commits, ...spread(files, CHAT_SEARCH_LIMITS.files), ...dependencies, ...languages]
   return result
+}
+
+/**
+ * Repo names packed into groups whose repo: qualifiers, joined by spaces, fit in `room` characters
+ * (and at most reposPerRequest of them), in the order given.
+ */
+export function repoBatches(names: string[], room: number): string[][] {
+  const out: string[][] = []
+  let batch: string[] = []
+  let length = 0
+  for (const name of names) {
+    const add = `repo:${name}`.length + (batch.length ? 1 : 0)
+    if (batch.length && (length + add > room || batch.length >= CHAT_SEARCH_LIMITS.reposPerRequest)) {
+      out.push(batch)
+      batch = []
+      length = 0
+    }
+    batch.push(name)
+    length += `repo:${name}`.length + (batch.length > 1 ? 1 : 0)
+  }
+  if (batch.length) out.push(batch)
+  return out
 }
 
 /** Which search word a commit message holds, as the panel shows it: 'message has "GraphQL"'. */

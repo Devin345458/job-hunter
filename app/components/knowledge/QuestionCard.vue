@@ -3,7 +3,7 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import type { QuestionListItem } from '#shared/types/learning'
 import { plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, chatThreadKey, useQuestionChat } from '~/components/questions/chat-store'
+import { draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, chatThreadKey, useDraftStepLine, useQuestionChat } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
 // tap; numbers and short facts take a field; open-ended questions from the original tailoring
@@ -130,6 +130,8 @@ const recordsMessage = ref<string | null>(null)
 /** A draft waiting on "Replace what you typed?". */
 const pendingRecords = ref<{ draft: RecordsDraft; note: string | null } | null>(null)
 const recordsBusy = computed(() => !!chat.drafting.value[chatThreadKey(props.question.id)])
+/** "Searching your GitHub (12 seconds)" while a draft from records runs. */
+const recordsStepLine = useDraftStepLine(computed(() => chatThreadKey(props.question.id)))
 const canDraftRecords = computed(() => {
   if (!draftsFromRecords(props.question)) return false
   if (props.mode === 'pending') return true
@@ -574,6 +576,10 @@ watch(() => props.pick?.nonce, () => {
         <v-icon icon="mdi-information-outline" size="16" />
         <span>{{ recordsMessage }}</span>
       </p>
+      <p v-if="recordsStepLine" class="question-card__records-step text-body-2 text-medium-emphasis" role="status">
+        <v-progress-circular indeterminate size="14" width="2" color="primary" />
+        <span>{{ recordsStepLine }}</span>
+      </p>
     </v-card-text>
 
     <v-card-actions v-if="mode === 'pending' || mode === 'skipped' || (mode === 'answered' && !(editing && inputType === 'long'))" class="px-4 pb-3 pt-0 question-card__actions">
@@ -601,7 +607,7 @@ watch(() => props.pick?.nonce, () => {
       >
         Draft from my records
         <template #loader>
-          <v-progress-circular indeterminate size="16" width="2" class="mr-2" />Searching your records
+          <v-progress-circular indeterminate size="16" width="2" class="mr-2" />Drafting
         </template>
       </v-btn>
       <v-spacer />
@@ -810,6 +816,14 @@ watch(() => props.pick?.nonce, () => {
       flex: 0 0 auto;
       color: rgb(var(--v-theme-info));
     }
+  }
+
+  &__records-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    line-height: 1.45;
   }
 
   &__example-actions {

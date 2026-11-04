@@ -1,5 +1,5 @@
 import type { QuestionListItem } from '#shared/types/learning'
-import type { QuestionChatResponse, QuestionChatTurn, RecordsDraft, RecordsDraftResponse } from '#shared/types/question-chat'
+import type { QuestionChatResponse, QuestionChatTurn, RecordsDraft, RecordsDraftPending, RecordsDraftResponse, RecordsDraftStatus } from '#shared/types/question-chat'
 import type { ChatMemoryUse } from '#shared/types/memory'
 import type { GithubChatSearch } from '#shared/types/repos'
 
@@ -111,11 +111,41 @@ function toTurn(m: ChatMessage): QuestionChatTurn {
   return { role: 'assistant', content: parts.join('\n\n') }
 }
 
+/**
+ * The step line under a records draft's spinner, "Searching your GitHub (12 seconds)", ticking each
+ * second while the thread's draft runs; null when none runs.
+ */
+export function useDraftStepLine(key: Ref<string>) {
+  const chat = useQuestionChat()
+  const now = ref(Date.now())
+  let timer: ReturnType<typeof setInterval> | null = null
+  const active = computed(() => !!chat.drafting.value[key.value])
+  watch(active, (on) => {
+    now.value = Date.now()
+    if (on && !timer && import.meta.client) timer = setInterval(() => (now.value = Date.now()), 1000)
+    if (!on && timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  }, { immediate: true })
+  onBeforeUnmount(() => {
+    if (timer) clearInterval(timer)
+  })
+  return computed(() => {
+    if (!active.value) return null
+    const st = chat.draftStep.value[key.value]
+    const secs = st?.startedAt ? Math.max(0, Math.round((now.value - Date.parse(st.startedAt)) / 1000)) : 0
+    return `${st?.label ?? 'Starting the draft'} (${secs} ${secs === 1 ? 'second' : 'seconds'})`
+  })
+}
+
 export function useQuestionChat() {
   const threads = useState<Record<string, ChatMessage[]>>('question-chat-threads', () => ({}))
   const sending = useState<Record<string, boolean>>('question-chat-sending', () => ({}))
   /** Threads waiting on a draft from records (a longer wait than a reply: it searches first). */
   const drafting = useState<Record<string, boolean>>('question-chat-drafting', () => ({}))
+  /** The step a draft from records is on ("Searching your GitHub"), and when it started, per thread. */
+  const draftStep = useState<Record<string, { label: string | null; startedAt: string | null }>>('question-chat-draft-step', () => ({}))
   const restored = useState('question-chat-restored', () => false)
 
   function persist() {
@@ -190,10 +220,43 @@ export function useQuestionChat() {
     push(key, { id: newId(), role: 'user', content: ask })
     sending.value = { ...sending.value, [key]: true }
     drafting.value = { ...drafting.value, [key]: true }
+    draftStep.value = { ...draftStep.value, [key]: { label: null, startedAt: new Date().toISOString() } }
+    // The step line: the server says which step the draft is on (GET .../draft) every two seconds.
+    let polling = true
+    const readStatus = () => $fetch<RecordsDraftStatus>(`/api/questions/${questionId}/draft`).catch(() => null)
+    const showStatus = (st: RecordsDraftStatus | null) => {
+      if (polling && st?.running) draftStep.value = { ...draftStep.value, [key]: { label: st.label, startedAt: st.startedAt } }
+    }
+    const timer = setInterval(() => readStatus().then(showStatus), 2000)
+    /** A draft the request handed off (still running at its wait, or the request was cut off): wait for it here. */
+    const collect = async (): Promise<RecordsDraftResponse | null> => {
+      for (let misses = 0; misses < 3;) {
+        await new Promise(r => setTimeout(r, 2000))
+        const st = await readStatus()
+        if (st?.result) return st.result
+        if (st?.running) {
+          showStatus(st)
+          continue
+        }
+        misses++
+      }
+      return null
+    }
     try {
       // Only what he typed counts as "you said", never the button's own words.
       const said = (threads.value[key] ?? []).filter(m => m.role === 'user' && m.content !== 'Draft from my records').map(m => m.content)
-      const res = await $fetch<RecordsDraftResponse>(`/api/questions/${questionId}/draft`, { method: 'POST', body: { said } })
+      let res: RecordsDraftResponse | null
+      try {
+        const first = await $fetch<RecordsDraftResponse | RecordsDraftPending>(`/api/questions/${questionId}/draft`, { method: 'POST', body: { said } })
+        res = 'pending' in first ? await collect() : first
+      }
+      catch (e: any) {
+        // A request cut off at the proxy (a 502, 504, or 524) while the draft runs on: collect it.
+        if (e?.statusCode && e.statusCode < 500) throw e
+        res = await collect()
+        if (!res) throw e
+      }
+      if (!res) throw new Error('The draft stopped before it finished.')
       if (res.ok) {
         if (res.memoryNote) push(key, { id: newId(), role: 'notice', content: res.memoryNote })
         push(key, {
@@ -215,8 +278,13 @@ export function useQuestionChat() {
       return { ok: false, stop: 'unavailable', message }
     }
     finally {
+      polling = false
+      clearInterval(timer)
       sending.value = { ...sending.value, [key]: false }
       drafting.value = { ...drafting.value, [key]: false }
+      const next = { ...draftStep.value }
+      delete next[key]
+      draftStep.value = next
     }
   }
 
@@ -236,7 +304,7 @@ export function useQuestionChat() {
     persist()
   }
 
-  return { threads, sending, drafting, restore, send, draftFromRecords, markDraftUsed, clear }
+  return { threads, sending, drafting, draftStep, restore, send, draftFromRecords, markDraftUsed, clear }
 }
 
 /** A yes or no question about a skill or past work: Yes and Some experience open the example box. */
