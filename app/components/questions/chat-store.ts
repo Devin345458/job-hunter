@@ -54,6 +54,13 @@ export interface DraftMeta {
 
 /** The label on a box filled from his records. */
 export const RECORDS_DRAFT_LABEL = 'Draft from your records; edit before saving'
+/** A draft whose records showed nothing about the subject: only the nearest work, no answer picked. */
+export const NEAREST_WORK_LABEL = 'Nothing about this was found in your records. Nearest work only; pick your own answer'
+
+/** The label over a records draft in a box or the chat. */
+export function recordsDraftLabel(d: RecordsDraft | null | undefined): string {
+  return d?.adjacentOnly ? NEAREST_WORK_LABEL : RECORDS_DRAFT_LABEL
+}
 
 /**
  * A question the records draft can write for: a skill or experience question's example, or a

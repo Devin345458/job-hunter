@@ -3,7 +3,7 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { useDisplay } from 'vuetify'
 import type { JobRescoreResult, QuestionView, SkillClaimAnswer, SkillClaimPreview, SkillClaimResult, SkillClaimSource } from '#shared/types/pipeline'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
+import { EXAMPLE_LEVELS, recordsDraftLabel, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Tap a Missing skill or a requirement that is not Have, and say whether you have it.
 // The panel shows what the knowledge base says today, asks the same Yes, Some experience, or No
@@ -489,7 +489,7 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
             <div v-if="exampleOpen" class="sc__example" role="group" aria-labelledby="sc-example-label">
               <label id="sc-example-label" for="sc-example" class="sc__example-label">Where did you do it?</label>
               <p class="sc__example-hint">The job or project, what you did, and the result if there was one. It is saved exactly as you write it.</p>
-              <p v-if="shownRecords" class="sc__records-label">{{ RECORDS_DRAFT_LABEL }}</p>
+              <p v-if="shownRecords" class="sc__records-label">{{ recordsDraftLabel(shownRecords.draft) }}</p>
               <v-textarea
                 id="sc-example"
                 v-model="exampleText"

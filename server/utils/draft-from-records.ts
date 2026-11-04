@@ -12,7 +12,7 @@ import type {
   RecordSourceKind,
   RecordsMemoryUse,
 } from '#shared/types/question-chat'
-import type { GithubChatSearch } from '#shared/types/repos'
+import type { GithubChatSearch, RepoSuggestionView } from '#shared/types/repos'
 import { AiBudgetExceeded, AiRefusal, aiStructured, cachedPrompt, cachedSystem, fallbackModel } from './ai'
 import { scrubDashes, splitSentences, unsupportedNumbers } from './apply/text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
@@ -24,6 +24,7 @@ import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
 import { cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
 import { isAppRepo } from './repos/settings'
+import { repoSuggestionsFor } from './repos/suggest-store'
 import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
 // "Draft from my records": a first-person draft for a skill, experience, or written question,
@@ -119,7 +120,7 @@ interface EvidenceRecord {
   source: RecordSource
   /** The counts behind an aggregate record. */
   footprint?: SubjectFootprint
-  /** The candidate story (1, 2, 3) a commit belongs to; null for the other commits. */
+  /** The candidate story (1, 2, 3) a commit belongs to; 0 for the GitHub evidence stored for this question; null for the other commits. */
   story?: number | null
   /** A shorter text the budget falls back to before it leaves the record out. */
   short?: string
@@ -167,7 +168,8 @@ function saidRecords(said: string[]): EvidenceRecord[] {
   })
 }
 
-type CommitRef = { repo: string; url: string; title: string; date: string | null; story: number | null }
+/** evidence: for the GitHub evidence stored for this question, the line on what the code it changed shows. */
+type CommitRef = { repo: string; url: string; title: string; date: string | null; story: number | null; evidence?: string }
 
 /**
  * His own commits: the candidate stories' commits first, story by story (the projects where his
@@ -175,8 +177,11 @@ type CommitRef = { repo: string; url: string; title: string; date: string | null
  * from each of his busiest projects (the footprint's sample), so the draft can tell one story in
  * depth and still see the breadth. Files and packages are leads, not records.
  */
-function draftCommits(search: GithubChatSearch | null, footprint: SubjectFootprint | null): CommitRef[] {
-  const story: CommitRef[] = (footprint?.stories ?? []).flatMap((s, i) => s.picks.map(p => ({ repo: s.repo, url: p.url, title: p.title, date: p.date, story: i + 1 })))
+function draftCommits(search: GithubChatSearch | null, footprint: SubjectFootprint | null, suggestion: RepoSuggestionView | null = null): CommitRef[] {
+  // The GitHub evidence stored for this question (repos:suggest judged it from the code the commits
+  // changed, which the message search cannot see) comes first: it is the most direct evidence.
+  const judged: CommitRef[] = (suggestion?.evidence ?? []).map(e => ({ repo: e.repo, url: e.url, title: e.line, date: e.date, story: 0, evidence: e.line }))
+  const story: CommitRef[] = [...judged, ...(footprint?.stories ?? []).flatMap((s, i) => s.picks.map(p => ({ repo: s.repo, url: p.url, title: p.title, date: p.date, story: i + 1 })))]
   const found: CommitRef[] = (search?.findings ?? []).filter(f => f.kind === 'commit').map(f => ({ repo: f.repo, url: f.url, title: f.title, date: f.date, story: null }))
   const sample: CommitRef[] = (footprint?.sample ?? []).map(c => ({ ...c, story: null }))
   const seen = new Set<string>()
@@ -206,14 +211,20 @@ function commitRecords(commits: CommitRef[]): EvidenceRecord[] {
     .where(inArray(repoCommits.url, commits.map(c => c.url))).all().map(r => [r.url, r.message] as const))
   return commits.map((c, i) => {
     const message = messages.get(c.url) ?? c.title
-    const short = `${c.repo}\n${c.title}\n${messageText(message, RECORDS_LIMITS.commitMessageChars)}`
+    const title = c.evidence ? (messageBody(message).split('\n')[0]!.trim() || c.title) : c.title
+    // Stored GitHub evidence carries the line on what the code it changed shows.
+    const lead = c.evidence ? `What the code this commit changed shows: ${c.evidence}\n` : ''
+    // The authored date is a fact the commit states ("in 2024").
+    const dated = c.date ? `\nCommitted ${c.date}.` : ''
+    const short = `${c.repo}\n${title}\n${lead}${messageText(message, RECORDS_LIMITS.commitMessageChars)}${dated}`
+    const full = c.story != null
     return {
       id: `C${i + 1}`,
       kind: 'commit',
-      text: c.story ? `${c.repo}\n${c.title}\n${messageText(message, RECORDS_LIMITS.storyMessageChars)}` : short,
-      short: c.story ? short : undefined,
+      text: full ? `${c.repo}\n${title}\n${lead}${messageText(message, RECORDS_LIMITS.storyMessageChars)}${dated}` : short,
+      short: full ? short : undefined,
       story: c.story,
-      source: { kind: 'commit', label: c.repo, detail: c.title, date: c.date, url: c.url },
+      source: { kind: 'commit', label: c.repo, detail: title, date: c.date, url: c.url },
     }
   })
 }
@@ -249,7 +260,7 @@ function memoryRecords(search: MemorySearch | null): EvidenceRecord[] {
 function budgetRank(r: EvidenceRecord): number {
   if (r.kind === 'said') return 0
   if (r.kind === 'aggregate') return 1
-  if (r.kind === 'commit') return r.story ? 2 : 4
+  if (r.kind === 'commit') return r.story != null ? 2 : 4
   if (r.kind === 'memory') return r.full ? 3 : 5
   return 6
 }
@@ -631,7 +642,9 @@ function checkSentence(s: DraftSentenceOut, byId: Map<string, EvidenceRecord>, a
   const lowerAllowed = allowed.toLowerCase()
   // Words a cited commit or knowledge entry uses ("JSON", "Laravel"). People's names live in session
   // excerpts, so a word found only there must be a tool the sentence declares.
-  const lowerFirm = `${records.filter(r => r.kind !== 'memory').map(r => r.text).join('\n')}\n${questionText}`.toLowerCase()
+  // Identifiers read as their words too: "FedexController" gives "Fedex".
+  const firmText = records.filter(r => r.kind !== 'memory').map(r => r.text).join('\n')
+  const lowerFirm = `${firmText}\n${firmText.replace(/([a-z])([A-Z])/g, '$1 $2')}\n${questionText}`.toLowerCase()
   const lowerSessions = records.filter(r => r.kind === 'memory').map(r => r.text).join('\n').toLowerCase()
   const tools = s.tools.map(t => t.toLowerCase())
   // A plural reads as its record's singular: "Dockerfiles" where the record says "Dockerfile".
@@ -778,7 +791,7 @@ The records:
 - Knowledge base entries [K<id>]: facts Devin has confirmed. The roles that name the subject are listed again under the question, with the lines that name it.
 - What Devin said in this chat [S<n>]: his own words.
 - Counts across his commits [A<n>]: computed by code over every one of his own commits that matches the subject: how many projects and commits, which years, which files. They state how widely he works with it; they say nothing about any one project.
-- His own GitHub commits [C<n>]: authored by Devin, checked against his emails and logins. The candidate stories' commits come with their whole message (as far as the index keeps it), which often explains why and states measured results; the other commits come with their first lines.
+- His own GitHub commits [C<n>]: authored by Devin, checked against his emails and logins. When the app has GitHub evidence for this question, it comes first, with a line on what the code each commit changed shows: that is the most direct evidence there is. The candidate stories' commits come with their whole message (as far as the index keeps it), which often explains why and states measured results; the other commits come with their first lines.
 - Excerpts from his past Claude Code sessions [M<n>]: Devin working with Claude in one of his projects. Most of the text is Claude's words. The best ones come whole.
 
 What the answer is for. A recruiter's screening software reads it first, then a person skims it, and it seeds the interview's follow-up questions. So it leads with the answer, tells one example in depth, and claims exactly what the records show. Build it in this order, one part per sentence:
@@ -853,12 +866,14 @@ function commitSection(records: EvidenceRecord[], footprint: SubjectFootprint | 
   const commits = records.filter(r => r.kind === 'commit')
   const line = (r: EvidenceRecord) => `[${r.id}] ${r.source.label} (describe it as: ${described[r.source.label]?.text || 'a client project'}) | ${r.source.date ?? 'date unknown'} | ${r.text.split('\n').slice(2).join(' ')}`
   const parts: string[] = []
+  const judged = commits.filter(r => r.story === 0)
+  if (judged.length) parts.push(`### His GitHub evidence for this question (judged from the code these commits changed; the most direct evidence)\n${judged.map(line).join('\n')}`)
   for (const [i, st] of (footprint?.stories ?? []).entries()) {
     const own = commits.filter(r => r.story === i + 1)
     if (!own.length) continue
     parts.push(`### Candidate story ${i + 1}: ${described[st.repo]?.text || 'a client project'} (${st.repo}), his work on the subject from ${st.first} to ${st.last}\n${own.map(line).join('\n')}`)
   }
-  const other = commits.filter(r => !r.story)
+  const other = commits.filter(r => r.story == null)
   if (other.length) parts.push(`### Other commits (first lines; for breadth)\n${other.map(line).join('\n')}`)
   return parts.join('\n\n')
 }
@@ -1070,7 +1085,8 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     const anchors = draftAnchors(q.subject ?? null, q.question)
     const footprint = githubSearchAvailable() ? subjectFootprint(subject, anchors) : null
     const roles = roleMentions(entries, subject, anchors)
-    const commits = draftCommits(github, footprint)
+    const suggestion = repoSuggestionsFor([q.id]).get(q.id) ?? null
+    const commits = draftCommits(github, footprint, suggestion)
     // The repos behind the commits need descriptions before the draft can describe them.
     const commitRepos = [...new Set(commits.map(c => c.repo))]
     if (commitRepos.length) {
@@ -1203,7 +1219,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
       const dropped = Object.entries(d.dropped)
       console.info(`[draft-from-records] question ${q.id}${label}: lead "${d.out.lead.story.slice(0, 80)}", level ${d.out.level}; ${d.out.sentences.length} sentences written (${d.out.sentences.map(x => x.part).join(', ')}), ${d.trimmed} trimmed, ${d.kept.length} kept (${d.kept.map(k => k.part).join(', ')})${dropped.length ? ` (dropped: ${dropped.map(([k, v]) => `${v} ${k}`).join(', ')})` : ''}`)
     }
-    console.info(`[draft-from-records] question ${q.id}: ${counts.knowledge} knowledge entries, ${counts.commits} commits (${budget.records.filter(r => r.kind === 'commit' && r.story).length} from stories), ${counts.sessions} sessions (${budget.records.filter(r => r.kind === 'memory' && r.full).length} whole), memory ${memoryUse}, ${footprint ? `counts ${footprint.commits} commits in ${footprint.projects} projects` : 'no counts'}, ${roles.length} roles; records about ${budget.tokens.toLocaleString('en-US')} of ${RECORDS_LIMITS.recordTokens.toLocaleString('en-US')} tokens${budget.cut.length ? `, cut to fit: ${budget.cut.join(', ')}` : ''}`)
+    console.info(`[draft-from-records] question ${q.id}: ${counts.knowledge} knowledge entries, ${counts.commits} commits (${budget.records.filter(r => r.kind === 'commit' && r.story === 0).length} from the GitHub evidence, ${budget.records.filter(r => r.kind === 'commit' && r.story).length} from stories), ${counts.sessions} sessions (${budget.records.filter(r => r.kind === 'memory' && r.full).length} whole), memory ${memoryUse}, ${footprint ? `counts ${footprint.commits} commits in ${footprint.projects} projects` : 'no counts'}, ${roles.length} roles; records about ${budget.tokens.toLocaleString('en-US')} of ${RECORDS_LIMITS.recordTokens.toLocaleString('en-US')} tokens${budget.cut.length ? `, cut to fit: ${budget.cut.join(', ')}` : ''}`)
 
     let draft = await writeAndCheck(null)
     logDraft('', draft)
@@ -1244,7 +1260,9 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
       // Nothing about the subject in what the app can see: say what was searched, pick no level,
       // and offer the nearest work as sentences he can use if he picks Some experience or No.
       const bridge = draft.kept.filter(k => k.part === 'bridge').map(({ part: _part, ...k }) => k)
-      const line = `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(), memoryUse)}).`
+      const line = suggestion
+        ? `Your records show ${q.subject?.trim() || 'this'} only in the GitHub lead on this question, and I could not write an answer from it (searched: ${searchedText(searchedCommitCount(), memoryUse)}).`
+        : `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(), memoryUse)}).`
       console.info(`[draft-from-records] question ${q.id}: nothing found, ${bridge.length} sentences of nearest work offered, no level picked`)
       return {
         ok: true,

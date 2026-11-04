@@ -3,7 +3,7 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import type { QuestionListItem } from '#shared/types/learning'
 import { plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, chatThreadKey, useDraftStepLine, useQuestionChat } from '~/components/questions/chat-store'
+import { draftsFromRecords, EXAMPLE_LEVELS, chatThreadKey, recordsDraftLabel, useDraftStepLine, useQuestionChat } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
 // tap; numbers and short facts take a field; open-ended questions from the original tailoring
@@ -464,7 +464,7 @@ watch(() => props.pick?.nonce, () => {
              Enter adds a line; only Save sends. 4,000 characters is the server's limit. -->
         <div v-else-if="inputType === 'text'" class="d-flex flex-column ga-2">
           <div v-if="recordsDraft" class="question-card__records-label text-body-2">
-            <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ RECORDS_DRAFT_LABEL }}
+            <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ recordsDraftLabel(recordsDraft) }}
           </div>
           <v-textarea
             v-model="draft"
@@ -495,7 +495,7 @@ watch(() => props.pick?.nonce, () => {
           </v-btn>
           <div v-if="editing" class="d-flex flex-column ga-2">
             <div v-if="recordsDraft" class="question-card__records-label text-body-2">
-              <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ RECORDS_DRAFT_LABEL }}
+              <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ recordsDraftLabel(recordsDraft) }}
             </div>
             <v-textarea
               v-model="draft"
@@ -528,7 +528,7 @@ watch(() => props.pick?.nonce, () => {
           Tap Yes or Some experience above, then save.
         </p>
         <div v-if="recordsDraft" class="question-card__records-label text-body-2">
-          <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ RECORDS_DRAFT_LABEL }}
+          <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ recordsDraftLabel(recordsDraft) }}
         </div>
         <v-textarea
           :id="exampleBoxId"

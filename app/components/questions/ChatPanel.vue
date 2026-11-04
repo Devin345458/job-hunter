@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, useDraftStepLine, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
+import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, recordsDraftLabel, takesExample, useDraftStepLine, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
 import type { RecordsDraft } from '#shared/types/question-chat'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
@@ -283,7 +283,7 @@ defineExpose({ focus: () => input.value?.focus() })
           <QuestionsChatGithub v-if="m.role === 'assistant' && m.github" :search="m.github" />
 
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
-            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ m.records ? RECORDS_DRAFT_LABEL : exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
+            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ m.records ? recordsDraftLabel(m.records) : exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
             <QuestionsRecordsSources v-if="m.records" :draft="m.records" />
             <div v-else class="question-chat__draft-text">{{ m.draft }}</div>
             <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
