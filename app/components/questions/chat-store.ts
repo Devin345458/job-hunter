@@ -230,6 +230,8 @@ export function useQuestionChat() {
     const timer = setInterval(() => readStatus().then(showStatus), 2000)
     /** A draft the request handed off (still running at its wait, or the request was cut off): wait for it here. */
     const collect = async (): Promise<RecordsDraftResponse | null> => {
+      // This loop reads the status itself from here on.
+      clearInterval(timer)
       for (let misses = 0; misses < 3;) {
         await new Promise(r => setTimeout(r, 2000))
         const st = await readStatus()
