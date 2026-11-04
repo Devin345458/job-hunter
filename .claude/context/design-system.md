@@ -82,6 +82,10 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. `font-var
 | Settings sub page header | h1 and one gray line from `settingsPages.ts` (or none); no "Settings" label above it | `app/components/settings/PageHeader.vue` |
 | Settings list row (phone) | 72px minimum, 20px icon in medium emphasis, 15px/600 title with a status tag, 13px line, chevron | `app/pages/settings/index.vue` |
 | Toast | Desktop bottom left, 280 to 340px wide, clear of the decision bar; phone top | `app/components/AppSnackbar.vue` |
+| Menu | Floats on `surface-bright`, one step above the card it opens from | `global.scss` |
+| Switch | Off: a light gray thumb on a `surface-light` track; on: the color the screen gives it | `global.scss` |
+| Blocking mark | A 3px amber left edge and the amber "Blocks an approval" label, the same on the Questions page and the Send card; questions that do not block are plain raised panels | `QuestionCard.vue`, `ReviewQuestions.vue` |
+| Gap plan item | The requirement as the heading, the plan's decision under it in gray with its icon, "Must have" in ink | `DemoGapAnalysis.vue` |
 | Phone sub page app bar | Back arrow to the list in place of the menu button, title is the sub page | `app/layouts/default.vue` |
 
 ## Decisions
