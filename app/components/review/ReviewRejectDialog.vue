@@ -86,6 +86,12 @@ function listText(xs: string[]) {
   return `${xs.slice(0, -1).join(', ')}, and ${xs[xs.length - 1]}`
 }
 
+/** The chip's text: the whole requirement when the short name is only its start and it fits. */
+function chipText(o: RejectSkillOption): string {
+  const req = o.requirement?.trim() ?? ''
+  return req.length > 0 && req.length <= 60 && req.toLowerCase().startsWith(o.label.toLowerCase()) ? req : o.label
+}
+
 function toggleSkill(label: string) {
   skills.value = skills.value.includes(label) ? skills.value.filter(s => s !== label) : [...skills.value, label]
 }
@@ -153,7 +159,7 @@ function confirm() {
                 @click="toggleSkill(o.label)"
               >
                 <v-icon :icon="skills.includes(o.label) ? 'mdi-checkbox-marked' : 'mdi-checkbox-blank-outline'" size="18" />
-                <span>{{ o.label }}</span>
+                <span>{{ chipText(o) }}</span>
               </button>
             </div>
           </div>

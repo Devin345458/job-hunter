@@ -1,4 +1,5 @@
 <script lang="ts">
+import { APP_STATE_LABEL } from '#shared/utils/app-state'
 import { GROUP_LABEL, statusesIn } from '~/composables/review/format'
 
 // Filter strip for the applications list: one chip per stage with its count. The stages follow
@@ -13,7 +14,7 @@ const WAITING_ON_YOU: string[] = ['needs_input']
 export const STAGES: Array<{ key: StageKey; label: string; statuses: string[] }> = [
   { key: 'all', label: 'All', statuses: [] },
   { key: 'decide', label: GROUP_LABEL.decide, statuses: statusesIn('decide') },
-  { key: 'send', label: GROUP_LABEL.send, statuses: statusesIn('send').filter(s => !WAITING_ON_YOU.includes(s)) },
+  { key: 'send', label: APP_STATE_LABEL.proposed!, statuses: statusesIn('send').filter(s => !WAITING_ON_YOU.includes(s)) },
   { key: 'needs_you', label: GROUP_LABEL.attention, statuses: [...WAITING_ON_YOU, ...statusesIn('attention')] },
   { key: 'working', label: 'In progress', statuses: [...statusesIn('preparing'), ...statusesIn('sending')] },
   { key: 'sent', label: GROUP_LABEL.sent, statuses: [...statusesIn('sent'), 'response_received', 'interviewing', 'offer'] },

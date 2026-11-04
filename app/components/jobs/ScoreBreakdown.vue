@@ -4,6 +4,7 @@ import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
+import { clockTime } from '~/composables/review/format'
 
 interface HistoryRow {
   score: number
@@ -213,7 +214,7 @@ function signed(n: number) {
           Score history
         </div>
         <div v-for="(h, i) in history" :key="i" class="score-breakdown__history text-caption">
-          <span>{{ h.computedAt }}</span>
+          <span>{{ clockTime(h.computedAt) }}</span>
           <span class="text-medium-emphasis">{{ h.reason.replace('_', ' ') }}</span>
           <strong>{{ h.score }}</strong>
         </div>

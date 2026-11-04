@@ -48,7 +48,7 @@ const orderedIndex = computed(() => ordered.value.findIndex(x => x.applicationId
 const GROUP_POSITION: Record<'decide' | 'preparing' | 'send' | 'attention' | 'sending' | 'sent', string> = {
   decide: 'to decide',
   preparing: 'preparing',
-  send: 'ready to send',
+  send: 'to send',
   attention: 'need you',
   sending: 'sending',
   sent: 'submitted',
@@ -120,7 +120,7 @@ async function apply() {
     health.refresh()
     const next = nextDecideAfter(item.applicationId, snapshot)
     snackbar.notify(
-      `Preparing: ${item.job.title} at ${item.job.company}. It comes back under Ready to send.`,
+      `Preparing: ${item.job.title} at ${item.job.company}. It comes back under To send.`,
       'success',
       { timeout: 6000, action: next ? { text: 'Show', handler: () => select(item.applicationId) } : undefined },
     )
@@ -258,10 +258,10 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
 
-/** "3 to decide, 17 ready to send": only the numbers take tabular figures, so the comma keeps its own width. */
+/** "3 to decide, 17 to send": only the numbers take tabular figures, so the comma keeps its own width. */
 const leftParts = computed(() => [
   { n: groups.value.decide.length, text: 'to decide' },
-  { n: groups.value.send.length, text: 'ready to send' },
+  { n: groups.value.send.length, text: 'to send' },
 ].filter(p => p.n > 0))
 </script>
 

@@ -175,7 +175,6 @@ onBeforeUnmount(cancelTimers)
             :max="100"
             :step="5"
             hide-details
-            thumb-label
             color="primary"
             aria-labelledby="job-filters-score-label"
           />
@@ -225,7 +224,7 @@ onBeforeUnmount(cancelTimers)
   }
 
   &__work-type {
-    flex: 0 0 150px;
+    flex: 0 0 168px;
   }
 
   // The label sits above the slider; the pair is as tall as a 40px field.

@@ -43,7 +43,8 @@ export const REVIEW_STATUS: Partial<Record<ApplicationStatus, StatusMeta>> = {
 export const GROUP_LABEL: Record<ReviewGroup, string> = {
   decide: 'To decide',
   preparing: 'Preparing',
-  send: 'Ready to send',
+  // Ready to send plus the prepared ones waiting on an answer; "Ready to send" is the state's own name.
+  send: 'To send',
   attention: 'Needs you',
   sending: 'Sending',
   sent: 'Submitted',
