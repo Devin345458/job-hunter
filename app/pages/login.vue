@@ -35,15 +35,20 @@ async function submit() {
       <div class="login">
       <div class="login__panel">
         <div class="login__brand">
-          <v-icon icon="mdi-target" color="primary" size="28" />
+          <!-- The app's mark: the match score's ring, nearly full, in the score hue. -->
+          <svg class="login__mark" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="16" cy="16" r="12" class="login__mark-track" />
+            <circle cx="16" cy="16" r="12" class="login__mark-arc" pathLength="100" stroke-dasharray="92 100" transform="rotate(-90 16 16)" />
+          </svg>
           <span>Job Hunter</span>
         </div>
         <h1 class="login__title">Sign in</h1>
         <p class="login__sub">This app acts under your name. Only the owner password opens it.</p>
         <form @submit.prevent="submit">
+          <label class="field-label" for="login-password">Password</label>
           <v-text-field
+            id="login-password"
             v-model="password"
-            label="Password"
             :type="show ? 'text' : 'password'"
             autocomplete="current-password"
             autofocus
@@ -64,7 +69,7 @@ async function submit() {
               />
             </template>
           </v-text-field>
-          <v-btn type="submit" color="primary" size="large" block :loading="busy" :disabled="!password" rounded="md">
+          <v-btn type="submit" color="primary" size="large" block :loading="busy" :disabled="!password" :title="password ? undefined : 'Enter the password first'" rounded="md">
             Sign in
           </v-btn>
         </form>
@@ -83,9 +88,12 @@ async function submit() {
   padding: 0 16px;
 
   &__panel { width: 100%; max-width: 380px; padding: 32px 24px; }
-  &__brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; margin-bottom: 28px; }
-  &__title { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
-  &__sub { opacity: 0.6; font-size: 14px; margin: 0 0 24px; }
+  &__brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; margin-bottom: 28px; }
+  &__mark { width: 28px; height: 28px; fill: none; stroke-width: 4; }
+  &__mark-track { stroke: rgb(var(--v-theme-surface-light)); }
+  &__mark-arc { stroke: rgb(var(--v-theme-score)); stroke-linecap: round; }
+  &__title { font-size: 24px; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 4px; }
+  &__sub { color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); font-size: 14px; margin: 0 0 24px; }
   &__eye { margin-inline-end: -4px; }
 }
 </style>
