@@ -529,6 +529,13 @@ export const ADDRESS_QUESTION: FactQuestion = {
 /** Labels about someone other than Devin: a reference, an emergency contact, a school, an employer. */
 const SOMEONE_ELSE = /\b(emergency|reference|references|referr\w*|referred|recruiter|supervisor|manager|spouse|partner s|parent|guardian|employer|company|school|university|college|hiring|interviewer|who)\b/
 
+/**
+ * SOMEONE_ELSE without "hiring": CircleCI asks for "LinkedIn Profile (... to help us verify
+ * application information and maintain the integrity of our hiring process)", which is Devin's own
+ * profile. A hiring manager's profile is still excluded by "manager".
+ */
+const SOMEONE_ELSES_LINKEDIN = /\b(emergency|reference|references|referr\w*|referred|recruiter|supervisor|manager|spouse|partner s|parent|guardian|employer|company|school|university|college|interviewer|who)\b/
+
 const NAME_Q: FactQuestion = { kind: 'fact', subject: 'full name', question: 'What is your full legal name?', knowledgeKey: 'profile:Full Name', answerType: 'text', category: 'technical' }
 
 const valueOf = (key: FactKey) => (v: FactValues) => v[key] ?? null
@@ -586,6 +593,8 @@ const WORK_FACTS: Array<FactDef & { kb: string[] }> = [
     group: 'work',
     label: 'salary expectation',
     matchRaw: /salary|compensation (expectation|requirement)|expected (pay|compensation|salary)|desired (pay|salary|compensation)|pay expectation|compensation expectation|rate expectation|expected annual/i,
+    // "Do you accept the listed salary range for this position?" is a yes or no, not his number.
+    exclude: /\b(do you accept|are you (ok|okay|comfortable|fine) with|do you agree|is (this|the) (salary|range|pay) (acceptable|ok|okay))\b/,
     value: valueOf('work.salary'),
     statement: v => v['work.salary'] ? `Devin's salary expectation (from his knowledge base): ${v['work.salary'].value}` : null,
     ask: { kind: 'preference', subject: 'salary expectation', question: 'What salary should applications list as your expectation?', knowledgeKey: 'preference:Target Salary', answerType: 'text', category: 'preference' },
@@ -635,7 +644,7 @@ export const PERSONAL_FACTS: FactDef[] = [
     group: 'contact',
     label: 'LinkedIn URL',
     match: /linked ?in/,
-    exclude: SOMEONE_ELSE,
+    exclude: SOMEONE_ELSES_LINKEDIN,
     value: valueOf('contact.linkedin'),
     statement: v => v['contact.linkedin'] ? `Devin's LinkedIn profile: ${v['contact.linkedin'].value}` : null,
     ask: { kind: 'fact', subject: 'LinkedIn URL', question: 'What is your LinkedIn profile URL? Answer "none" if you do not use LinkedIn.', knowledgeKey: 'profile:LinkedIn', answerType: 'text', category: 'technical' },
@@ -794,7 +803,9 @@ export const PERSONAL_FACTS: FactDef[] = [
     // The location statement goes to mapToOptions for these: "Are you based in the US or Canada?",
     // "Do you live within commuting distance of Austin?", "State where you will work".
     /where are you (currently )?(located|based)|are you (currently )?(based|located|living|residing) in|do you (currently )?(reside|live)|state where you (will )?(reside|live|work)|(country|city|state) (are|do) you (currently )?(based|located|live|reside)|where do you live/, ['city', 'state'],
-    { value: () => null, statement: locationStatement }),
+    // "Are you located in and willing to work in the location where the job is posted?" (CircleCI)
+    // asks a yes or no about the job's location, not where he lives: it gets its own form question.
+    { value: () => null, statement: locationStatement, exclude: new RegExp(`${SOMEONE_ELSE.source}|\\bwilling\\b|\\bwhere the job is\\b`) }),
   {
     key: 'contact.website',
     storeKey: 'profile:Website',

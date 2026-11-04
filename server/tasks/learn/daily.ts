@@ -10,10 +10,16 @@ export default defineTask({
   },
   async run({ payload }) {
     const outcome = await withRun('learn:daily', triggerOf(payload), async (log) => {
+      // Once after the deploy: labels the skips made before reasons were recorded, and gives every
+      // subject one open or answered question again.
+      const repair = repairQuestionSkipsOnce(log)
       const tidy = await tidyFactQuestions(log)
+      const released = await releaseMisreadFactFields(log)
       const learned = await runDailyLearning(log)
       return {
         ...learned,
+        ...(repair.ran ? { skipRepairLabeled: repair.labeled.length, skipRepairMerged: repair.merged.length, skipRepairReopened: repair.reopened.length } : {}),
+        misreadFieldsReleased: released.length,
         factQuestionsMerged: tidy.merged.length,
         factQuestionsAnswered: tidy.derived.length,
         factQuestionsReworded: tidy.reworded.length,

@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { z } from 'zod'
 import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
-import { applications, jobs, questions } from '../db/schema'
+import { applications, appSettings, jobs, questions } from '../db/schema'
 import type { FormAnswer, GapAnalysis, Requirement } from '#shared/types/pipeline'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
 import { aiStructured, cachedPrompt, fallbackModel } from './ai'
@@ -30,6 +30,7 @@ import { nowSql, parseJson, referencedQuestionIds } from './review'
 import { queueSkillRescore, rescoreJobs } from './scoring'
 import { applyAnswerToOpenJobs } from './skill-claims'
 import { NOT_A_GAP } from '#shared/utils/requirement-kinds'
+import { sameSubject } from './skills-judge'
 import { queueRepoSuggest, repoSuggestionsFor } from './repos/suggest-store'
 
 export type QuestionRow = InferSelectModel<typeof questions>
@@ -66,18 +67,28 @@ export function dedupeKeyOf(kind: string, subject: string) {
 export function askQuestion(input: AskInput): QuestionRow {
   const db = useDb()
   const dedupeKey = dedupeKeyOf(input.kind, input.subject)
+  const reuse = (q: QuestionRow): QuestionRow => {
+    if (input.blocking && !q.blocking && q.status === 'pending') {
+      db.update(questions).set({ blocking: true }).where(eq(questions.id, q.id)).run()
+      return { ...q, blocking: true }
+    }
+    return q
+  }
   const existing = db.select().from(questions)
     .where(and(eq(questions.dedupeKey, dedupeKey), inArray(questions.status, ['pending', 'answered'])))
     .all()
   const answered = existing.find(q => q.status === 'answered')
   if (answered) return answered
   const pending = existing.find(q => q.status === 'pending')
-  if (pending) {
-    if (input.blocking && !pending.blocking) {
-      db.update(questions).set({ blocking: true }).where(eq(questions.id, pending.id)).run()
-      return { ...pending, blocking: true }
-    }
-    return pending
+  if (pending) return reuse(pending)
+  // Asked before and merged into another question: that one is the question to wait on. Without
+  // this, a refresh that re-asked a merged form question created it again on every run.
+  const merged = existing.length ? null : mergedCanonicalFor(dedupeKey)
+  if (merged) return reuse(merged)
+  // The same skill or experience in other words ("Expert-level Python", "Python3"): one question.
+  if (input.kind === 'knows' || input.kind === 'has_done') {
+    const same = sameSkillQuestion(input.subject)
+    if (same) return reuse(same)
   }
   const row = db.insert(questions).values({
     question: input.question,
@@ -211,7 +222,7 @@ export function knowledgeCovers(subject: string): KnowledgeEntry | null {
 /** Single words that name a trait or a whole field, not a skill someone can say yes or no to. */
 const GENERIC_WORDS = new Set(['api', 'apis', 'rest', 'rest apis', 'sdks', 'saas', 'b2b', 'learning', 'coding', 'programming', 'development', 'software', 'engineering', 'collaboration', 'teamwork', 'ownership', 'leadership', 'mentoring', 'problem solving', 'curiosity', 'creativity', 'debugging', 'architecture', 'design', 'quality', 'security', 'data', 'ai', 'ml', 'cloud', 'web', 'mobile', 'backend', 'frontend', 'full stack', 'fullstack'])
 
-const HUMAN_LANGUAGE = /\b(english|spanish|french|german|portuguese|communication|written|verbal)\b/i
+const HUMAN_LANGUAGE = /\b(english|ingl[eé]s|spanish|french|german|portuguese|russian|italian|dutch|mandarin|chinese|japanese|korean|hindi|arabic|communication|written|verbal)\b/i
 
 /**
  * The skill a requirement line names, or null when it is not a skill worth asking about.
@@ -575,6 +586,8 @@ export function toQuestionListItem(
     ...(waitingApplications ? { waitingApplications } : {}),
     legacy: isLegacyQuestion(q),
     repoSuggestion: q.status === 'pending' && takesExample(q) ? repoSuggestion : null,
+    skippedBy: q.status === 'skipped' ? (appSkipNote(q) ? 'app' : 'you') : null,
+    skipNote: appSkipNote(q),
   }
 }
 
@@ -740,22 +753,45 @@ export async function setQuestionExample(id: number, example: string): Promise<A
   return await answerQuestion(id, q.answer!, example)
 }
 
-/** Skip for now. A later pipeline run may ask again; askQuestion() only dedupes pending and answered rows. */
+/**
+ * Devin skips it for now. A later pipeline run may ask again; askQuestion() only dedupes pending and
+ * answered rows. Any note the app left is dropped, so the Questions page lists it as his own skip.
+ */
 export function skipQuestion(id: number): QuestionListItem {
   const db = useDb()
   const q = db.select().from(questions).where(eq(questions.id, id)).get()
   if (!q) throw createError({ statusCode: 404, statusMessage: 'Question not found' })
-  db.update(questions).set({ status: 'skipped' }).where(eq(questions.id, id)).run()
+  db.update(questions).set({ status: 'skipped', context: withoutAppNote(q.context) }).where(eq(questions.id, id)).run()
   return questionItem(id)
 }
 
-/** Puts a skipped question back in the pending list. */
+/** app_settings key: questions Devin reopened after the app skipped them. The tidy does not skip them again. */
+const REOPENED_KEY = 'questions_reopened'
+
+function reopenedIds(): Set<number> {
+  const row = useDb().select().from(appSettings).where(eq(appSettings.key, REOPENED_KEY)).get()
+  return new Set(parseJson<number[]>(row?.valueJson, []))
+}
+
+function rememberReopened(id: number) {
+  const ids = reopenedIds()
+  if (ids.has(id)) return
+  const valueJson = JSON.stringify([...ids, id].sort((a, b) => a - b))
+  useDb().insert(appSettings).values({ key: REOPENED_KEY, valueJson, updatedAt: nowSql() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
+}
+
+/**
+ * Puts a skipped question back in the pending list. A question the app skipped loses the app's note,
+ * and the tidy leaves it open from then on (a merged duplicate is still merged again).
+ */
 export function reopenQuestion(id: number): QuestionListItem {
   const db = useDb()
   const q = db.select().from(questions).where(eq(questions.id, id)).get()
   if (!q) throw createError({ statusCode: 404, statusMessage: 'Question not found' })
   if (q.status !== 'skipped') throw createError({ statusCode: 409, statusMessage: 'Only a skipped question can be reopened' })
-  db.update(questions).set({ status: 'pending' }).where(eq(questions.id, id)).run()
+  if (appSkipNote(q)) rememberReopened(id)
+  db.update(questions).set({ status: 'pending', context: withoutAppNote(q.context) }).where(eq(questions.id, id)).run()
   return questionItem(id)
 }
 
@@ -838,53 +874,256 @@ const MAX_NEW_SKILL_QUESTIONS_PER_RUN = 40
 /** Skill questions come only from open jobs scoring at least this; the prepare threshold is 70. */
 const QUESTION_SCORE_FLOOR = 50
 
-/**
- * Called by learn:daily. Asks for the pay floor when it is unknown, and asks "Do you know X?"
- * for short technology requirements that open real jobs need and the knowledge base does not
- * cover (a must-have in one job, or any requirement in two or more). At most five new per day.
- * Sandbox jobs never create questions.
- */
-/**
- * Keeps "knows" questions plain and unique. Runs before each day's new questions and is safe to
- * repeat. Every pending, non-blocking "knows" question gets its skill name cleaned
- * ("2+ years of experience with LangChain" becomes LangChain, "Golang" becomes Go), then:
- * - skipped when it is not a skill worth asking (English, communication) or the knowledge base
- *   already covers it (HTML is implied by JavaScript and CSS);
- * - skipped when an answered question or an older pending one already asks the same thing;
- * - otherwise reworded in plain language.
- * Questions an application waits on are never touched. Skipped questions can be reopened.
- */
-export function tidyKnowsQuestions(): { reworded: number; skipped: number } {
-  const db = useDb()
-  const rows = db.select().from(questions).where(and(eq(questions.kind, 'knows'), inArray(questions.status, ['pending', 'answered']))).all()
-  const cleanOf = (q: QuestionRow) => cleanSkillSubject(q.subject || q.question.replace(/^(Do you know|Have you (used|worked with))\s+/, '').replace(/( in a real project)?\?$/, ''))
-  const taken = new Set<string>()
-  const overlaps = (subject: string) => taken.has(ruleTerm(subject)) || subject.split(/\s+/).some(w => w.length > 1 && taken.has(ruleTerm(w)))
-  for (const q of rows.filter(r => r.status === 'answered' || r.blocking)) {
-    const c = cleanOf(q)
-    if (c) taken.add(ruleTerm(c))
-    if (q.subject) taken.add(ruleTerm(q.subject))
+/** The skill a knows question names, read from its subject or, for old rows, its wording. */
+function knowsRawSubject(q: QuestionRow): string {
+  return (q.subject || q.question.replace(/^(Do you know|Have you (used|worked with))\s+/, '').replace(/( in a real project)?\?$/, '')).replace(/\s+/g, ' ').trim()
+}
+
+/** Question ids a waiting application's gap plan points at. */
+function gapPlanQuestionIds(): Set<number> {
+  const ids = new Set<number>()
+  for (const a of useDb().select({ gapAnalysisJson: applications.gapAnalysisJson }).from(applications).where(inArray(applications.status, WAITING_STATUSES)).all()) {
+    for (const i of parseJson<GapAnalysis | null>(a.gapAnalysisJson, null)?.items ?? []) {
+      if (typeof i.questionId === 'number') ids.add(i.questionId)
+    }
   }
-  let reworded = 0
-  let skipped = 0
-  for (const q of rows.filter(r => r.status === 'pending' && !r.blocking).sort((a, b) => a.id - b.id)) {
-    const subject = cleanOf(q)
-    const term = subject ? ruleTerm(subject) : null
-    if (!subject || !term || knowledgeCovers(subject) || overlaps(subject)) {
-      db.update(questions).set({ status: 'skipped' }).where(eq(questions.id, q.id)).run()
-      skipped++
+  return ids
+}
+
+/** A list of three or more skills ("OAuth, SAML, or SCIM") that one yes or no cannot answer. */
+function isSkillList(subject: string): boolean {
+  const commas = (subject.match(/,/g) ?? []).length
+  return commas >= 2 || (commas >= 1 && /\s(or|and)\s/i.test(subject))
+}
+
+const JOB_TITLE = /\b(senior|junior|staff|principal|lead|developer|engineer|manager|architect|specialist|analyst)s?\b/i
+
+/**
+ * What a knows question asks about, or why the app skips it. A subject the scoring call chose for a
+ * job's gap plan (the question carries an application) is a skill as written: "React", "Figma or
+ * Sketch", and "FHIR and HL7" are real questions. Only a trait, a spoken language, a job title, or a
+ * list of three or more skills is not. A subject parsed from requirement text by the daily questions
+ * goes through cleanSkillSubject(), which also rejects plain phrases.
+ */
+function knowsVerdict(q: QuestionRow, gapIds: Set<number>): { subject: string } | { reason: string } {
+  const raw = knowsRawSubject(q)
+  if (isSkillList(raw)) return { reason: `it lists several skills at once (${raw}), so one yes or no cannot answer it` }
+  const core = skillCore(raw)
+  if (HUMAN_LANGUAGE.test(raw)) return { reason: `a spoken language or a communication trait, not a technical skill ("${raw}")` }
+  if (GENERIC_WORDS.has(core.toLowerCase()) || JOB_TITLE.test(raw)) return { reason: `not a skill question ("${raw}")` }
+  // The daily questions' subjects were cleaned when asked; an older one may still read "2+ years of
+  // LangChain". A subject the tidy already cleaned ("Java", "Kotlin") is kept: cleanSkillSubject()
+  // reads a one-word name as a plain word, because requirement text starts with a capital.
+  const fromGapPlan = q.applicationId != null || gapIds.has(q.id)
+  const subject = fromGapPlan ? (DISPLAY_ALIASES[raw.toLowerCase()] ?? raw) : (cleanSkillSubject(raw) ?? raw)
+  // The bare name too: "Git version control" is worded "Git" once open, and the knowledge base covers Git.
+  const bySubject = knowledgeCovers(subject)
+  const covered = bySubject ?? knowledgeCovers(core)
+  if (covered) return { reason: `your knowledge base already covers ${bySubject ? subject : core} (${covered.category}: ${covered.key})` }
+  return { subject }
+}
+
+/** Points waiting applications' gap plans and form answers at the question each duplicate was merged into. */
+function repointMerged(mergeMap: Map<number, number>): number[] {
+  if (mergeMap.size === 0) return []
+  const db = useDb()
+  const resolveId = (id: number) => {
+    let cur = id
+    for (let hops = 0; mergeMap.has(cur) && hops < 10; hops++) cur = mergeMap.get(cur)!
+    return cur
+  }
+  const changedApps: number[] = []
+  for (const app of db.select().from(applications).where(inArray(applications.status, WAITING_STATUSES)).all()) {
+    const gap = parseJson<GapAnalysis | null>(app.gapAnalysisJson, null)
+    let gapChanged = false
+    for (const item of gap?.items ?? []) {
+      if (typeof item.questionId === 'number' && resolveId(item.questionId) !== item.questionId) {
+        item.questionId = resolveId(item.questionId)
+        gapChanged = true
+      }
+    }
+    const answers = parseJson<FormAnswer[]>(app.answersJson, [])
+    let answersChanged = false
+    for (const a of answers) {
+      // Assignments keep each answer's key order, which releaseStaleQuestions' LIKE match relies on.
+      if (typeof a.needsQuestionId === 'number' && resolveId(a.needsQuestionId) !== a.needsQuestionId) {
+        a.needsQuestionId = resolveId(a.needsQuestionId)
+        answersChanged = true
+      }
+      const ref = a.sourceDetail?.match(/question #(\d+)/)
+      if (ref && resolveId(Number(ref[1])) !== Number(ref[1])) {
+        a.sourceDetail = a.sourceDetail!.replace(/question #\d+/, `question #${resolveId(Number(ref[1]))}`)
+        answersChanged = true
+      }
+    }
+    if (gapChanged || answersChanged) {
+      db.update(applications).set({
+        ...(gapChanged ? { gapAnalysisJson: JSON.stringify(gap) } : {}),
+        ...(answersChanged ? { answersJson: JSON.stringify(answers) } : {}),
+        updatedAt: nowSql(),
+      }).where(eq(applications.id, app.id)).run()
+      changedApps.push(app.id)
+    }
+  }
+  return changedApps
+}
+
+/**
+ * Keeps one question per skill or experience. Runs before each day's new questions and is safe to
+ * repeat (a second run changes nothing). Every pending, non-blocking question, oldest first:
+ * - a knows question that is not a skill worth asking (English, a trait, a list of skills) or that
+ *   the knowledge base already covers (Docker through Kubernetes) is skipped, with the reason at the
+ *   start of its context ("Skipped by the app: ...");
+ * - a question about the same skill or experience as an answered one, or an older open one
+ *   (sameSkill: "Expert-level Python" and "Python3" are Python), is merged into it with the note
+ *   "Merged into question #N", and waiting applications point at that question instead;
+ * - an open knows question is worded plainly for the shortest name its group used ("Python").
+ * So a subject never loses every question: one stays open (or answered) and the rest point at it.
+ * Questions an application blocks on, and ones Devin reopened, are never skipped; reopened
+ * duplicates are still merged. Skipped questions can be reopened.
+ */
+export function tidyKnowsQuestions(): { reworded: number; skipped: number; merged: number } {
+  const db = useDb()
+  const rows = db.select().from(questions)
+    .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+    .sort((a, b) => a.id - b.id)
+  const gapIds = gapPlanQuestionIds()
+  const reopened = reopenedIds()
+  const subjectOf = new Map<number, string>()
+  // Answered and blocking questions anchor their subject: they are never merged or skipped.
+  const canon: QuestionRow[] = rows.filter(r => r.status === 'answered').concat(rows.filter(r => r.status === 'pending' && r.blocking))
+  for (const q of canon) subjectOf.set(q.id, q.kind === 'knows' ? knowsRawSubject(q) : (q.subject ?? q.question))
+  const skips: Array<{ q: QuestionRow; reason: string }> = []
+  const groups = new Map<number, QuestionRow[]>()
+  for (const q of rows.filter(r => r.status === 'pending' && !r.blocking)) {
+    let subject = (q.subject ?? '').trim() || q.question
+    if (q.kind === 'knows') {
+      const verdict = knowsVerdict(q, gapIds)
+      if ('reason' in verdict) {
+        if (!reopened.has(q.id)) {
+          skips.push({ q, reason: verdict.reason })
+          continue
+        }
+        subject = knowsRawSubject(q)
+      }
+      else {
+        subject = verdict.subject
+      }
+    }
+    const into = canon.find(c => sameSkill(subjectOf.get(c.id)!, subject))
+    if (into) {
+      groups.set(into.id, [...(groups.get(into.id) ?? []), q])
       continue
     }
-    taken.add(term)
-    const text = q.question.startsWith('Do you know ') || q.question.startsWith('Have you used ') || q.question.startsWith('Have you worked with ')
+    subjectOf.set(q.id, subject)
+    canon.push(q)
+  }
+
+  // Each open knows question is worded for the shortest name its group used, before the duplicates'
+  // notes quote it: "Proficient in Python" (the oldest) becomes "Python". A gap plan's question
+  // keeps the wording the scoring call gave it ("Have you used Temporal or a similar workflow
+  // orchestration tool?") until its subject changes.
+  let reworded = 0
+  for (const c of canon) {
+    if (c.status !== 'pending' || c.kind !== 'knows') continue
+    const names = [subjectOf.get(c.id)!, ...(groups.get(c.id) ?? []).map(d => knowsVerdict(d, gapIds)).map(v => ('subject' in v ? v.subject : null)).filter((s): s is string => !!s)]
+    const cores = names.map(skillCore).filter(n => n && !GENERIC_WORDS.has(n.toLowerCase()))
+    const subject = cores.sort((a, b) => a.length - b.length)[0] ?? subjectOf.get(c.id)!
+    const fromGapPlan = c.applicationId != null || gapIds.has(c.id)
+    const template = c.question.startsWith('Do you know ') || c.question.startsWith('Have you used ') || c.question.startsWith('Have you worked with ')
+    const text = template && (!fromGapPlan || subject !== c.subject)
       ? knowsQuestionText(subject)
-      : q.question
-    if (text !== q.question || subject !== q.subject) {
-      db.update(questions).set({ question: text, subject, dedupeKey: dedupeKeyOf('knows', subject), knowledgeKey: `skill:${subject}` }).where(eq(questions.id, q.id)).run()
+      : c.question
+    if (text !== c.question || subject !== c.subject) {
+      db.update(questions).set({ question: text, subject, dedupeKey: dedupeKeyOf('knows', subject), knowledgeKey: `skill:${subject}` }).where(eq(questions.id, c.id)).run()
+      Object.assign(c, { question: text, subject })
       reworded++
     }
   }
-  return { reworded, skipped }
+
+  const mergeMap = new Map<number, number>()
+  for (const [intoId, dups] of groups) {
+    const into = canon.find(c => c.id === intoId)!
+    for (const d of dups) {
+      mergeInto(d, into)
+      mergeMap.set(d.id, intoId)
+    }
+  }
+  for (const s of skips) appSkip(s.q, s.reason)
+  repointMerged(mergeMap)
+  return { reworded, skipped: skips.length, merged: mergeMap.size }
+}
+
+/** app_settings key: set once the skips made before reasons were recorded have been labeled. */
+const SKIP_REPAIR_KEY = 'question_skip_repair'
+
+export interface SkipRepairResult {
+  ran: boolean
+  /** Skips labeled with the reason the app had. */
+  labeled: Array<{ id: number; note: string }>
+  /** Merged into the open or answered question on the same subject. */
+  merged: Array<{ id: number; into: number }>
+  /** Reopened: the subject had no open or answered question left. */
+  reopened: number[]
+}
+
+/**
+ * Runs once (an app_settings marker), at the start of the first learn:daily after the deploy.
+ * Before reasons were recorded, the knows tidy skipped questions without a note, so Devin read
+ * them as his own skips, and it read one-word tools ("React", "Python") as plain words, so every
+ * question about some subjects was skipped. Additive only: no row is deleted and no answer changes.
+ * - Each skipped knows question without a note is judged again: a reason the app still has is
+ *   written on it; one about the same subject as an open or answered question is merged into that
+ *   one; otherwise it is reopened, the oldest first, so the subject has one question again.
+ * - A skipped form or fact question without a note (a form that stopped asking, a misread field)
+ *   gets "Skipped by the app before reasons were recorded."
+ * - Skill, experience, preference, and other questions without a note were skipped by Devin
+ *   (the app never skipped those silently) and stay as they are.
+ * The knows tidy runs before (so merge notes quote settled wording) and after (for the reopened ones).
+ */
+export function repairQuestionSkipsOnce(log: (m: string) => void = () => {}): SkipRepairResult {
+  const db = useDb()
+  const result: SkipRepairResult = { ran: false, labeled: [], merged: [], reopened: [] }
+  if (db.select().from(appSettings).where(eq(appSettings.key, SKIP_REPAIR_KEY)).get()) return result
+  result.ran = true
+  tidyKnowsQuestions()
+  const gapIds = gapPlanQuestionIds()
+  const unlabeled = db.select().from(questions).where(eq(questions.status, 'skipped')).all()
+    .filter(q => !q.context || !APP_SKIP_NOTE.test(q.context))
+    .sort((a, b) => a.id - b.id)
+  const mergeMap = new Map<number, number>()
+  for (const q of unlabeled) {
+    if (q.kind === 'form_field' || q.kind === 'fact') {
+      const context = q.context ? `${APP_SKIP_UNKNOWN} ${q.context}` : APP_SKIP_UNKNOWN
+      db.update(questions).set({ context }).where(eq(questions.id, q.id)).run()
+      result.labeled.push({ id: q.id, note: APP_SKIP_UNKNOWN })
+      continue
+    }
+    if (q.kind !== 'knows') continue
+    const verdict = knowsVerdict(q, gapIds)
+    if ('reason' in verdict) {
+      appSkip(q, verdict.reason)
+      result.labeled.push({ id: q.id, note: `${APP_SKIP_PREFIX}${verdict.reason}.` })
+      continue
+    }
+    const into = sameSkillQuestion(verdict.subject)
+    if (into) {
+      mergeInto(q, into)
+      mergeMap.set(q.id, into.id)
+      result.merged.push({ id: q.id, into: into.id })
+      continue
+    }
+    db.update(questions).set({ status: 'pending' }).where(eq(questions.id, q.id)).run()
+    result.reopened.push(q.id)
+  }
+  repointMerged(mergeMap)
+  const after = tidyKnowsQuestions()
+  const valueJson = JSON.stringify({ labeled: result.labeled.length, merged: result.merged.length, reopened: result.reopened })
+  db.insert(appSettings).values({ key: SKIP_REPAIR_KEY, valueJson, updatedAt: nowSql() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
+  log(`question skips: labeled ${result.labeled.length}, merged ${result.merged.map(m => `#${m.id} into #${m.into}`).join(', ') || 'none'}, reopened ${result.reopened.map(id => `#${id}`).join(', ') || 'none'}; tidy after: ${after.merged} merged, ${after.skipped} skipped, ${after.reworded} reworded`)
+  return result
 }
 
 /** Closes pending gap questions about profile facts (NOT_A_GAP). Idempotent. */
@@ -894,10 +1133,7 @@ export function closeNonGapQuestions(): number {
     .where(and(eq(questions.status, 'pending'), inArray(questions.kind, ['has_done', 'knows'])))
     .all()
     .filter(q => NOT_A_GAP.test(`${q.subject ?? ''} ${q.question}`))
-  for (const q of rows) {
-    const note = 'Closed: work authorization, location, and education come from your profile, not from a skill question.'
-    db.update(questions).set({ status: 'skipped', blocking: false, context: `${note}${q.context ? ` ${q.context}` : ''}` }).where(eq(questions.id, q.id)).run()
-  }
+  for (const q of rows) appSkip(q, 'work authorization, location, and education come from your profile, not from a skill question')
   return rows.length
 }
 
@@ -916,6 +1152,12 @@ export function rewordLegacyGapContexts(): number {
     .run().changes
 }
 
+/**
+ * Called by learn:daily. Asks for the pay floor when it is unknown, and asks "Do you know X?"
+ * for short technology requirements that open real jobs need and the knowledge base does not
+ * cover (a must-have in one job, or any requirement in two or more). At most five new per day.
+ * Sandbox jobs never create questions.
+ */
 export function askDailyQuestions(): QuestionRow[] {
   const db = useDb()
   rewordLegacyGapContexts()
@@ -988,6 +1230,130 @@ export function canonicalQuestion(id: number): QuestionRow | null {
     q = db.select().from(questions).where(eq(questions.id, next)).get() ?? null
   }
   return null
+}
+
+/** The open or answered question a merged duplicate with this dedupe key points to, or null. */
+function mergedCanonicalFor(dedupeKey: string): QuestionRow | null {
+  return useDb().select().from(questions).where(and(eq(questions.dedupeKey, dedupeKey), eq(questions.status, 'skipped'))).all()
+    .map(q => (mergedIntoId(q) ? canonicalQuestion(q.id) : null))
+    .find((q): q is QuestionRow => !!q) ?? null
+}
+
+// ── Skips the app makes, and why ──
+// No column records who skipped a question, so the app says so at the start of its context, as the
+// merge note always has. A skipped question without such a note is one Devin skipped himself.
+
+const APP_SKIP_PREFIX = 'Skipped by the app: '
+export const APP_SKIP_UNKNOWN = 'Skipped by the app before reasons were recorded.'
+/** Notes the app writes when it skips a question: its own, the merge note, and the older gap-question note. */
+const APP_SKIP_NOTE = /^(Skipped by the app(?::| before reasons were recorded)|Merged into question #\d+|Closed: work authorization)/
+
+/** The app's note on a question it skipped (the whole first sentence or two), or null when Devin skipped it. */
+export function appSkipNote(q: Pick<QuestionRow, 'status' | 'context'>): string | null {
+  if (q.status !== 'skipped' || !q.context || !APP_SKIP_NOTE.test(q.context)) return null
+  return appNoteOf(q.context)
+}
+
+/** The leading app note of a context, or null. */
+function appNoteOf(context: string): string | null {
+  if (!APP_SKIP_NOTE.test(context)) return null
+  if (context.startsWith(APP_SKIP_UNKNOWN)) return APP_SKIP_UNKNOWN
+  // The merge note ends "Answer that one."; the others end at their first full stop before a space.
+  const merged = context.match(/^Merged into question #\d+ \(".*?"\), which asks for the same thing\. Answer that one\./)
+  if (merged) return merged[0]
+  const end = context.search(/\.(\s|$)/)
+  return end < 0 ? context : context.slice(0, end + 1)
+}
+
+/** A context without the app's skip note, so a reopened question reads as asked. */
+export function withoutAppNote(context: string | null): string | null {
+  if (!context) return context
+  const note = appNoteOf(context)
+  return note ? (context.slice(note.length).trim() || null) : context
+}
+
+/** Skips a question for the app with its reason ("your knowledge base already covers Docker (skill: Kubernetes)"). */
+function appSkip(q: QuestionRow, reason: string) {
+  const note = `${APP_SKIP_PREFIX}${reason.replace(/[.\s]+$/, '')}.`
+  const rest = withoutAppNote(q.context)
+  useDb().update(questions).set({ status: 'skipped', blocking: false, context: rest ? `${note} ${rest}` : note }).where(eq(questions.id, q.id)).run()
+}
+
+/** Skips a question for the app, by id, with its reason. */
+export function skipForApp(id: number, reason: string) {
+  const q = useDb().select().from(questions).where(eq(questions.id, id)).get()
+  if (q) appSkip(q, reason)
+}
+
+/** Merges a pending question into the one that asks the same thing, with the note the fact tidy writes. */
+function mergeInto(dup: QuestionRow, into: QuestionRow) {
+  const note = `Merged into question #${into.id} ("${into.question}"), which asks for the same thing. Answer that one.`
+  const rest = withoutAppNote(dup.context)
+  useDb().update(questions).set({ status: 'skipped', blocking: false, context: rest ? `${note} ${rest}` : note }).where(eq(questions.id, dup.id)).run()
+}
+
+// ── One question per skill ──
+// "Proficient in Python", "Expert-level Python", and "Python3" ask the same thing as "Python";
+// "practical PowerShell" and "PowerShell scripting" the same as "PowerShell".
+
+const SKILL_LEAD = /^(?:(?:proficient|proficiency|fluent|fluency|expert(?:[\s-]level)?|expertise|practical|strong|solid|deep|extensive|advanced|hands-on|working|production|use|using|judgment|familiarity|comfortable)(?:\s+(?:in|with|using|of|at))?\s+)+/i
+const SKILL_TRAIL = /\s+(?:scripting|deployment|deployments|framework|full[\s-]?stack|version control|and|or|in|with|of|for|to)$/i
+/** Words that tell little apart on their own: "AI-powered" shares only "powered" with "AEO and AI-powered discovery". */
+const WEAK_TOKENS = new Set(['ai', 'ml', 'llm', 'llms', 'data', 'web', 'cloud', 'api', 'apis', 'tools', 'tool'])
+
+/** sameSubject(), but only when the shorter subject has two words that are not weak ones. */
+function sameWords(a: string, b: string): boolean {
+  const strong = (s: string) => s.toLowerCase().replace(/[^a-z0-9+#.\s-]/g, ' ').split(/[\s-]+/).filter(w => w.length > 1 && !WEAK_TOKENS.has(w) && !/^(and|or|of|in|with|for|to|the|a|an|using|making|building|working)$/.test(w))
+  const [small] = [strong(a), strong(b)].sort((x, y) => x.length - y.length)
+  return small!.length >= 2 && sameSubject(a, b)
+}
+const SKILL_VERSION = /^(python|java|php|html|css|vue|angular|ruby|swift|perl|scala|kotlin)\s?\d+(?:\.(?:\d+|x))*x?$/i
+
+/** The skill a subject names without its qualifiers: "Expert-level Python" is "Python". */
+export function skillCore(subject: string): string {
+  let t = subject.replace(/\s+/g, ' ').trim()
+  for (let i = 0; i < 3; i++) {
+    const next = t.replace(SKILL_LEAD, '').replace(SKILL_TRAIL, '').trim()
+    if (!next || next === t) break
+    t = next
+  }
+  const version = t.match(SKILL_VERSION)
+  if (version) t = version[1]!.charAt(0).toUpperCase() + version[1]!.slice(1)
+  return DISPLAY_ALIASES[t.toLowerCase()] ?? t
+}
+
+/** Two subjects that one yes or no answers: the same skill, or the same words (sameSubject). */
+export function sameSkill(a: string, b: string): boolean {
+  const ca = skillCore(a)
+  const cb = skillCore(b)
+  if (!ca || !cb) return false
+  return ruleTerm(ca) === ruleTerm(cb) || sameWords(ca, cb)
+}
+
+/** The answered question, else the oldest open one, that asks about the same skill or experience. */
+function sameSkillQuestion(subject: string): QuestionRow | null {
+  const rows = useDb().select().from(questions)
+    .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+    .filter(q => !!q.subject && sameSkill(subject, q.subject))
+    .sort((a, b) => Number(b.status === 'answered') - Number(a.status === 'answered') || a.id - b.id)
+  return rows[0] ?? null
+}
+
+/**
+ * Semantic and merge decisions that tied a form label to a question: the label cache says this
+ * label asks what the question asks, or a question asked for this label was merged into it. A
+ * refresh must not undo them: CircleCI's LinkedIn field was merged into the LinkedIn question,
+ * then released on the next refresh as "not that fact" and asked again, five times.
+ */
+export function labelTiedTo(labels: string[], questionId: number): boolean {
+  const cache = loadLabelCache()
+  for (const label of labels) {
+    const hit = cache[labelText(label)]?.match.match(/^Q(\d+)$/)
+    if (hit && canonicalQuestion(Number(hit[1]))?.id === questionId) return true
+    if (mergedCanonicalFor(dedupeKeyOf('form_field', label))?.id === questionId) return true
+  }
+  return false
 }
 
 const SHARED_FACT_CONTEXT = 'Application forms ask for this.'

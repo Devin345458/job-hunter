@@ -154,8 +154,9 @@ function pendingFor(subject: string, rows: QuestionRow[]): QuestionRow | null {
   return matching(subject, rows, 'pending')[0] ?? null
 }
 
+/** True when Devin himself skipped a question on this subject. A skip the app made (with its note) does not count. */
 function skippedFor(subject: string, rows: QuestionRow[]): boolean {
-  return matching(subject, rows, 'skipped').length > 0
+  return matching(subject, rows, 'skipped').some(q => !appSkipNote(q))
 }
 
 /** Knows and has_done questions in every state, loaded once per scoring call. */

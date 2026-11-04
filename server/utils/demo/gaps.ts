@@ -69,10 +69,11 @@ function answerOf(subject: string): { kind: 'has_done' | 'knows'; answer: string
   return row?.answer ? { kind: row.kind as 'has_done' | 'knows', answer: row.answer.trim(), id: row.id } : null
 }
 
+/** True when Devin himself skipped a question on this subject. A skip the app made (with its note) does not count. */
 function wasSkipped(subject: string): boolean {
   return useDb().select().from(questions)
     .where(and(inArray(questions.dedupeKey, [dedupeKeyOf('has_done', subject), dedupeKeyOf('knows', subject)]), eq(questions.status, 'skipped')))
-    .all().length > 0
+    .all().some(q => !appSkipNote(q))
 }
 
 function knownQuestions() {
