@@ -156,7 +156,7 @@ onMounted(() => fetchEntries())
 
       <!-- Category guide for new users -->
       <div v-if="entries.length === 0" class="mt-8 pt-6">
-        <h2 class="section-label">Categories</h2>
+        <h2 class="section-heading">Categories</h2>
         <v-row justify="center" class="mt-2">
           <v-col v-for="cat in categories" :key="cat.value" cols="12" sm="6" md="3" class="text-center">
             <div class="text-body-2 font-weight-medium">{{ cat.title }}</div>

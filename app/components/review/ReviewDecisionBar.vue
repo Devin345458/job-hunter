@@ -61,9 +61,9 @@ const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item
 const blockedReasons = computed<string[]>(() => {
   const status = props.item.status
   const out: string[] = []
-  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} ${props.questionsPlace ?? 'above'} to unlock approve.`)
+  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} ${props.questionsPlace ?? 'above'} before you can approve.`)
   else if (status === 'needs_input') {
-    out.push(props.refreshing ? 'Updating the form answers with what you said.' : 'Answers saved. Approve unlocks when the pipeline marks this ready.')
+    out.push(props.refreshing ? 'Updating the form answers with what you said.' : 'Answers saved. Approve opens when the pipeline marks this ready.')
   }
   if (demoBlocked.value && (CAN_APPROVE.includes(status) || status === 'needs_input')) {
     out.push(`${demoBlocked.value.replace(/\.$/, '')}. Set it, or discard the demo, to approve.`)

@@ -163,7 +163,7 @@ onMounted(load)
 
       <!-- Rules for real jobs -->
       <section class="mb-8">
-        <h2 class="section-label">Rules for your real search</h2>
+        <h2 class="section-heading">Rules for your real search</h2>
         <v-card v-if="realRules.length === 0" variant="outlined" class="pa-6">
           <p class="text-body-2 text-medium-emphasis mb-0 learning-page__note">
             No rules from real decisions yet. Each approve and reject on the review dashboard adds evidence.
@@ -180,7 +180,7 @@ onMounted(load)
 
       <!-- Sandbox rules -->
       <section v-if="sandboxRules.length" class="mb-8">
-        <h2 class="section-label">Sandbox rules</h2>
+        <h2 class="section-heading">Sandbox rules</h2>
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
           Learned from test decisions on sandbox jobs. They score sandbox jobs only and never touch your real search.
         </p>
@@ -194,7 +194,7 @@ onMounted(load)
 
       <!-- What employers did with the applications that went out -->
       <section v-if="outcomes" class="mb-8">
-        <h2 class="section-label">What employers did</h2>
+        <h2 class="section-heading">What employers did</h2>
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
           Rates over real applications that went out. Heard back counts any reply, rejections included.
           Interviews count every application that reached one, so an offer counts there too.
@@ -246,7 +246,7 @@ onMounted(load)
       <v-row class="mb-2">
         <!-- Score moves -->
         <v-col cols="12" lg="8">
-          <h2 class="section-label">Recent score moves</h2>
+          <h2 class="section-heading">Recent score moves</h2>
           <v-card v-if="moves.length === 0" variant="outlined" class="pa-6">
             <p class="text-body-2 text-medium-emphasis mb-0">No scores have moved yet. They move when a rule changes and learning runs.</p>
           </v-card>
@@ -297,7 +297,7 @@ onMounted(load)
 
         <!-- Search adjustments -->
         <v-col cols="12" lg="4">
-          <h2 class="section-label">Search changes</h2>
+          <h2 class="section-heading">Search changes</h2>
           <v-card variant="outlined" class="pa-4">
             <template v-if="searchEmpty">
               <p class="text-body-2 text-medium-emphasis mb-0">

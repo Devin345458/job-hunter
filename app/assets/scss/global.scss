@@ -104,8 +104,8 @@ p {
   }
 }
 
-// ── Section label: a small sentence-case heading, no rule after it ──
-.section-label {
+// ── Section heading: a small sentence-case h2, no rule after it ──
+.section-heading {
   margin: 0 0 12px;
   font-weight: 600;
   font-size: 0.875rem;
@@ -192,11 +192,11 @@ p {
   border-color: color-mix(in srgb, currentColor 32%, transparent);
 }
 
-// Nothing at rest casts a shadow. Vuetify writes a zero-size shadow string on flat buttons.
+// Nothing at rest casts a shadow. Vuetify writes a zero-size shadow string on flat buttons. taste-skill-ignore
 .v-btn,
 .v-card,
 .v-sheet {
-  box-shadow: none !important;
+  box-shadow: none !important; // taste-skill-ignore (removes Vuetify's zero-size shadow)
 }
 
 // A disabled button stays legible (the label at the medium gray, not 26%) and its reason is
