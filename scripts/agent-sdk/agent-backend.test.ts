@@ -103,6 +103,7 @@ before(async () => {
   m = { ...(await import('../../server/utils/ai')), ...(await import('../../server/utils/agent-backend')), ...(await import('../../server/utils/subscription-pause')), ...(await import('../../server/utils/queue')), ...(await import('../../server/utils/runs')) }
   m.sql = (await import('drizzle-orm')).sql
   m.runProblems = (await import('../../shared/utils/run-outcome')).runProblems
+  m.itemOutcomeFromRun = (await import('../../server/utils/queue-run')).itemOutcomeFromRun
   m.useDb = (globalThis as any).useDb
   m.setAgentTestHooks({ query: stubQuery as any })
   globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
@@ -348,6 +349,42 @@ describe('queue', () => {
     assert.equal(m.claimNext('w', { ai: 'foreground' })?.id, mine.id)
     assert.equal(m.claimNext('w', { ai: 'foreground' }), null, 'the per-job item waits out the window')
     assert.equal(m.claimNext('w', { ai: 'free' })?.id, bulk.id)
+  })
+
+  test('only work the limit stopped goes back; a task that caught the limit and finished stays done', async () => {
+    const until = new Date(Date.now() + 3600_000).toISOString()
+    const done = { status: 'done', result: { runId: 1, status: 'succeeded' } }
+    assert.equal(m.pausedByLimit({ task: 'applications:prepare-one' }, done, until), false, 'finished anyway')
+    assert.equal(m.pausedByLimit({ task: 'applications:prepare-one' }, done, undefined), false, 'no limit met')
+    assert.equal(m.pausedByLimit({ task: 'applications:prepare-one' }, { status: 'failed', error: 'x' }, until), true, 'threw')
+    assert.equal(m.pausedByLimit({ task: m.MATCH_ONE_TASK }, { status: 'done', result: { jobId: 1, outcome: 'budget' } }, until), true, 'per-job item stopped')
+    assert.equal(m.pausedByLimit({ task: m.MATCH_ONE_TASK }, { status: 'done', result: { jobId: 1, outcome: 'scored' } }, until), false, 'per-job item finished')
+    assert.equal(m.pausedByLimit({ task: m.APPROVE_TASK }, { status: 'failed', error: 'x' }, until), false, 'never an approval')
+    assert.equal(m.pausedByLimit({ task: 'repos:suggest' }, 'waiting', until), false)
+
+    // A real run: the task swallows the limit (as the condense step does) and returns normally.
+    script = () => limited(Math.floor(Date.now() / 1000) + 3600)
+    const swallowed = await m.runInQueueContext({ ...m.enqueue('applications:prepare-one', { applicationId: 1 }).item, attempts: 0 }, async () => {
+      const res = await m.withRun('applications:prepare-one', 'manual', async () => {
+        await m.aiStructured(Answer, { purpose: 'form_answers_condense', prompt: 'x' }).catch(() => null)
+        return { applicationId: 1, status: 'proposed' }
+      }, { lockKey: 'test-swallow' })
+      return { outcome: m.itemOutcomeFromRun(res), until: m.currentQueueContext()?.subscriptionPausedUntil }
+    })
+    assert.ok(swallowed.until, 'the limit was met')
+    assert.equal(m.pausedByLimit({ task: 'applications:prepare-one' }, swallowed.outcome, swallowed.until), false, 'the finished preparation is not run again')
+
+    // The same task stopped by the limit: its run records the stop and it goes back.
+    m.useDb().run(m.sql`delete from app_settings where key = 'subscription_pause'`)
+    const stopped = await m.runInQueueContext({ ...m.enqueue('applications:prepare-one', { applicationId: 2 }).item, attempts: 0 }, async () => {
+      const res = await m.withRun('applications:prepare-one', 'manual', async () => {
+        await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' })
+        return { applicationId: 2, status: 'proposed' }
+      }, { lockKey: 'test-stop' })
+      return { outcome: m.itemOutcomeFromRun(res), until: m.currentQueueContext()?.subscriptionPausedUntil }
+    })
+    assert.equal(stopped.outcome.result.stoppedAtLimit, true)
+    assert.equal(m.pausedByLimit({ task: 'applications:prepare-one' }, stopped.outcome, stopped.until), true)
   })
 
   test('a background item waits a minute longer after the reset', () => {

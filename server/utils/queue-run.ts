@@ -15,11 +15,19 @@ import type { RunTrigger } from './runs'
 // used to start in the background (approve, prepare again, refill, demo rebuild and preview, the
 // commit search) run here, each recorded in pipeline_runs by withRun.
 
-type RunResult = { runId: number; status: 'succeeded' | 'failed' | 'skipped'; error: string | null }
+type RunResult = { runId: number; status: 'succeeded' | 'failed' | 'skipped'; error: string | null; stats?: Record<string, unknown> | null }
 
-function fromRun(r: RunResult): ItemOutcome {
-  return { status: r.status === 'failed' ? 'failed' : 'done', error: r.status === 'failed' ? r.error : null, result: { runId: r.runId, status: r.status } }
+/** The item's outcome from its run. `stoppedAtLimit` marks a run Devin's subscription limit stopped (pausedByLimit puts it back). */
+export function itemOutcomeFromRun(r: RunResult): ItemOutcome {
+  const stoppedAtLimit = r.stats?.stopReason === 'subscription'
+  return {
+    status: r.status === 'failed' ? 'failed' : 'done',
+    error: r.status === 'failed' ? r.error : null,
+    result: { runId: r.runId, status: r.status, ...(stoppedAtLimit ? { stoppedAtLimit: true } : {}) },
+  }
 }
+
+const fromRun = itemOutcomeFromRun
 
 function appId(payload: Record<string, unknown>): number {
   const id = Number(payload.applicationId)

@@ -247,6 +247,22 @@ export interface ItemOutcome {
 }
 
 /**
+ * Whether an item that met Devin's subscription limit (`pausedUntil`, from its queue context) goes
+ * back in the queue: only when the limit stopped its work. That is, it threw, a per-job item ended
+ * 'budget' (its job still waits), or its run recorded the subscription stop (`stoppedAtLimit`,
+ * itemOutcomeFromRun). An item whose task caught the limit and finished anyway (the condense step
+ * falls back to whole sentences) is done; running it again would redo finished work. An approval
+ * is never put back.
+ */
+export function pausedByLimit(item: Pick<QueueRow, 'task'>, outcome: ItemOutcome | 'waiting', pausedUntil: string | null | undefined): boolean {
+  if (!pausedUntil || outcome === 'waiting') return false
+  if ((NO_RETRY_TASKS as readonly string[]).includes(item.task)) return false
+  if (outcome.status === 'failed') return true
+  const r = outcome.result as Record<string, unknown> | null | undefined
+  return r?.outcome === 'budget' || r?.stoppedAtLimit === true
+}
+
+/**
  * Puts an item that Devin's subscription limit stopped back in the queue, to run after the reset.
  * Its attempts are not counted (a limit is not a failure). Background items (per-job items, the
  * steps of a scheduled run) wait PRIORITY_WINDOW_MS longer, so what Devin started goes first.

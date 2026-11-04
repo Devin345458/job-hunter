@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { hostname } from 'node:os'
 import { Cron } from 'croner'
 import { PIPELINE_CRON, PIPELINE_TIME_ZONE } from '#shared/utils/schedule'
-import { NO_RETRY_TASKS, currentQueueContext, pauseItem, type ItemOutcome, type QueueRow } from '../utils/queue'
+import { currentQueueContext, pauseItem, pausedByLimit, type ItemOutcome, type QueueRow } from '../utils/queue'
 import { isBackgroundWork } from '../utils/ai'
 import { runQueueItem } from '../utils/queue-run'
 import { subscriptionClaimMode } from '../utils/subscription-pause'
@@ -114,18 +114,16 @@ function createWorker() {
         console.warn(`[queue] could not renew the lease on #${item.id}`, e)
       }
     }, RENEW_EVERY_MS)
-    // A call in the item met Devin's subscription limit: the item goes back in the queue to run
-    // after the reset instead of ending (never for an approval, which may have submitted).
+    // The limit of Devin's subscription stopped the item's work: it goes back in the queue to run
+    // after the reset instead of ending (pausedByLimit; never an approval, which may have submitted).
     const run = () => runQueueItem(item, owner)
       .catch((e): ItemOutcome => {
         console.error(`[queue] #${item.id} ${item.task} failed`, e)
         return { status: 'failed', error: e?.message || String(e) }
       })
       .then((outcome) => {
-        const ctx = currentQueueContext()
-        const until = ctx?.subscriptionPausedUntil
-        const retry = !!until && outcome !== 'waiting' && !(NO_RETRY_TASKS as readonly string[]).includes(item.task)
-        return { outcome, pause: retry ? { until: until!, background: isBackgroundWork() } : null }
+        const until = currentQueueContext()?.subscriptionPausedUntil
+        return { outcome, pause: pausedByLimit(item, outcome, until) ? { until: until!, background: isBackgroundWork() } : null }
       })
     const promise = runInQueueContext(item, run)
       .then(({ outcome, pause }) => {
