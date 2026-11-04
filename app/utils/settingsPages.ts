@@ -23,7 +23,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     title: 'Pipeline',
     icon: 'mdi-pipe',
     blurb: 'Run the pipeline or one step, the queue, and the run log.',
-    subtitle: `Runs ${PIPELINE_SCHEDULE_TEXT}. Start the whole run or any one step here, watch it wait in the queue, and read how each run went.`,
+    subtitle: `Runs ${PIPELINE_SCHEDULE_TEXT}.`,
     legacyHashes: ['#pipeline'],
   },
   {
@@ -31,14 +31,14 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     title: 'Claude usage',
     icon: 'mdi-gauge',
     blurb: 'This app\'s limits on your Claude subscription and where the spend went.',
-    subtitle: 'What Claude has cost today and over the last 7 days, the limits that stop it, and which stage of the pipeline spent it.',
+    subtitle: 'Today and the last 7 days, against this app\'s limits.',
   },
   {
     slug: 'job-search',
     title: 'Job search',
     icon: 'mdi-magnify',
     blurb: 'What to search for, and when each source was last pulled.',
-    subtitle: 'What the scheduled searches look for, and how much of each job source they have read.',
+    subtitle: '',
     legacyHashes: ['#job-sources'],
   },
   {
@@ -46,7 +46,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     title: 'GitHub evidence',
     icon: 'mdi-github',
     blurb: 'The repos and identities that suggest answers from your commits.',
-    subtitle: 'Suggests answers to skill and experience questions from commits you authored, with links. Code in a repo you can read is not code you wrote, so only your own commits count, and finding nothing never means No.',
+    subtitle: 'Only commits you authored count, and finding nothing never means No.',
     legacyHashes: ['#github-evidence'],
   },
   {
@@ -54,7 +54,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     title: 'Memory',
     icon: 'mdi-history',
     blurb: 'Your past Claude sessions, searched for leads on open questions.',
-    subtitle: 'Your past Claude sessions on your laptop, searched for leads on open questions.',
+    subtitle: 'Your past Claude sessions on your laptop.',
     legacyHashes: ['#memory'],
   },
   {
@@ -62,7 +62,7 @@ export const SETTINGS_PAGES: SettingsPageDef[] = [
     title: 'API keys',
     icon: 'mdi-key-outline',
     blurb: 'Which environment variables are set on this server.',
-    subtitle: 'API keys are set as environment variables on the server. They are never exposed in the browser.',
+    subtitle: 'Set on the server; never sent to the browser.',
   },
 ]
 

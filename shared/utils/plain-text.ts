@@ -289,6 +289,7 @@ export function gapSummaryText(
   demo: { title: string; gapAddressed?: string | null; status: string } | null | undefined,
 ): string {
   if (!summary) return ''
+  summary = summary.replace(/\b(\d+) truly missing\./, '$1 left as a gap.')
   if (!demo || demo.status === 'discarded') return summary
   const gap = demo.gapAddressed?.trim()
   const named = `${DEMO_STATE[demo.status] ?? 'Demo'}: ${demo.title}${gap ? ` (for ${gap})` : ''}.`

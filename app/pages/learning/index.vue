@@ -126,13 +126,9 @@ onMounted(load)
 
 <template>
   <div class="fade-in learning-page">
-    <div class="d-flex flex-wrap align-start justify-space-between ga-4 mb-8">
+    <div class="d-flex flex-wrap align-start justify-space-between ga-4 mb-6">
       <div class="page-header mb-0">
         <h1 class="text-h4 page-header__title">Learning</h1>
-        <p class="text-body-2 page-header__subtitle">
-          What your Apply and Reject decisions taught the pipeline, and how that changes scores and search.
-          Turn off any rule that looks wrong. Below the rules: what employers did with the applications that went out.
-        </p>
       </div>
       <div class="d-flex flex-column align-end ga-1 learning-page__run">
         <v-btn color="primary" prepend-icon="mdi-refresh" :loading="running" @click="runNow">Run learning now</v-btn>
@@ -167,7 +163,7 @@ onMounted(load)
 
       <!-- Rules for real jobs -->
       <section class="mb-8">
-        <div class="section-label">Rules for your real search</div>
+        <h2 class="section-heading">Rules for your real search</h2>
         <v-card v-if="realRules.length === 0" variant="outlined" class="pa-6">
           <p class="text-body-2 text-medium-emphasis mb-0 learning-page__note">
             No rules from real decisions yet. Each approve and reject on the review dashboard adds evidence.
@@ -184,7 +180,7 @@ onMounted(load)
 
       <!-- Sandbox rules -->
       <section v-if="sandboxRules.length" class="mb-8">
-        <div class="section-label">Sandbox rules</div>
+        <h2 class="section-heading">Sandbox rules</h2>
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
           Learned from test decisions on sandbox jobs. They score sandbox jobs only and never touch your real search.
         </p>
@@ -198,11 +194,11 @@ onMounted(load)
 
       <!-- What employers did with the applications that went out -->
       <section v-if="outcomes" class="mb-8">
-        <div class="section-label">What employers did</div>
+        <h2 class="section-heading">What employers did</h2>
+        <!-- The promise always shows; how the rates count shows once there are rates to read. -->
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
-          Rates over real applications that went out. Heard back counts any reply, rejections included.
-          Interviews count every application that reached one, so an offer counts there too.
-          These are recorded only: employer outcomes do not change scores.
+          Recorded only: employer outcomes never change scores.
+          <template v-if="outcomes.total.sent">Heard back counts any reply, rejections included. Interviews count every application that reached one, so an offer counts there too.</template>
           <template v-if="outcomes.sandboxExcluded">{{ outcomes.sandboxExcluded }} sandbox {{ outcomes.sandboxExcluded === 1 ? 'application is' : 'applications are' }} left out.</template>
         </p>
         <v-card v-if="!outcomes.total.sent" variant="outlined" class="pa-6">
@@ -249,8 +245,8 @@ onMounted(load)
 
       <v-row class="mb-2">
         <!-- Score moves -->
-        <v-col cols="12" lg="8">
-          <div class="section-label">Recent score moves</div>
+        <v-col cols="12">
+          <h2 class="section-heading">Recent score moves</h2>
           <v-card v-if="moves.length === 0" variant="outlined" class="pa-6">
             <p class="text-body-2 text-medium-emphasis mb-0">No scores have moved yet. They move when a rule changes and learning runs.</p>
           </v-card>
@@ -268,7 +264,7 @@ onMounted(load)
                   <div class="move__scores text-no-wrap" :aria-label="`Score ${m.oldScore ?? 'unknown'} to ${m.newScore}`">
                     <span class="text-medium-emphasis">{{ m.oldScore ?? '?' }}</span>
                     <v-icon icon="mdi-arrow-right" size="16" class="mx-1 text-medium-emphasis" />
-                    <span class="font-weight-bold text-body-1">{{ m.newScore }}</span>
+                    <span class="text-body-1 learning-page__score" :class="`text-${scoreColor(m.newScore)}`">{{ m.newScore }}</span>
                     <v-chip
                       v-if="m.oldScore != null && m.newScore !== m.oldScore"
                       size="x-small"
@@ -300,8 +296,8 @@ onMounted(load)
         </v-col>
 
         <!-- Search adjustments -->
-        <v-col cols="12" lg="4">
-          <div class="section-label">Search changes</div>
+        <v-col cols="12">
+          <h2 class="section-heading">Search changes</h2>
           <v-card variant="outlined" class="pa-4">
             <template v-if="searchEmpty">
               <p class="text-body-2 text-medium-emphasis mb-0">
@@ -339,6 +335,10 @@ onMounted(load)
 <style scoped lang="scss">
 .learning-page {
   max-width: 1100px;
+
+  &__score {
+    font-weight: 600;
+  }
 
   &__note,
   &__lede {

@@ -467,7 +467,7 @@ export function scoreCompensation(comp: CompensationBreakdown | null, prefs: Com
   }
 
   let estimate = postingMid
-  parts.push(`Estimated total pay is ${usd(postingMid)} a year from the posting (${comp.totalEstimateMin === comp.totalEstimateMax ? usd(postingMid) : `${usd(comp.totalEstimateMin!)} to ${usd(comp.totalEstimateMax!)}`}: base${comp.bonus?.estimatedAnnual ? ', bonus' : ''}${comp.equity?.estimatedAnnual ? ', equity' : ''}${comp.benefits.some(b => b.estimatedAnnualValue) ? ', and benefits with a stated value' : ''}).`)
+  parts.push(`The midpoint scored is ${usd(postingMid)} a year, from the posting's estimated total (${comp.totalEstimateMin === comp.totalEstimateMax ? usd(postingMid) : `${usd(comp.totalEstimateMin!)} to ${usd(comp.totalEstimateMax!)}`}: base${comp.bonus?.estimatedAnnual ? ', bonus' : ''}${comp.equity?.estimatedAnnual ? ', equity' : ''}${comp.benefits.some(b => b.estimatedAnnualValue) ? ', and benefits with a stated value' : ''}).`)
 
   const unvaluedHealth = comp.benefits.some(b => isFullyPaidHealth(b) && b.estimatedAnnualValue == null)
   if (unvaluedHealth) {

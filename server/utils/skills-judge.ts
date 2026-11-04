@@ -312,7 +312,7 @@ export async function applyJudgments(reqs: Requirement[], judgments: Requirement
     demo ? `Demo idea: ${demo.demoIdea?.title} (for ${demo.requirement}).` : 'No demo planned.',
     count('reframe') ? `${count('reframe')} covered by existing experience.` : null,
     count('ask') ? `${count('ask')} to confirm with you.` : null,
-    count('skip') ? `${count('skip')} truly missing.` : null,
+    count('skip') ? `${count('skip')} left as a gap.` : null,
   ].filter(Boolean)
   const gap: GapAnalysis = {
     items,

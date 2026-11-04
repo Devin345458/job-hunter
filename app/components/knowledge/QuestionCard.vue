@@ -331,20 +331,13 @@ watch(() => props.pick?.nonce, () => {
 </script>
 
 <template>
-  <v-card variant="outlined" class="question-card" :class="{ 'question-card--waiting': mode === 'pending' && waiting > 0 }">
+  <v-card variant="outlined" class="question-card" :class="{ 'question-card--blocking': mode === 'pending' && question.blocking, 'question-card--waiting': mode === 'pending' && waiting > 0 }">
     <v-card-text class="pa-4 pa-sm-5">
-      <div class="d-flex flex-wrap align-center ga-2 mb-2">
-        <v-chip size="small" variant="tonal" color="secondary" label>{{ kindLabel }}</v-chip>
-        <v-chip
-          v-if="mode === 'pending' && waiting > 0"
-          size="small"
-          variant="tonal"
-          color="warning"
-          prepend-icon="mdi-timer-sand"
-          label
-        >
-          {{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}
-        </v-chip>
+      <!-- What it is about, in gray text: no pill above the heading. Amber only on one that blocks an approval. -->
+      <div class="question-card__top">
+        <span class="question-card__kind">{{ kindLabel }}</span>
+        <span v-if="mode === 'pending' && question.blocking" class="question-card__blocks">Blocks an approval</span>
+        <span v-else-if="mode === 'pending' && waiting > 0" class="question-card__blocks">{{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}</span>
         <NuxtLink
           v-if="question.job && !(mode === 'pending' && waiters.length)"
           :to="`/jobs/${question.job.id}`"
@@ -460,6 +453,7 @@ watch(() => props.pick?.nonce, () => {
             :prefix="isComp ? '$' : undefined"
             :suffix="isComp ? 'a year' : undefined"
             :placeholder="isComp ? '150,000' : 'Number'"
+            aria-label="Your answer"
             inputmode="numeric"
             autocomplete="off"
             enterkeyhint="done"
@@ -479,6 +473,7 @@ watch(() => props.pick?.nonce, () => {
           <v-textarea
             v-model="draft"
             placeholder="Your answer"
+            aria-label="Your answer"
             rows="3"
             auto-grow
             maxlength="4000"
@@ -510,6 +505,7 @@ watch(() => props.pick?.nonce, () => {
             <v-textarea
               v-model="draft"
               placeholder="Answer in your own words. It is stored exactly as you write it."
+              aria-label="Your answer"
               rows="3"
               auto-grow
               maxlength="4000"
@@ -643,10 +639,36 @@ watch(() => props.pick?.nonce, () => {
 
 <style scoped lang="scss">
 .question-card {
-  transition: border-color 0.15s ease;
+  transition: background-color 0.15s ease;
 
-  &--waiting {
-    border-color: rgba(var(--v-theme-warning), 0.45);
+  // The one that blocks an approval keeps a quiet amber edge; every other card is the plain surface.
+  // A card any application waits on has an amber edge, as before; one that blocks an approval also
+  // carries the 3px amber left edge.
+  &.question-card--waiting {
+    border: 1px solid rgba(var(--v-theme-warning), 0.45);
+  }
+
+  &.question-card--blocking {
+    border-left: 3px solid rgb(var(--v-theme-warning));
+  }
+
+  &__top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    margin-bottom: 6px;
+  }
+
+  &__kind {
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__blocks {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: rgb(var(--v-theme-warning));
   }
 
   &__question {
@@ -707,7 +729,13 @@ watch(() => props.pick?.nonce, () => {
     }
   }
 
-  // Skip, Ask me again, Change answer, and Cancel are small text buttons; keep them 44px tall to tap.
+  // Skip, Ask me again, Change answer, and Cancel are small text buttons; keep them 44px tall to
+  // tap. The row wraps, so on a phone Skip drops to its own line instead of running off the card.
+  &__actions {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
   &__actions :deep(.v-btn) {
     min-height: 44px;
   }

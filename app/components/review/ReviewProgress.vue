@@ -85,7 +85,7 @@ const submissionShot = computed(() => props.item.submission?.screenshotPath ? `/
         <v-progress-circular indeterminate size="16" width="2" />
         Preparing: {{ preparingStep }}
       </div>
-      <p class="prog__panel-hint">This card moves to Ready to send when the resume, cover letter, and form answers are written and the form is filled. Nothing is sent until you approve it.</p>
+      <p class="prog__panel-hint">This card moves to To send when the resume, cover letter, and form answers are written and the form is filled. Nothing is sent until you approve it.</p>
     </div>
 
     <ol v-else class="prog__steps" aria-label="Progress after approve">

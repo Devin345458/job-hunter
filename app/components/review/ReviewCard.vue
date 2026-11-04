@@ -22,6 +22,8 @@ const props = defineProps<{
   preparing?: boolean
   /** Fill the parent's height and scroll inside (desktop two-pane). Otherwise the page scrolls and the bar sticks to the viewport bottom. */
   fill?: boolean
+  /** The job title's heading level: h1 when the card is the page (/review/:id), h2 under the queue's "Review". */
+  titleTag?: 'h1' | 'h2'
 }>()
 
 const emit = defineEmits<{
@@ -62,7 +64,7 @@ const skillQs = computed(() => (isStageOne.value ? props.item.openQuestions.filt
 const gapSummary = computed(() => {
   const g = props.item.gap
   if (!g) return 'Not made yet'
-  return plainKnowledgeRefs(fixPlurals(g.summary))
+  return plainKnowledgeRefs(fixPlurals(gapSummaryText(g.summary, null)))
 })
 /** Stage 1 form summary: "14 fields, 6 filled from your profile, 2 waiting on you, 6 written when you apply". */
 const formReadSummary = computed(() => {
@@ -233,17 +235,15 @@ const letterPreview = computed(() => {
       <header class="rc__head">
         <div class="rc__eyebrow">
           <span class="rc__company">{{ item.job.company }}</span>
-          <span class="rc__status" :class="`rc__status--${meta.color}`">
-            <v-icon :icon="meta.icon" size="14" />
-            {{ meta.label }}
-          </span>
           <span v-if="item.isSandbox" class="rc__sandbox" title="Test data or the sandbox employer. Nothing reaches a real company.">Sandbox</span>
           <span v-if="$slots.nav" class="rc__nav"><slot name="nav" /></span>
         </div>
-        <h1 class="rc__title">{{ item.job.title }}</h1>
+        <component :is="titleTag ?? 'h1'" class="rc__title">{{ item.job.title }}</component>
         <!-- Desktop puts the meta line and the two links on one row (rc--fill); the phone stacks them. -->
         <div class="rc__sub">
         <div class="rc__meta">
+          <!-- The state sits beside the facts it qualifies, never above the heading. -->
+          <span class="rc__status" :class="`rc__status--${meta.color}`">{{ meta.label }}</span>
           <span v-for="f in facts" :key="f.text" class="rc__fact"><v-icon :icon="f.icon" size="14" class="rc__fact-icon" /> <span class="rc__fact-text">{{ f.text }}</span></span>
           <span v-if="item.proposedAt"><v-icon icon="mdi-clock-outline" size="14" /> Proposed {{ timeAgo(item.proposedAt) }}</span>
         </div>
@@ -294,17 +294,11 @@ const letterPreview = computed(() => {
         <div class="rc__panel">
           <ReviewScoreLedger v-if="item.score" :score="item.score" :dense="fill">
             <template #summary>
-              <!-- Phone only: on a 390px screen the pay panel and the Skills fit section sit below the fold. -->
+              <!-- Phone only: Matched and Missing under the score. Pay is said once, by the pay panel that follows. -->
               <div v-if="glance" class="rc__glance">
                 <p class="rc__glance-line">
                   <span class="rc__glance-label">Matched</span> <span class="tabular">{{ glance.matched }}</span><span class="rc__glance-sep" aria-hidden="true"> · </span><span class="rc__glance-label">Missing:</span> <span :class="{ 'rc__glance-none': glance.none }">{{ glance.missing }}</span>
                 </p>
-                <ReviewCompFloor
-                  :comp="item.compensation"
-                  :score="item.score"
-                  :listing="{ min: item.job.salaryMin, max: item.job.salaryMax, currency: item.job.salaryCurrency }"
-                  inline
-                />
               </div>
             </template>
           </ReviewScoreLedger>
@@ -401,7 +395,7 @@ const letterPreview = computed(() => {
         </ReviewSection>
 
         <ReviewSection v-if="isStageOne" title="Gap plan" icon="mdi-map-marker-path" :summary="gapSummary" default-open>
-          <DemoGapAnalysis :gap="item.gap" />
+          <DemoGapAnalysis :gap="item.gap" :show-summary="false" />
         </ReviewSection>
 
         <ReviewSection v-if="isStageOne" title="Employer form" icon="mdi-form-textbox" :summary="formReadSummary" :tone="item.form.error ? 'warning' : 'default'">
@@ -513,8 +507,7 @@ const letterPreview = computed(() => {
   flex-direction: column;
   min-height: 0;
   background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 12px;
+  border-radius: 16px;
 
   &__body {
     flex: 1;
@@ -541,11 +534,13 @@ const letterPreview = computed(() => {
     align-items: center;
     gap: 4px;
     font-size: 0.75rem;
-    font-weight: 600;
-    padding: 2px 8px;
+    font-weight: 500;
+    line-height: 1.4;
+    padding: 1px 8px;
     border-radius: 6px;
+    white-space: nowrap;
 
-    @each $c in primary, warning, error, success, secondary {
+    @each $c in primary, warning, error, success, secondary, info {
       &--#{$c} {
         color: rgb(var(--v-theme-#{$c}));
         background: rgba(var(--v-theme-#{$c}), 0.12);
@@ -563,8 +558,8 @@ const letterPreview = computed(() => {
   }
 
   &__title {
-    font-size: 1.375rem;
-    font-weight: 700;
+    font-size: 1.25rem;
+    font-weight: 600;
     line-height: 1.25;
     letter-spacing: -0.015em;
     margin: 0 0 8px;
@@ -606,7 +601,7 @@ const letterPreview = computed(() => {
     gap: 4px;
     margin: -2px 0 10px;
     padding-bottom: 10px;
-    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-bottom: 1px solid rgb(var(--v-theme-surface-light));
   }
 
   &__glance-line {
@@ -650,9 +645,8 @@ const letterPreview = computed(() => {
   &__strip {
     grid-column: 1 / -1;
     padding: 10px 14px 10px;
-    border-radius: 8px;
-    background: rgb(var(--v-theme-background));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface-bright));
   }
 
   &__strip-head {
@@ -731,8 +725,8 @@ const letterPreview = computed(() => {
   }
 
   &__h {
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font-size: 0.875rem;
+    font-weight: 600;
     margin: 0 0 8px;
     color: rgb(var(--v-theme-warning));
 
@@ -756,11 +750,11 @@ const letterPreview = computed(() => {
     margin: 20px 0 8px;
   }
 
+  // Nested panels step up one lightness level from the card; no border.
   &__panel {
     padding: 16px;
-    border-radius: 8px;
-    background: rgb(var(--v-theme-background));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface-bright));
   }
 
   &__sections {
@@ -775,9 +769,8 @@ const letterPreview = computed(() => {
 
   &__posting {
     padding: 16px 18px;
-    border-radius: 8px;
+    border-radius: 10px;
     background: rgb(var(--v-theme-sunken));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     max-height: 480px;
     overflow-y: auto;
   }
@@ -793,9 +786,8 @@ const letterPreview = computed(() => {
     font-size: 0.875rem;
     line-height: 1.65;
     padding: 16px 18px;
-    border-radius: 8px;
+    border-radius: 10px;
     background: rgb(var(--v-theme-sunken));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     max-height: 480px;
     overflow-y: auto;
   }
@@ -807,7 +799,7 @@ const letterPreview = computed(() => {
   }
 
   &__bar {
-    border-radius: 0 0 12px 12px;
+    border-radius: 0 0 16px 16px;
     position: sticky;
     bottom: var(--v-layout-bottom, 0px);
     z-index: 2;
@@ -847,7 +839,7 @@ const letterPreview = computed(() => {
 
 @media (max-width: 599.98px) {
   .rc {
-    border-radius: 10px;
+    border-radius: 12px;
 
     &__body {
       padding: 16px 16px 4px;
@@ -909,7 +901,7 @@ const letterPreview = computed(() => {
     }
 
     &__bar {
-      border-radius: 0 0 10px 10px;
+      border-radius: 0 0 12px 12px;
     }
   }
 }

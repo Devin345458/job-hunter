@@ -104,8 +104,7 @@ withDefaults(defineProps<{
   &__h {
     font-size: 0.75rem;
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: 0;
     margin: 16px 0 8px;
     padding-bottom: 4px;
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));

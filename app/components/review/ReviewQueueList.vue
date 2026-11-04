@@ -2,6 +2,7 @@
 import type { ReviewItem } from '#shared/types/pipeline'
 import type { QueueGroups } from '~/composables/useReviewQueue'
 import { GROUP_LABEL, clockTime, formQuestionIds, itemStatusMeta, moneyRange } from '~/composables/review/format'
+import { scoreColor } from '~/components/jobs/format'
 
 // The queue, grouped by what each application needs from Devin. To decide (stage 1: Apply or
 // Reject) comes first, then what Apply is preparing, then what is ready to send (stage 2: Approve
@@ -73,7 +74,7 @@ const DECISION_GROUPS = ['decide', 'send']
     <section v-for="s in sections" :key="s.key" class="ql__group">
       <h2 class="ql__label">
         {{ s.label }}
-        <span class="ql__count tabular">{{ s.items.length }}</span>
+        <span class="ql__count tabular">{{ s.items.length.toLocaleString('en-US') }}</span>
       </h2>
       <p v-if="!s.items.length && s.empty" class="ql__empty">{{ s.empty }}</p>
       <ul class="ql__list">
@@ -85,7 +86,7 @@ const DECISION_GROUPS = ['decide', 'send']
             :aria-current="item.applicationId === selectedId ? 'true' : undefined"
             @click="emit('select', item.applicationId)"
           >
-            <span class="ql__score tabular" :class="{ 'ql__score--dim': !DECISION_GROUPS.includes(s.key) }">{{ item.score?.final ?? '?' }}</span>
+            <span class="ql__score tabular" :class="DECISION_GROUPS.includes(s.key) ? `text-${scoreColor(item.score?.final)}` : 'ql__score--dim'">{{ item.score?.final ?? '?' }}</span>
             <span class="ql__main">
               <span class="ql__title">{{ item.job.title }}</span>
               <span class="ql__sub">
@@ -123,17 +124,15 @@ const DECISION_GROUPS = ['decide', 'send']
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    margin: 0 0 6px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    margin: 0 0 4px;
     padding: 0 8px;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__count {
-    font-weight: 600;
-    color: rgb(var(--v-theme-on-surface));
+    font-weight: 500;
   }
 
   &__empty {
@@ -163,24 +162,14 @@ const DECISION_GROUPS = ['decide', 'send']
     transition: background-color 0.12s cubic-bezier(0.23, 1, 0.32, 1);
 
     &:hover {
-      background: rgba(var(--v-theme-on-surface), 0.04);
+      background: rgb(var(--v-theme-surface));
     }
 
-    &--on {
-      background: rgba(var(--v-theme-primary), 0.1);
-
-      &:hover { background: rgba(var(--v-theme-primary), 0.13); }
-
-      &::before {
-        content: '';
-        position: absolute;
-        left: 0;
-        top: 10px;
-        bottom: 10px;
-        width: 3px;
-        border-radius: 2px;
-        background: rgb(var(--v-theme-primary));
-      }
+    // The open card's row takes the active fill (a lightness step), never a hue or a bar, so it
+    // cannot be mistaken for a hover or a focus ring.
+    &--on,
+    &--on:hover {
+      background: rgb(var(--v-theme-surface-bright));
     }
   }
 
@@ -189,9 +178,9 @@ const DECISION_GROUPS = ['decide', 'send']
     flex-shrink: 0;
     text-align: right;
     font-size: 1.0625rem;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.3;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
 
     &--dim {
       color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
@@ -231,10 +220,11 @@ const DECISION_GROUPS = ['decide', 'send']
     align-items: center;
     gap: 4px;
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 500;
     margin-top: 1px;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
-    @each $c in primary, warning, error, success, secondary {
+    @each $c in primary, info, warning, error, success, secondary {
       &--#{$c} { color: rgb(var(--v-theme-#{$c})); }
     }
   }
@@ -247,7 +237,7 @@ const DECISION_GROUPS = ['decide', 'send']
     display: grid;
     place-items: center;
     font-size: 0.75rem;
-    font-weight: 700;
+    font-weight: 600;
     color: rgb(var(--v-theme-info));
     border: 1px dashed rgba(var(--v-theme-info), 0.6);
     margin-top: 2px;

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { countText } from '#shared/utils/pay-format'
+
 definePageMeta({ layout: 'default' })
 
 const { entries, loading, error, fetchEntries, createEntry, updateEntry } = useKnowledge()
@@ -44,6 +46,19 @@ const groupedEntries = computed(() => {
   return groups
 })
 
+/** The header's one line about the data. */
+const dataLine = computed(() => {
+  const n = entries.value.length
+  if (!n) return ''
+  const answers = entries.value.filter(e => e.source === 'user_answer').length
+  return `${countText(n)} entr${n === 1 ? 'y' : 'ies'}, ${countText(answers)} from your answers`
+})
+
+function shortDate(value: string) {
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 const categoryMeta = (cat: string) => categories.find(c => c.value === cat) || { title: cat, icon: 'mdi-tag', color: 'grey', description: '' }
 
 function openEditor(entry?: any) {
@@ -82,14 +97,8 @@ onMounted(() => fetchEntries())
   <div class="knowledge-page fade-in">
     <div class="page-header page-header--split">
       <div>
-        <h1 class="text-h4 page-header__title">Knowledge Base</h1>
-        <p class="text-body-2 page-header__subtitle">
-          Your professional profile in structured form. The AI uses this to match jobs, tailor resumes, and generate interview prep. The more complete your profile, the better the results.
-        </p>
-        <!-- How answers are filed (questions.ts subjectSection): by what the subject is, not by how the question was worded. -->
-        <p class="text-body-2 page-header__subtitle knowledge-page__sections">
-          Skills are the languages, frameworks, tools, and techniques you use (Docker). Experience is your roles and the industries and kinds of work you have done (fintech, on-call).
-        </p>
+        <h1 class="text-h4 page-header__title">Knowledge base</h1>
+        <p class="page-header__subtitle">{{ dataLine || '\u00a0' }}</p>
       </div>
       <!-- In the header on every screen. On a phone it used to float over the list cards. -->
       <v-btn color="primary" prepend-icon="mdi-plus" class="knowledge-page__add" @click="openEditor()">
@@ -98,35 +107,21 @@ onMounted(() => fetchEntries())
     </div>
 
     <!-- Category filter chips -->
-    <v-chip-group v-model="selectedCategory" selected-class="text-primary" class="mb-4">
-      <v-chip
-        :value="null"
-        variant="outlined"
-        filter
-      >
-        All
-      </v-chip>
-      <v-chip
-        v-for="cat in categories"
-        :key="cat.value"
-        :value="cat.value"
-        :prepend-icon="cat.icon"
-        variant="outlined"
-        filter
-      >
-        {{ cat.title }}
-      </v-chip>
-    </v-chip-group>
-
-    <!-- Search -->
-    <v-text-field
-      v-model="searchQuery"
-      prepend-inner-icon="mdi-magnify"
-      placeholder="Search entries..."
-      clearable
-      hide-details
-      class="mb-6"
-    />
+    <div class="knowledge-page__toolbar">
+      <v-chip-group v-model="selectedCategory" selected-class="knowledge-page__chip--on" class="knowledge-page__chips" aria-label="Filter by category">
+        <v-chip :value="null" variant="outlined">All</v-chip>
+        <v-chip v-for="cat in categories" :key="cat.value" :value="cat.value" variant="outlined">{{ cat.title }}</v-chip>
+      </v-chip-group>
+      <v-text-field
+        v-model="searchQuery"
+        prepend-inner-icon="mdi-magnify"
+        placeholder="Search entries"
+        aria-label="Search entries"
+        clearable
+        hide-details
+        class="knowledge-page__search"
+      />
+    </div>
 
     <!-- Loading -->
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
@@ -160,13 +155,10 @@ onMounted(() => fetchEntries())
       </v-btn>
 
       <!-- Category guide for new users -->
-      <div v-if="entries.length === 0" class="mt-8 pt-6" style="border-top: 1px solid rgba(var(--v-border-color), 0.1);">
-        <div class="section-label justify-center" style="max-width: 300px; margin: 0 auto;">
-          Categories explained
-        </div>
+      <div v-if="entries.length === 0" class="mt-8 pt-6">
+        <h2 class="section-heading">Categories</h2>
         <v-row justify="center" class="mt-2">
           <v-col v-for="cat in categories" :key="cat.value" cols="12" sm="6" md="3" class="text-center">
-            <v-icon :icon="cat.icon" :color="cat.color" size="24" class="mb-1" />
             <div class="text-body-2 font-weight-medium">{{ cat.title }}</div>
             <div class="text-caption text-medium-emphasis">{{ cat.description }}</div>
           </v-col>
@@ -174,59 +166,26 @@ onMounted(() => fetchEntries())
       </div>
     </v-card>
 
-    <!-- Grouped entries -->
-    <div v-for="(groupEntries, category) in groupedEntries" :key="category" class="mb-6">
-      <div class="d-flex align-center mb-3">
-        <v-icon :icon="categoryMeta(category).icon" :color="categoryMeta(category).color" size="20" class="mr-2" />
-        <h2 class="text-subtitle-1 font-weight-medium">{{ categoryMeta(category).title }}</h2>
-        <v-chip size="x-small" class="ml-2" variant="tonal">{{ groupEntries.length }}</v-chip>
-      </div>
-
-      <v-row class="stagger-in">
-        <v-col v-for="entry in groupEntries" :key="entry.id" cols="12" md="6" lg="4">
-          <!-- A real button for the keyboard: Tab reaches each entry, Enter or Space opens it. -->
-          <v-card
-            variant="outlined"
-            class="entry-card"
-            role="button"
-            tabindex="0"
-            :aria-label="`Edit ${entry.key}`"
-            @click="openEditor(entry)"
-            @keydown.enter.prevent="openEditor(entry)"
-            @keydown.space.prevent="openEditor(entry)"
-          >
-            <v-card-title class="text-subtitle-2 font-weight-medium pb-1">
-              {{ entry.key }}
-            </v-card-title>
-            <v-card-text>
-              <p class="text-body-2 entry-value">{{ entry.value }}</p>
-              <div class="d-flex align-center mt-3">
-                <v-chip
-                  size="x-small"
-                  :color="entry.source === 'resume' ? 'primary' : entry.source === 'inferred' ? 'warning' : 'default'"
-                  variant="tonal"
-                >
-                  {{ entry.source === 'user_answer' ? 'your answer' : entry.source }}
-                </v-chip>
-                <!-- A No answer from /questions. Stored so it is never asked again and never claimed. -->
-                <v-chip
-                  v-if="(entry as any).negative"
-                  size="x-small"
-                  color="error"
-                  variant="tonal"
-                  prepend-icon="mdi-cancel"
-                  class="ml-1"
-                >
-                  never claimed
-                </v-chip>
-                <v-spacer />
-                <span class="text-caption text-medium-emphasis">{{ new Date(entry.updatedAt).toLocaleDateString() }}</span>
-              </div>
-            </v-card-text>
-          </v-card>
-        </v-col>
-      </v-row>
-    </div>
+    <!-- Grouped entries: key-value rows, the key in a fixed column so the values start on one edge. -->
+    <section v-for="(groupEntries, category) in groupedEntries" :key="category" class="knowledge-page__group" :aria-labelledby="`kb-${category}`">
+      <h2 :id="`kb-${category}`" class="knowledge-page__h">
+        {{ categoryMeta(category).title }} <span class="knowledge-page__n">{{ countText(groupEntries.length) }}</span>
+      </h2>
+      <ul class="knowledge-page__rows">
+        <li v-for="entry in groupEntries" :key="entry.id">
+          <button type="button" class="kv" :aria-label="`Edit ${entry.key}`" @click="openEditor(entry)">
+            <span class="kv__key">{{ entry.key }}</span>
+            <span class="kv__value">{{ entry.value }}</span>
+            <span class="kv__meta">
+              <!-- A No answer from /questions. Stored so it is never asked again and never claimed. -->
+              <span v-if="(entry as any).negative" class="kv__tag text-error">Never claimed</span>
+              <span class="kv__source" :class="entry.source === 'resume' ? 'text-primary' : entry.source === 'inferred' ? 'text-warning' : undefined">{{ entry.source === 'user_answer' ? 'Your answer' : entry.source === 'resume' ? 'Resume' : entry.source === 'inferred' ? 'Inferred' : entry.source }}</span>
+              <span class="kv__date">{{ shortDate(entry.updatedAt) }}</span>
+            </span>
+          </button>
+        </li>
+      </ul>
+    </section>
 
     <!-- The editor renders its own dialog. Mounting it per open gives a fresh form each time. -->
     <KnowledgeEntryEditor
@@ -240,26 +199,142 @@ onMounted(() => fetchEntries())
   </div>
 </template>
 
-<style scoped>
-@media (max-width: 599.98px) {
-  .knowledge-page__add {
-    width: 100%;
+<style scoped lang="scss">
+.knowledge-page {
+  &__add {
+    @media (max-width: 599.98px) {
+      width: 100%;
+    }
+  }
+
+  &__toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 16px;
+    margin-bottom: 24px;
+  }
+
+  &__chips {
+    flex: 1 1 520px;
+    min-width: 0;
+  }
+
+  &__chip--on {
+    color: rgb(var(--v-theme-on-surface)) !important;
+    background: rgb(var(--v-theme-surface-light));
+  }
+
+  &__search {
+    flex: 0 1 300px;
+    min-width: 220px;
+
+    @media (max-width: 599.98px) {
+      flex-basis: 100%;
+    }
+  }
+
+  &__group {
+    margin-bottom: 28px;
+  }
+
+  &__h {
+    margin: 0 0 8px;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  &__n {
+    margin-left: 6px;
+    font-weight: 400;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__rows {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    border-radius: 16px;
+    background: rgb(var(--v-theme-surface));
   }
 }
 
-.entry-card {
-  cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-.entry-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-.entry-value {
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  white-space: pre-wrap;
+// One entry: key | value | source and date. Rows are split by a rule one step off the card.
+.kv {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(160px, 260px) minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 20px;
+  min-height: 44px;
+  padding: 10px 16px;
+  color: inherit;
+  text-align: left;
+  font-size: 0.875rem;
+  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+
+  li:first-child > & {
+    border-top: 0;
+  }
+
+  &:hover {
+    background: rgb(var(--v-theme-surface-bright));
+  }
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: -2px;
+  }
+
+  &__key {
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  &__value {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__tag {
+    padding: 0 6px;
+    border-radius: 6px;
+    color: rgb(var(--v-theme-on-surface));
+    background: rgb(var(--v-theme-surface-light));
+  }
+
+  &__date {
+    min-width: 84px;
+    text-align: right;
+  }
+
+  // Phone: the key over its value, the source and date under them.
+  @media (max-width: 699.98px) {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 2px;
+
+    &__meta {
+      margin-top: 2px;
+    }
+
+    &__date {
+      min-width: 0;
+      text-align: left;
+    }
+  }
 }
 </style>

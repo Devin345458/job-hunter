@@ -2,6 +2,8 @@
 import type { CompensationBreakdown } from '#shared/types/pipeline'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { formatMoney, formatRange } from './format'
+import { payFiguresInText } from '#shared/utils/pay-format'
+import { payExtraText } from '#shared/utils/pay-format'
 
 const props = defineProps<{
   compensation: CompensationBreakdown | null
@@ -111,7 +113,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
         <div v-if="c.bonus" class="comp-breakdown__item">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2 font-weight-medium">Bonus</span>
-            <span class="text-body-2">{{ c.bonus.estimatedAnnual != null ? `${formatMoney(c.bonus.estimatedAnnual)} a year` : 'No figure' }}</span>
+            <span class="text-body-2">{{ payExtraText(c.bonus, c.currency) }}</span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ c.bonus.description }}
@@ -125,7 +127,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
         <div v-if="c.equity" class="comp-breakdown__item">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2 font-weight-medium">Equity</span>
-            <span class="text-body-2">{{ c.equity.estimatedAnnual != null ? `${formatMoney(c.equity.estimatedAnnual)} a year` : 'No figure' }}</span>
+            <span class="text-body-2">{{ payExtraText(c.equity, c.currency) }}</span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ c.equity.description }}
@@ -171,7 +173,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
       </div>
 
       <div v-if="c.notes" class="comp-breakdown__notes text-caption">
-        <v-icon icon="mdi-information-outline" size="14" class="mr-1" />{{ c.notes }}
+        <v-icon icon="mdi-information-outline" size="14" class="mr-1" />{{ payFiguresInText(c.notes) }}
       </div>
     </v-card-text>
   </v-card>
@@ -182,8 +184,8 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
   &__total {
     padding: 12px 16px;
     margin-bottom: 16px;
-    border-radius: 8px;
-    background: rgba(var(--v-theme-primary), 0.08);
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface-bright));
   }
 
   &__items {
@@ -203,7 +205,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
   &__quote {
     margin: 6px 0 0;
     padding: 4px 10px;
-    border-left: 3px solid rgba(var(--v-theme-primary), 0.5);
+    border-left: 2px solid rgb(var(--v-theme-surface-light));
     font-size: 0.8125rem;
     line-height: 1.5;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));

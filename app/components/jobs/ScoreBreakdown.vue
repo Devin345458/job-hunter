@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { plainQuestionRefs, plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
+import { payReasoningText } from '#shared/utils/pay-format'
 import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
 import { formatMoney, RECOMMENDATION_LABELS, scoreColor } from './format'
+import { clockTime } from '~/composables/review/format'
 
 interface HistoryRow {
   score: number
@@ -110,27 +112,15 @@ function signed(n: number) {
             <span>{{ p.label }}</span>
             <span>{{ p.value }} / {{ p.max }}</span>
           </div>
-          <v-progress-linear :model-value="(p.value / p.max) * 100" :color="scoreColor((p.value / p.max) * 100)" height="6" rounded />
+          <v-progress-linear :model-value="(p.value / p.max) * 100" :color="scoreColor((p.value / p.max) * 100)" height="6" rounded :aria-label="`${p.label}: ${p.value} of ${p.max}`" />
         </div>
         <p class="text-body-2 score-breakdown__reasoning">
           {{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}
         </p>
-        <!-- Matched and Missing from skill-sets, the same as the review card: Partly counts as matched, with a half circle. -->
-        <div v-if="sets.matched.length" class="score-breakdown__chips">
-          <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Matched {{ sets.matched.length }}</span>
-          <v-chip
-            v-for="c in sets.matched"
-            :key="c.text"
-            size="x-small"
-            variant="tonal"
-            color="success"
-            :prepend-icon="c.status === 'partial' ? 'mdi-circle-half-full' : undefined"
-            :title="c.text !== c.label ? c.text : undefined"
-            :aria-label="c.status === 'partial' ? `${c.label}, partly` : undefined"
-          >
-            {{ c.label }}
-          </v-chip>
-        </div>
+        <!-- Matched is a count: every requirement is listed once, under Requirements, with its status. -->
+        <p v-if="sets.matched.length" class="text-body-2 score-breakdown__matched">
+          <v-icon icon="mdi-check" size="16" color="success" class="mr-1" /><span class="text-success">Matched {{ sets.matched.length }}</span> of {{ sets.matched.length + sets.missing.length }}<span class="text-medium-emphasis">, each listed under Requirements</span>
+        </p>
         <div v-if="sets.missing.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing {{ sets.missing.length }}</span>
           <v-chip
@@ -139,8 +129,9 @@ function signed(n: number) {
             tag="button"
             type="button"
             size="x-small"
-            variant="tonal"
             color="error"
+            variant="tonal"
+            prepend-icon="mdi-minus"
             append-icon="mdi-chevron-right"
             class="score-breakdown__claim-chip"
             :title="c.text !== c.label ? c.text : undefined"
@@ -168,7 +159,7 @@ function signed(n: number) {
         </div>
         <dl class="score-breakdown__facts text-body-2">
           <template v-if="score.compensation.estimate != null">
-            <dt>Estimated total</dt>
+            <dt>Midpoint scored</dt>
             <dd>{{ formatMoney(score.compensation.estimate) }} a year</dd>
           </template>
           <dt>Target</dt>
@@ -182,7 +173,7 @@ function signed(n: number) {
           </dd>
         </dl>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ secondPerson(plainQuestionRefs(score.compensation.reasoning)) }}
+          {{ secondPerson(plainQuestionRefs(payReasoningText(score.compensation.reasoning))) }}
         </p>
       </section>
 
@@ -225,7 +216,7 @@ function signed(n: number) {
           Score history
         </div>
         <div v-for="(h, i) in history" :key="i" class="score-breakdown__history text-caption">
-          <span>{{ h.computedAt }}</span>
+          <span>{{ clockTime(h.computedAt) }}</span>
           <span class="text-medium-emphasis">{{ h.reason.replace('_', ' ') }}</span>
           <strong>{{ h.score }}</strong>
         </div>
@@ -275,6 +266,10 @@ function signed(n: number) {
   &__reasoning {
     margin-top: 10px;
     line-height: 1.6;
+  }
+
+  &__matched {
+    margin: 8px 0 0;
   }
 
   &__chips {

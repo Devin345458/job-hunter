@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ApplicationWithJob } from '~/composables/useApplications'
 import { timeAgo } from '~/composables/review/format'
+import { scoreColor } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
 import { formatDay, isOutcome } from '#shared/utils/outcomes'
 
@@ -35,7 +36,7 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
         </div>
       </div>
       <div class="arow__side">
-        <span v-if="application.job?.matchScore != null" class="arow__score tabular" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
+        <span v-if="application.job?.matchScore != null" class="arow__score tabular" :class="`text-${scoreColor(application.job.matchScore)}`" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
         <span class="arow__when">{{ when }}</span>
       </div>
     </NuxtLink>
@@ -95,7 +96,7 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
 
   &__sandbox {
     font-size: 0.75rem;
-    font-weight: 600;
+    font-weight: 500;
     padding: 0 6px;
     border-radius: 6px;
     color: rgb(var(--v-theme-info));
@@ -106,7 +107,7 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
     font-size: 0.9375rem;
     font-weight: 600;
     line-height: 1.35;
-    margin: 2px 0 8px;
+    margin: 2px 0 6px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
@@ -141,7 +142,7 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
 
   &__score {
     font-size: 1.0625rem;
-    font-weight: 700;
+    font-weight: 600;
     min-width: 30px;
     text-align: right;
   }

@@ -1,4 +1,6 @@
 // Number and label formatting shared by the job components.
+import { APP_STATE_LABEL, PREPARE_FAILED_LABEL } from '#shared/utils/app-state'
+import { payAmount, payRange } from '#shared/utils/pay-format'
 
 /**
  * A job's stored tags (a JSON array) with repeats removed, case and spacing ignored, first
@@ -27,23 +29,20 @@ export function uniqueTags(raw: string | null | undefined): string[] {
   return out
 }
 
+// Pay prints through shared/utils/pay-format.ts, the same form on every screen.
 export function formatMoney(value: number | null | undefined, currency: string | null = 'USD'): string {
-  if (value == null) return ''
-  const n = Math.round(value).toLocaleString('en-US')
-  return !currency || /USD/i.test(currency) ? `$${n}` : `${n} ${currency}`
+  return payAmount(value, currency)
 }
 
 export function formatMoneyShort(value: number | null | undefined): string {
-  if (value == null) return ''
-  return value >= 1000 ? `$${Math.round(value / 1000)}K` : `$${Math.round(value)}`
+  return payAmount(value)
 }
 
 export function formatRange(min: number | null | undefined, max: number | null | undefined, currency: string | null = 'USD'): string {
-  if (min != null && max != null && min !== max) return `${formatMoney(min, currency)} to ${formatMoney(max, currency)}`
-  if (min != null || max != null) return formatMoney(min ?? max, currency)
-  return ''
+  return payRange(min, max, currency)
 }
 
+/** The match score by band on every screen: green 80 and up, amber 60 to 79, red under 60. */
 export function scoreColor(score: number | null | undefined): string {
   if (score == null) return 'grey'
   if (score >= 80) return 'success'
@@ -93,30 +92,32 @@ const JOB_STATUS: Record<string, JobStateMeta> = {
 
 // The application's status says more than the job's: a job stays "new" while its application
 // waits on the review queue. Labels match the Applications page where they overlap.
+const L = APP_STATE_LABEL
 const APP_STATUS: Record<string, JobStateMeta> = {
-  preparing: { label: 'Preparing', color: 'info' },
-  needs_input: { label: 'Needs your answer', color: 'warning' },
-  proposed: { label: 'In review', color: 'primary' },
-  approved: { label: 'Submitting', color: 'primary' },
-  publishing: { label: 'Submitting', color: 'primary' },
-  submitting: { label: 'Submitting', color: 'primary' },
-  submitted: { label: 'Applied', color: 'success' },
-  submit_failed: { label: 'Submit failed', color: 'error' },
-  needs_manual: { label: 'Submit by hand', color: 'warning' },
-  declined: { label: 'Rejected', color: 'secondary' },
-  response_received: { label: 'Heard back', color: 'success' },
-  interviewing: { label: 'Interviewing', color: 'success' },
-  offer: { label: 'Offer', color: 'success' },
-  rejected: { label: 'Rejected by employer', color: 'error' },
-  no_response: { label: 'No response', color: 'secondary' },
-  draft: { label: 'Draft', color: 'secondary' },
-  ready: { label: 'Ready', color: 'secondary' },
+  to_decide: { label: L.to_decide!, color: 'primary' },
+  preparing: { label: L.preparing!, color: 'info' },
+  needs_input: { label: L.needs_input!, color: 'warning' },
+  proposed: { label: L.proposed!, color: 'primary' },
+  approved: { label: L.approved!, color: 'primary' },
+  publishing: { label: L.publishing!, color: 'primary' },
+  submitting: { label: L.submitting!, color: 'primary' },
+  submitted: { label: L.submitted!, color: 'success' },
+  submit_failed: { label: L.submit_failed!, color: 'error' },
+  needs_manual: { label: L.needs_manual!, color: 'warning' },
+  declined: { label: L.declined!, color: 'secondary' },
+  response_received: { label: L.response_received!, color: 'success' },
+  interviewing: { label: L.interviewing!, color: 'success' },
+  offer: { label: L.offer!, color: 'success' },
+  rejected: { label: L.rejected!, color: 'error' },
+  no_response: { label: L.no_response!, color: 'secondary' },
+  draft: { label: L.draft!, color: 'secondary' },
+  ready: { label: L.ready!, color: 'secondary' },
 }
 
 /** What a job card and the job page say about where the job stands: its application's state when it has one, else its own status. */
 export function jobStateMeta(status: string | null | undefined, application: { status: string; prepareFailed?: boolean } | null | undefined): JobStateMeta {
   if (application) {
-    if (application.status === 'needs_manual' && application.prepareFailed) return { label: 'Preparation failed', color: 'error' }
+    if (application.status === 'needs_manual' && application.prepareFailed) return { label: PREPARE_FAILED_LABEL, color: 'error' }
     const meta = APP_STATUS[application.status]
     if (meta) return meta
   }

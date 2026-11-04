@@ -202,7 +202,7 @@ const chatBoxText = computed(() => {
   <div ref="root" class="qs">
     <article v-for="q in questions" :key="q.id" class="qs__item" :class="{ 'qs__item--blocking': q.blocking }" :data-question-id="q.id">
       <div class="qs__top">
-        <span v-if="q.blocking" class="qs__flag">Blocks approve</span>
+        <span v-if="q.blocking" class="qs__flag">Blocks approval</span>
         <span v-else class="qs__flag qs__flag--soft">Optional</span>
         <v-btn
           variant="text"
@@ -393,11 +393,13 @@ const chatBoxText = computed(() => {
   flex-direction: column;
   gap: 10px;
 
+  // A question is a raised panel; one that blocks approve has the amber border and tint it had
+  // before the restyle (Devin, 2026-11-04: status keeps its color).
   &__item {
     padding: 14px 16px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    background: rgba(var(--v-theme-on-surface), 0.02);
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: rgb(var(--v-theme-surface-bright));
 
     &--blocking {
       border-color: rgba(var(--v-theme-warning), 0.4);
@@ -429,8 +431,7 @@ const chatBoxText = computed(() => {
   &__flag {
     font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: 0;
     color: rgb(var(--v-theme-warning));
 
     &--soft {

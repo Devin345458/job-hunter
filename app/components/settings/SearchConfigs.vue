@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { properName } from '#shared/utils/names'
 
 // Settings > Job search > Search Configurations: what the scheduled searches look for. Each active
@@ -213,7 +212,7 @@ onMounted(fetchConfigs)
         Search Configurations
       </v-card-title>
       <v-card-subtitle>
-        Define what jobs to search for. Each active config runs on its own in every scheduled search, {{ PIPELINE_SCHEDULE_TEXT }}.
+        {{ configs.filter(c => c.isActive).length.toLocaleString('en-US') }} active of {{ configs.length.toLocaleString('en-US') }}; each active one runs in every scheduled search.
       </v-card-subtitle>
       <template #append>
         <v-btn
@@ -240,50 +239,65 @@ onMounted(fetchConfigs)
           <v-card-text>
             <v-row>
               <v-col cols="12" sm="6">
-                <v-text-field
-                  v-model="configForm.name"
-                  label="Config name"
-                  placeholder="e.g., Senior Frontend Roles"
-                  hint="A descriptive name to identify this search"
-                  persistent-hint
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="sc-field-0">Config name</label>
+                  <v-text-field
+                    v-model="configForm.name"
+                    id="sc-field-0"
+                    placeholder="e.g., Senior Frontend Roles"
+                    hint="A descriptive name to identify this search"
+                    persistent-hint
+                  />
+                </div>
               </v-col>
               <v-col cols="12" sm="6">
-                <v-text-field
-                  v-model="configForm.keywords"
-                  label="Keywords (comma-separated)"
-                  placeholder="e.g., senior developer, staff engineer, tech lead"
-                  hint="Job titles or skills to search for"
-                  persistent-hint
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="sc-field-1">Keywords (comma-separated)</label>
+                  <v-text-field
+                    v-model="configForm.keywords"
+                    id="sc-field-1"
+                    placeholder="e.g., senior developer, staff engineer, tech lead"
+                    hint="Job titles or skills to search for"
+                    persistent-hint
+                  />
+                </div>
               </v-col>
               <v-col cols="12" sm="6">
-                <v-text-field
-                  v-model="configForm.excludedKeywords"
-                  label="Excluded keywords (comma-separated)"
-                  placeholder="e.g., junior, intern, .NET"
-                  hint="Filter out jobs containing these terms"
-                  persistent-hint
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="sc-field-2">Excluded keywords (comma-separated)</label>
+                  <v-text-field
+                    v-model="configForm.excludedKeywords"
+                    id="sc-field-2"
+                    placeholder="e.g., junior, intern, .NET"
+                    hint="Filter out jobs containing these terms"
+                    persistent-hint
+                  />
+                </div>
               </v-col>
               <v-col cols="12" sm="6">
-                <v-text-field
-                  v-model="configForm.locations"
-                  label="Locations (comma-separated)"
-                  placeholder="e.g., Remote, United States, New York"
-                  hint="Leave empty for worldwide results"
-                  persistent-hint
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="sc-field-3">Locations (comma-separated)</label>
+                  <v-text-field
+                    v-model="configForm.locations"
+                    id="sc-field-3"
+                    placeholder="e.g., Remote, United States, New York"
+                    hint="Leave empty for worldwide results"
+                    persistent-hint
+                  />
+                </div>
               </v-col>
               <v-col cols="12" sm="3">
-                <v-text-field
-                  v-model.number="configForm.salaryMin"
-                  label="Minimum salary"
-                  type="number"
-                  prefix="$"
-                  hint="Annual minimum"
-                  persistent-hint
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="sc-field-4">Minimum salary</label>
+                  <v-text-field
+                    v-model.number="configForm.salaryMin"
+                    id="sc-field-4"
+                    type="number"
+                    prefix="$"
+                    hint="Annual minimum"
+                    persistent-hint
+                  />
+                </div>
               </v-col>
               <v-col cols="12" sm="3" class="d-flex align-center">
                 <v-switch
@@ -294,16 +308,19 @@ onMounted(fetchConfigs)
                 />
               </v-col>
               <v-col cols="12" sm="6">
-                <v-select
-                  v-model="configForm.jobSources"
-                  :items="sourceOptions"
-                  label="Job sources"
-                  multiple
-                  chips
-                  :closable-chips="isDesktop"
-                  hint="If none selected, defaults to JSearch, Adzuna, and Remotive"
-                  persistent-hint
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="sc-field-5">Job sources</label>
+                  <v-select
+                    v-model="configForm.jobSources"
+                    :items="sourceOptions"
+                    id="sc-field-5"
+                    multiple
+                    chips
+                    :closable-chips="isDesktop"
+                    hint="If none selected, defaults to JSearch, Adzuna, and Remotive"
+                    persistent-hint
+                  />
+                </div>
               </v-col>
               <v-col cols="12" class="d-flex justify-end ga-2">
                 <v-btn variant="text" @click="showConfigForm = false; resetForm()">Cancel</v-btn>

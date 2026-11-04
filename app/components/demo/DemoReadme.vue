@@ -36,7 +36,7 @@ function render(md: string): string {
       flushList()
       const code: string[] = []
       while (++i < lines.length && !/^```/.test(lines[i]!)) code.push(lines[i]!)
-      out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`)
+      out.push(`<pre tabindex="0"><code>${escapeHtml(code.join('\n'))}</code></pre>`)
       continue
     }
     // Setext headings: a line underlined with === (level 1) or --- (level 2).

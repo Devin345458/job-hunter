@@ -119,7 +119,7 @@ defineExpose({ load })
         Job sources
       </v-card-title>
       <v-card-subtitle>
-        Each source is read in full the first time (the last 14 days, or every open posting on an employer board), then only for listings added since its last pull.
+        Read in full the first time, then only listings added since the last pull.
       </v-card-subtitle>
       <template #append>
         <v-btn

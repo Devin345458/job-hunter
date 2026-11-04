@@ -158,12 +158,7 @@ onBeforeUnmount(() => {
     <template v-else-if="demo">
       <v-card variant="outlined" class="mb-5">
         <v-card-item>
-          <template #prepend>
-            <v-avatar color="secondary" variant="tonal" size="48" rounded="lg">
-              <v-icon icon="mdi-flask-outline" />
-            </v-avatar>
-          </template>
-          <v-card-title class="demo-detail__title text-h5">
+          <v-card-title tag="h1" class="demo-detail__title text-h5">
             {{ demo.title }}
           </v-card-title>
           <v-card-subtitle class="demo-detail__subtitle">
@@ -329,7 +324,7 @@ onBeforeUnmount(() => {
                     <p v-if="fileContent.binary" class="text-body-2 text-medium-emphasis pa-4">
                       Binary file.
                     </p>
-                    <pre v-else class="demo-detail__code">{{ fileContent.content }}</pre>
+                    <pre v-else class="demo-detail__code" tabindex="0">{{ fileContent.content }}</pre>
                   </template>
                 </div>
               </div>
@@ -342,7 +337,7 @@ onBeforeUnmount(() => {
                 <span class="text-medium-emphasis">Command run by the build harness:</span>
                 <code class="demo-detail__inline-code">{{ demo.testCommand || 'none' }}</code>
               </p>
-              <pre v-if="demo.testOutput" class="demo-detail__code demo-detail__code--boxed">{{ demo.testOutput }}</pre>
+              <pre v-if="demo.testOutput" class="demo-detail__code demo-detail__code--boxed" tabindex="0">{{ demo.testOutput }}</pre>
               <p v-else class="text-body-2 text-medium-emphasis">
                 No test run recorded.
               </p>
@@ -355,9 +350,9 @@ onBeforeUnmount(() => {
                 <p class="text-body-2 text-medium-emphasis mb-3">
                   Running now. The newest lines are below; the full log is saved when the build ends.
                 </p>
-                <pre class="demo-detail__code demo-detail__code--boxed mb-4">{{ demo.progress.recent.join('\n') || demo.progress.waiting || 'Starting...' }}</pre>
+                <pre class="demo-detail__code demo-detail__code--boxed mb-4" tabindex="0">{{ demo.progress.recent.join('\n') || demo.progress.waiting || 'Starting...' }}</pre>
               </template>
-              <pre v-if="demo.buildLog" class="demo-detail__code demo-detail__code--boxed">{{ demo.buildLog }}</pre>
+              <pre v-if="demo.buildLog" class="demo-detail__code demo-detail__code--boxed" tabindex="0">{{ demo.buildLog }}</pre>
               <p v-else class="text-body-2 text-medium-emphasis">
                 No build log.
               </p>

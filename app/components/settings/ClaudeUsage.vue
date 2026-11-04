@@ -163,35 +163,42 @@ onMounted(() => {
           Background work (scheduled steps, reading and scoring jobs) stops at {{ sharePct }}% of the daily limit, the mark on the bar. What you start yourself can use the rest. At either limit every Claude call stops until midnight, or until the 7-day total drops under it. Amounts are Claude Code's estimate of what each call would cost on the API.
         </p>
         <form class="cu__limits" novalidate @submit.prevent="saveLimits">
-          <v-text-field
-            v-model="dailyInput"
-            label="Daily limit"
-            prefix="$"
-            type="number"
-            inputmode="decimal"
-            min="0.01"
-            step="0.5"
-            density="compact"
-            variant="outlined"
-            hide-details="auto"
-            :error-messages="limitsDirty && dailyError ? [dailyError] : []"
-            class="cu__limit"
-          />
-          <v-text-field
-            v-model="weekInput"
-            label="7-day limit"
-            prefix="$"
-            type="number"
-            inputmode="decimal"
-            min="0.01"
-            step="1"
-            density="compact"
-            variant="outlined"
-            hide-details="auto"
-            :error-messages="limitsDirty && weekError ? [weekError] : []"
-            class="cu__limit"
-          />
-          <v-btn type="submit" variant="tonal" color="primary" height="40" :loading="savingLimits" :disabled="!limitsDirty || !!dailyError || !!weekError">Save limits</v-btn>
+          <div class="field-wrap">
+            <label class="field-label" for="cu-limit-0">Daily limit</label>
+            <v-text-field
+              v-model="dailyInput"
+              id="cu-limit-0"
+              prefix="$"
+              type="number"
+              inputmode="decimal"
+              min="0.01"
+              step="0.5"
+              density="compact"
+              variant="outlined"
+              hide-details="auto"
+              :error-messages="limitsDirty && dailyError ? [dailyError] : []"
+              class="cu__limit"
+            />
+          </div>
+          <div class="field-wrap">
+            <label class="field-label" for="cu-limit-1">7-day limit</label>
+            <v-text-field
+              v-model="weekInput"
+              id="cu-limit-1"
+              prefix="$"
+              type="number"
+              inputmode="decimal"
+              min="0.01"
+              step="1"
+              density="compact"
+              variant="outlined"
+              hide-details="auto"
+              :error-messages="limitsDirty && weekError ? [weekError] : []"
+              class="cu__limit"
+            />
+          </div>
+          <v-btn type="submit" variant="flat" color="primary" height="40" :loading="savingLimits" :disabled="!limitsDirty || !!dailyError || !!weekError">Save limits</v-btn>
+          <span v-if="!limitsDirty" class="cu__save-why">Change a limit to save it</span>
         </form>
       </v-card-text>
     </v-card>
@@ -227,7 +234,7 @@ onMounted(() => {
             <div v-for="s in g.rows" :key="s.key" class="cu__stages-row" :title="s.purposes.length ? `Counts: ${s.purposes.join(', ')}` : undefined">
               <span class="cu__stages-name">{{ s.label }}</span>
               <span class="cu__stages-num tabular">{{ usd(s.today.costUsd) }}</span>
-              <span class="cu__stages-num tabular">{{ usd(s.week.costUsd) }} <span class="cu__stages-calls">{{ s.week.calls }} {{ s.week.calls === 1 ? 'call' : 'calls' }}</span></span>
+              <span class="cu__stages-num tabular">{{ usd(s.week.costUsd) }} <span class="cu__stages-calls">{{ s.week.calls.toLocaleString('en-US') }} {{ s.week.calls === 1 ? 'call' : 'calls' }}</span></span>
             </div>
             <p v-if="g.phase === 'after'" class="cu__stages-note">{{ perApplication }}</p>
           </template>
@@ -354,16 +361,23 @@ onMounted(() => {
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
+  // Labels above the fields; the button and its note sit on the fields' baseline.
   &__limits {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 12px;
+    align-items: flex-end;
+    gap: 12px 16px;
+
+    > .field-wrap {
+      flex: 0 0 160px;
+    }
   }
 
-  &__limit {
-    flex: 0 0 160px;
-    max-width: 160px;
+  &__save-why {
+    align-self: center;
+    margin-top: 28px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__stages {

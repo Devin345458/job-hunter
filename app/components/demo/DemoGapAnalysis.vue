@@ -1,16 +1,17 @@
 <script setup lang="ts">
-import { fixPlurals, plainKnowledgeRefs } from '#shared/utils/plain-text'
+import { fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
 import type { GapAnalysis, GapItem } from '#shared/types/pipeline'
 
 // The gap analysis for one application: each requirement Devin's record lacks and what the
 // pipeline decided to do about it.
-defineProps<{ gap: GapAnalysis | null }>()
+// showSummary: false where a section header above already prints the summary (the review card).
+withDefaults(defineProps<{ gap: GapAnalysis | null; showSummary?: boolean }>(), { showSummary: true })
 
-const DECISION: Record<GapItem['decision'], { label: string; color: string; icon: string }> = {
-  demo: { label: 'Demo idea', color: 'secondary', icon: 'mdi-flask-outline' },
-  ask: { label: 'Asked you', color: 'warning', icon: 'mdi-chat-question-outline' },
-  reframe: { label: 'Use existing experience', color: 'info', icon: 'mdi-swap-horizontal' },
-  skip: { label: 'Skip', color: 'grey', icon: 'mdi-minus-circle-outline' },
+const DECISION: Record<GapItem['decision'], { label: string; icon: string; color: string }> = {
+  demo: { label: 'Demo idea', icon: 'mdi-flask-outline', color: 'secondary' },
+  ask: { label: 'Asked you', icon: 'mdi-chat-question-outline', color: 'warning' },
+  reframe: { label: 'Use existing experience', icon: 'mdi-swap-horizontal', color: 'info' },
+  skip: { label: 'Left as a gap', icon: 'mdi-minus-circle-outline', color: 'grey' },
 }
 </script>
 
@@ -20,20 +21,19 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
       No gap analysis yet.
     </p>
     <template v-else>
-      <p class="gap-analysis__summary text-body-2 mb-4">
-        {{ fixPlurals(plainKnowledgeRefs(gap.summary)) }}
+      <p v-if="showSummary" class="gap-analysis__summary text-body-2 mb-4">
+        {{ fixPlurals(plainKnowledgeRefs(gapSummaryText(gap.summary, null))) }}
       </p>
       <div v-for="(item, i) in gap.items" :key="i" class="gap-analysis__item">
-        <div class="gap-analysis__row">
-          <v-chip :color="DECISION[item.decision].color" variant="tonal" size="small" :prepend-icon="DECISION[item.decision].icon">
-            {{ DECISION[item.decision].label }}
-          </v-chip>
-          <v-chip v-if="item.mustHave" size="small" variant="outlined">
-            Must have
-          </v-chip>
-        </div>
         <div class="gap-analysis__requirement text-body-1 font-weight-medium">
           {{ item.requirement }}
+        </div>
+        <div class="gap-analysis__row text-body-2">
+          <span class="gap-analysis__decision" :class="`text-${DECISION[item.decision].color}`">
+            <v-icon :icon="DECISION[item.decision].icon" size="16" />
+            {{ DECISION[item.decision].label }}
+          </span>
+          <span v-if="item.mustHave" class="gap-analysis__must">Must have</span>
         </div>
         <div class="gap-analysis__rationale text-body-2">
           {{ fixPlurals(plainKnowledgeRefs(item.rationale)) }}
@@ -69,8 +69,21 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
   &__row {
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    margin-top: 2px;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__decision {
+    display: inline-flex;
+    align-items: center;
     gap: 6px;
-    margin-bottom: 8px;
+  }
+
+  &__must {
+    font-weight: 500;
+    color: rgb(var(--v-theme-on-surface));
   }
 
   &__rationale {
@@ -89,7 +102,7 @@ const DECISION: Record<GapItem['decision'], { label: string; color: string; icon
     margin-top: 10px;
     padding: 10px 14px;
     border-radius: 8px;
-    background: rgba(var(--v-theme-secondary), 0.08);
+    background: rgb(var(--v-theme-surface-bright));
     line-height: 1.6;
   }
 

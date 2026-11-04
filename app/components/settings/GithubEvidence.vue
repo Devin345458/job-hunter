@@ -735,30 +735,36 @@ onMounted(async () => {
                 <template v-if="!data.identities.edited"> These start from your knowledge base email, your GitHub noreply addresses, and the token's login.</template>
               </p>
               <div class="ghe__ids">
-                <v-textarea
-                  v-model="emailsText"
-                  label="Author emails, one per line"
-                  rows="3"
-                  auto-grow
-                  autocomplete="off"
-                  spellcheck="false"
-                  wrap="off"
-                  hide-details
-                  class="ghe__ids-field"
-                  :disabled="savingIds"
-                />
-                <v-textarea
-                  v-model="loginsText"
-                  label="GitHub logins, one per line"
-                  rows="3"
-                  auto-grow
-                  autocomplete="off"
-                  spellcheck="false"
-                  wrap="off"
-                  hide-details
-                  class="ghe__ids-field"
-                  :disabled="savingIds"
-                />
+                <div class="field-wrap">
+                  <label class="field-label" for="ghe-id-0">Author emails, one per line</label>
+                  <v-textarea
+                    v-model="emailsText"
+                    id="ghe-id-0"
+                    rows="3"
+                    auto-grow
+                    autocomplete="off"
+                    spellcheck="false"
+                    wrap="off"
+                    hide-details
+                    class="ghe__ids-field"
+                    :disabled="savingIds"
+                  />
+                </div>
+                <div class="field-wrap">
+                  <label class="field-label" for="ghe-id-1">GitHub logins, one per line</label>
+                  <v-textarea
+                    v-model="loginsText"
+                    id="ghe-id-1"
+                    rows="3"
+                    auto-grow
+                    autocomplete="off"
+                    spellcheck="false"
+                    wrap="off"
+                    hide-details
+                    class="ghe__ids-field"
+                    :disabled="savingIds"
+                  />
+                </div>
               </div>
               <div class="ghe__ids-actions">
                 <v-btn :color="idsChanged ? 'primary' : undefined" :variant="idsChanged ? 'flat' : 'tonal'" height="44" :disabled="!idsChanged" :loading="savingIds" @click="saveIds">
@@ -779,7 +785,7 @@ onMounted(async () => {
                   <li v-for="u in data.unlistedEmails" :key="u.email" class="ghe__unlisted-row">
                     <div class="ghe__unlisted-text">
                       <span class="ghe__unlisted-email">{{ u.email }}</span>
-                      <span class="ghe__repo-meta">{{ u.commits }} {{ u.commits === 1 ? 'commit' : 'commits' }} in {{ u.repos.map(repoShort).join(', ') }}</span>
+                      <span class="ghe__repo-meta">{{ u.commits.toLocaleString('en-US') }} {{ u.commits === 1 ? 'commit' : 'commits' }} in {{ u.repos.map(repoShort).join(', ') }}</span>
                     </div>
                     <v-btn variant="tonal" height="44" prepend-icon="mdi-plus" :disabled="savingIds" :aria-label="`Add ${u.email} as yours`" @click="addEmail(u.email)">
                       Add

@@ -10,11 +10,25 @@ export interface JobApplicationRef {
   prepareFailed: boolean
 }
 
+/** The job page's application: the list's ref plus what the actions card needs (GET /api/jobs/:id). */
+export interface JobApplicationDetail extends JobApplicationRef {
+  /** A tailored resume was written (Apply prepared it). A Decide card has none. */
+  hasResume: boolean
+  /** One plain line on what is happening ("Writing the cover letter") or what is missing. */
+  statusDetail: string | null
+  submittedAt: string | null
+}
+
 /** The columns GET /api/jobs returns for each card (server/api/jobs/index.get.ts). The detail page loads the rest. */
 export type JobListItem = Pick<Job,
   | 'id' | 'source' | 'title' | 'company' | 'location' | 'remoteType' | 'salaryMin' | 'salaryMax' | 'salaryCurrency'
   | 'totalCompEstimate' | 'matchScore' | 'status' | 'tags' | 'applyUrl' | 'atsType' | 'isSandbox' | 'foundAt'> & {
   application?: JobApplicationRef | null
+  /** Yearly base and total estimate from the pay breakdown (null until the posting is read). */
+  baseAnnualMin?: number | null
+  baseAnnualMax?: number | null
+  totalEstimateMin?: number | null
+  totalEstimateMax?: number | null
   /** How many postings of this company and title the card stands for (1 for most). */
   postingCount?: number
   /** Every posting the card stands for, this one first. Empty when it stands for one. */

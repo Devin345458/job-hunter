@@ -3,6 +3,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import type { applications, jobs } from '~~/server/db/schema'
 import type { OutcomeEntry, ReviewItem } from '#shared/types/pipeline'
 import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, properName, timeAgo } from '~/composables/review/format'
+import { scoreColor } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
 import { approveSentence } from '~/components/applications/approve-text'
 import { SENT_STATUSES, formatDay, outcomeLabel } from '#shared/utils/outcomes'
@@ -236,7 +237,6 @@ const submissionSummary = computed(() => {
       <header class="ad__head">
         <div class="ad__eyebrow">
           <span class="ad__company">{{ app.job?.company || 'Unknown company' }}</span>
-          <ApplicationsStatusTag :status="app.status" :form-error="app.formError" />
           <span v-if="app.isSandbox" class="ad__sandbox">Sandbox</span>
         </div>
         <h1 class="ad__title">{{ app.job?.title || 'Unknown role' }}</h1>
@@ -245,15 +245,30 @@ const submissionSummary = computed(() => {
           {{ statusText }}
         </p>
         <div class="ad__meta">
+          <!-- The state beside the facts it qualifies, not above the heading. -->
+          <ApplicationsStatusTag :status="app.status" :form-error="app.formError" />
           <span v-if="app.job?.location"><v-icon icon="mdi-map-marker-outline" size="15" />{{ app.job.location }}</span>
           <span v-if="formFact"><v-icon icon="mdi-form-select" size="15" />{{ formFact }}</span>
-          <span v-if="app.job?.matchScore != null" class="tabular"><v-icon icon="mdi-target" size="15" />Match {{ app.job.matchScore }}</span>
+          <span v-if="app.job?.matchScore != null">Match <span class="ad__score" :class="`text-${scoreColor(app.job.matchScore)}`">{{ app.job.matchScore }}</span></span>
           <span><v-icon icon="mdi-clock-outline" size="15" />Updated {{ timeAgo(app.updatedAt) }}</span>
         </div>
+        <!-- One primary (the review card, where the decision is made); the rest are text links. -->
         <div class="ad__links">
-          <v-btn v-if="reviewable" :to="`/review/${app.id}`" variant="tonal" height="44" prepend-icon="mdi-inbox-arrow-down-outline">Open the review card</v-btn>
-          <v-btn v-if="app.job?.url" :href="app.job.url" target="_blank" rel="noopener" variant="outlined" height="44" prepend-icon="mdi-open-in-new">Posting</v-btn>
-          <v-btn v-if="app.job" :to="`/jobs/${app.job.id}`" variant="outlined" height="44" prepend-icon="mdi-briefcase-outline">Job details</v-btn>
+          <v-btn v-if="reviewable" :to="`/review/${app.id}`" color="primary" variant="flat">Open the review card</v-btn>
+          <a v-if="app.job?.url" :href="app.job.url" target="_blank" rel="noopener" class="ad__link">Posting<v-icon icon="mdi-open-in-new" size="14" /></a>
+          <NuxtLink v-if="app.job" :to="`/jobs/${app.job.id}`" class="ad__link">Job details</NuxtLink>
+          <!-- Phone: the maintenance actions live in one menu, so the questions start on the first screen. -->
+          <v-menu v-if="canPrepare || canRefill || canRefresh" location="bottom end">
+            <template #activator="{ props: menuProps }">
+              <v-btn v-bind="menuProps" variant="text" append-icon="mdi-chevron-down" class="ad__more-phone">More</v-btn>
+            </template>
+            <v-list density="comfortable" class="ad__menu">
+              <v-list-item v-if="canPrepare" prepend-icon="mdi-restart" title="Prepare again" :disabled="!!busy || working" @click="run('prepare')" />
+              <v-list-item v-if="canRefill" prepend-icon="mdi-form-textbox" title="Fill the form again" :disabled="!!busy || working" @click="run('refill')" />
+              <v-list-item v-if="canRefresh" prepend-icon="mdi-sync" title="Take in my answers" :disabled="!!busy" @click="run('refresh')" />
+              <p class="ad__menu-note">Nothing here submits. Filling the form again never attaches files or clicks submit.</p>
+            </v-list>
+          </v-menu>
         </div>
       </header>
 
@@ -269,8 +284,7 @@ const submissionSummary = computed(() => {
       <div v-if="canPrepare || canRefill || canRefresh" class="ad__actions">
         <v-btn
           v-if="canPrepare"
-          variant="outlined"
-          height="44"
+          variant="text"
           prepend-icon="mdi-restart"
           :loading="busy === 'prepare'"
           :disabled="!!busy || working"
@@ -280,8 +294,7 @@ const submissionSummary = computed(() => {
         </v-btn>
         <v-btn
           v-if="canRefill"
-          variant="outlined"
-          height="44"
+          variant="text"
           prepend-icon="mdi-form-textbox"
           :loading="busy === 'refill'"
           :disabled="!!busy || working"
@@ -291,8 +304,7 @@ const submissionSummary = computed(() => {
         </v-btn>
         <v-btn
           v-if="canRefresh"
-          variant="outlined"
-          height="44"
+          variant="text"
           prepend-icon="mdi-sync"
           :loading="busy === 'refresh'"
           :disabled="!!busy"
@@ -397,25 +409,21 @@ const submissionSummary = computed(() => {
   padding: 8px 0 32px;
 
   &__top { margin: 0 0 8px -8px; }
-  &__skel { border-radius: 12px; }
-
   &__state {
     display: grid;
     justify-items: start;
     gap: 8px;
     padding: 24px;
-    border-radius: 12px;
+    border-radius: 16px;
     background: rgb(var(--v-theme-surface));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 
-  &__state-title { font-size: 1.125rem; font-weight: 650; margin: 0; }
+  &__state-title { font-size: 1.125rem; font-weight: 600; margin: 0; }
   &__state-text { margin: 0 0 8px; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
 
   &__card {
     background: rgb(var(--v-theme-surface));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    border-radius: 12px;
+    border-radius: 16px;
     padding: 20px 24px 8px;
   }
 
@@ -424,8 +432,8 @@ const submissionSummary = computed(() => {
 
   &__sandbox {
     font-size: 0.75rem;
-    font-weight: 600;
-    padding: 2px 8px;
+    font-weight: 500;
+    padding: 1px 8px;
     border-radius: 6px;
     color: rgb(var(--v-theme-info));
     border: 1px dashed rgba(var(--v-theme-info), 0.6);
@@ -433,7 +441,7 @@ const submissionSummary = computed(() => {
 
   &__title {
     font-size: 1.375rem;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.25;
     letter-spacing: -0.015em;
     margin: 0 0 8px;
@@ -462,14 +470,32 @@ const submissionSummary = computed(() => {
     span { display: inline-flex; align-items: center; gap: 4px; }
   }
 
-  &__links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  &__links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin-top: 14px; }
+
+  &__score { font-weight: 600; }
+
+  // A text link in ink, 44px tall on a phone.
+  &__link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 36px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: rgb(var(--v-theme-on-surface));
+    text-decoration: none;
+
+    &:hover { text-decoration: underline; }
+
+    @media (max-width: 959.98px) { min-height: 44px; }
+  }
 
   &__alert {
     display: flex;
     gap: 10px;
     margin-top: 16px;
     padding: 12px 14px;
-    border-radius: 8px;
+    border-radius: 10px;
     color: rgb(var(--v-theme-error));
     background: rgba(var(--v-theme-error), 0.08);
     border: 1px solid rgba(var(--v-theme-error), 0.3);
@@ -484,17 +510,27 @@ const submissionSummary = computed(() => {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: 4px 8px;
     margin-top: 16px;
-    padding: 14px 16px;
-    border-radius: 8px;
-    background: rgb(var(--v-theme-background));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    padding: 8px 8px 12px;
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface-bright));
+  }
+
+  // Desktop and tablet show the actions inline; the phone shows them in the More menu instead.
+  &__more-phone { display: none !important; }
+
+  &__menu { max-width: 320px; }
+
+  &__menu-note {
+    margin: 4px 16px 8px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__actions-note {
     flex-basis: 100%;
-    margin: 4px 0 0;
+    margin: 4px 8px 0;
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
@@ -508,9 +544,8 @@ const submissionSummary = computed(() => {
     font-size: 0.875rem;
     line-height: 1.65;
     padding: 16px 18px;
-    border-radius: 8px;
+    border-radius: 10px;
     background: rgb(var(--v-theme-sunken));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     max-height: 520px;
     overflow-y: auto;
   }
@@ -520,7 +555,9 @@ const submissionSummary = computed(() => {
 }
 
 @media (max-width: 599px) {
-  .ad__card { padding: 16px 16px 4px; border-radius: 10px; }
-  .ad__links .v-btn, .ad__actions .v-btn { flex: 1 1 100%; }
+  .ad__card { padding: 16px 16px 4px; border-radius: 12px; }
+  .ad__links > .v-btn:not(.ad__more-phone) { flex: 1 1 100%; }
+  .ad__actions { display: none; }
+  .ad__more-phone { display: inline-flex !important; }
 }
 </style>

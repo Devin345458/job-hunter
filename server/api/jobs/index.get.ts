@@ -102,6 +102,12 @@ export default defineEventHandler(async (event) => {
         salaryMax: jobs.salaryMax,
         salaryCurrency: jobs.salaryCurrency,
         totalCompEstimate: jobs.totalCompEstimate,
+        // The pay columns on the list: yearly base and the total estimate range, the same figures
+        // the Review card and the job page print.
+        baseAnnualMin: sql<number | null>`json_extract(${jobs.compJson}, '$.baseAnnualMin')`,
+        baseAnnualMax: sql<number | null>`json_extract(${jobs.compJson}, '$.baseAnnualMax')`,
+        totalEstimateMin: sql<number | null>`json_extract(${jobs.compJson}, '$.totalEstimateMin')`,
+        totalEstimateMax: sql<number | null>`json_extract(${jobs.compJson}, '$.totalEstimateMax')`,
         matchScore: jobs.matchScore,
         status: jobs.status,
         tags: jobs.tags,

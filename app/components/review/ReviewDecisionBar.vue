@@ -61,9 +61,9 @@ const approveLabel = computed(() => (isRetry.value ? 'Retry submit' : props.item
 const blockedReasons = computed<string[]>(() => {
   const status = props.item.status
   const out: string[] = []
-  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} ${props.questionsPlace ?? 'above'} to unlock approve.`)
+  if (blocking.value > 0) out.push(`Answer ${plural(blocking.value, 'question')} ${props.questionsPlace ?? 'above'} before you can approve.`)
   else if (status === 'needs_input') {
-    out.push(props.refreshing ? 'Updating the form answers with what you said.' : 'Answers saved. Approve unlocks when the pipeline marks this ready.')
+    out.push(props.refreshing ? 'Updating the form answers with what you said.' : 'Answers saved. Approve opens when the pipeline marks this ready.')
   }
   if (demoBlocked.value && (CAN_APPROVE.includes(status) || status === 'needs_input')) {
     out.push(`${demoBlocked.value.replace(/\.$/, '')}. Set it, or discard the demo, to approve.`)
@@ -87,6 +87,15 @@ const detailsOpen = ref(false)
 watch(() => props.item.applicationId, () => { detailsOpen.value = false })
 /** Only the plain consequence line has a short form; blockers and by-hand notes always show in full. */
 const hasShortForm = computed(() => !blockedReasons.value.length && !prepareFailed.value && !isManual.value && !isDecide.value)
+
+/**
+ * Stage 1, short: the safety promise, read at the moment Apply is pressed. A form the pipeline
+ * cannot fill says so here too, since it changes what Apply leads to. The rest is one tap away.
+ */
+const applyShort = computed(() => {
+  const formNote = props.item.form.error ? ' You would submit this form by hand.' : ''
+  return `Nothing goes to ${props.item.job.company || 'the employer'} until you approve it.${formNote}`
+})
 
 /** Stage 1: what Apply does. A form the pipeline cannot fill says the application goes to Devin by hand. */
 const applyLine = computed(() => {
@@ -125,9 +134,20 @@ const consequence = computed(() => {
         <span v-else>{{ r }}</span>
       </p>
     </div>
+    <p v-else-if="isDecide" class="bar__line" role="status" :id="`bar-detail-${item.applicationId}`">
+      {{ detailsOpen ? applyLine : applyShort }}
+      <button
+        type="button"
+        class="bar__more"
+        :aria-expanded="detailsOpen"
+        :aria-controls="`bar-detail-${item.applicationId}`"
+        @click="detailsOpen = !detailsOpen"
+      >
+        {{ detailsOpen ? 'Less' : 'What Apply does' }}
+      </button>
+    </p>
     <p v-else class="bar__line" :class="{ 'bar__line--long': hasShortForm, 'bar__line--open': detailsOpen }" role="status" :id="`bar-detail-${item.applicationId}`">
-      <template v-if="isDecide">{{ applyLine }}</template>
-      <template v-else-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
+      <template v-if="prepareFailed">Nothing to submit until preparation succeeds. Reject it if you no longer want this job.</template>
       <template v-else-if="isManual">
         <template v-if="item.submission?.manualReason">{{ item.submission.manualReason }}. </template>Submit it on the employer's site, or reject if you changed your mind.
       </template>
@@ -255,6 +275,26 @@ const consequence = computed(() => {
     line-height: 1.45;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
+  }
+
+  // A text action in ink inside the consequence line.
+  &__more {
+    margin-left: 4px;
+    padding: 0;
+    font: inherit;
+    font-weight: 500;
+    color: rgb(var(--v-theme-on-surface));
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+
+    // A 44px tap target on a phone without growing the line: the padding is pulled back by margin.
+    @media (max-width: 959.98px) {
+      padding-block: 13px;
+      margin-block: -13px;
+    }
   }
 
   &__reasons {

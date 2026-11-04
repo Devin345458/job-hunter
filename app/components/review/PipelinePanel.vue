@@ -261,9 +261,8 @@ onMounted(() => {
       border-top: 0;
       padding: 14px 16px;
       margin-bottom: 4px;
-      border-radius: 8px;
-      background: rgba(var(--v-theme-primary), 0.07);
-      border: 1px solid rgba(var(--v-theme-primary), 0.2);
+      border-radius: 10px;
+      background: rgb(var(--v-theme-surface-bright));
     }
   }
 

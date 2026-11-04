@@ -2,6 +2,7 @@
 import type { JobFilters, JobListItem, JobSort } from '~/composables/useJobs'
 import type { JobFilterValues } from '~/components/jobs/JobFilters.vue'
 import { SupersededRequest } from '~/composables/useJobs'
+import { countText as formatCount } from '#shared/utils/pay-format'
 
 // Coming back from a job page, the router leaves the scroll alone; the page restores it below.
 definePageMeta({
@@ -49,13 +50,14 @@ if (restored) {
 }
 const loadingMore = ref(false)
 const hasMore = computed(() => jobs.value.length < total.value)
-/** "Showing 24 of 378 jobs, from 405 postings." when some cards stand for several postings of one role. */
-const countText = computed(() => {
-  const shown = `Showing ${jobs.value.length} of ${total.value} job${total.value !== 1 ? 's' : ''}`
-  return totalPostings.value > total.value
-    ? `${shown}, from ${totalPostings.value} postings. A role posted more than once shows as one card.`
-    : shown
+/** The page's one line about the data: "1,835 jobs, from 2,081 postings". */
+const dataLine = computed(() => {
+  if (!total.value && !jobs.value.length) return ''
+  const jobsText = `${formatCount(total.value)} job${total.value !== 1 ? 's' : ''}`
+  return totalPostings.value > total.value ? `${jobsText}, from ${formatCount(totalPostings.value)} postings` : jobsText
 })
+/** Under the list: how far it has loaded. */
+const shownText = computed(() => `Showing ${formatCount(jobs.value.length)} of ${formatCount(total.value)}`)
 
 async function load(options: { append?: boolean } = {}) {
   try {
@@ -163,10 +165,8 @@ onBeforeRouteLeave((to) => {
   <div class="jobs-page fade-in">
     <div class="page-header page-header--split">
       <div>
-        <h1 class="text-h4 page-header__title">Job Feed</h1>
-        <p class="text-body-2 page-header__subtitle">
-          Browse jobs matched to your profile. Use filters to narrow results, or open a job to see match details and generate a tailored resume.
-        </p>
+        <h1 class="text-h4 page-header__title">Jobs</h1>
+        <p class="page-header__subtitle" aria-live="polite">{{ dataLine || '\u00a0' }}</p>
       </div>
       <v-btn
         color="primary"
@@ -178,8 +178,24 @@ onBeforeRouteLeave((to) => {
       </v-btn>
     </div>
 
-    <div class="mb-6">
-      <JobsJobFilters :initial="filterValues" @update:filters="onFiltersUpdate" />
+    <div class="jobs-page__toolbar">
+      <JobsJobFilters :initial="filterValues" class="jobs-page__filters" @update:filters="onFiltersUpdate" />
+      <v-btn-toggle
+        v-model="sort"
+        mandatory
+        density="compact"
+        variant="outlined"
+        divided
+        class="jobs-page__sort"
+        aria-label="Sort jobs"
+      >
+        <v-btn value="score">
+          Best match
+        </v-btn>
+        <v-btn value="date">
+          Newest
+        </v-btn>
+      </v-btn-toggle>
     </div>
 
     <v-alert
@@ -204,57 +220,35 @@ onBeforeRouteLeave((to) => {
       </div>
     </v-alert>
 
-    <div class="jobs-page__status">
-      <div class="jobs-page__status-row">
-        <!-- Not tabular: under tabular figures the font gives the comma and period a digit-wide slot. -->
-        <div class="text-caption text-medium-emphasis" aria-live="polite">
-          <template v-if="jobs.length">
-            {{ countText }}
-          </template>
-        </div>
-        <v-btn-toggle
-          v-model="sort"
-          mandatory
-          density="compact"
-          variant="outlined"
-          divided
-          class="jobs-page__sort"
-          aria-label="Sort jobs"
-        >
-          <v-btn value="score" prepend-icon="mdi-sort-numeric-descending">
-            Best match
-          </v-btn>
-          <v-btn value="date" prepend-icon="mdi-clock-outline">
-            Newest
-          </v-btn>
-        </v-btn-toggle>
-      </div>
-      <v-progress-linear
-        v-if="loading && !loadingMore"
-        indeterminate
-        color="primary"
-        class="jobs-page__progress"
-        aria-label="Loading jobs"
-      />
-    </div>
+    <v-progress-linear
+      v-if="loading && !loadingMore"
+      indeterminate
+      color="primary"
+      height="2"
+      class="jobs-page__progress"
+      aria-label="Loading jobs"
+    />
 
     <template v-if="jobs.length">
-      <v-row class="stagger-in">
-        <v-col
-          v-for="job in jobs"
-          :key="job.id"
-          cols="12"
-          sm="6"
-          lg="4"
-        >
-          <JobsJobCard :job="job" />
-        </v-col>
-      </v-row>
+      <!-- The column header shares the rows' grid, so each figure ends on one right edge. -->
+      <div class="jobs-page__head" aria-hidden="true">
+        <span class="jobs-page__h-num">Score</span>
+        <span>Role</span>
+        <span>State</span>
+        <span class="jobs-page__h-num">Base pay</span>
+        <span class="jobs-page__h-num">Total pay</span>
+      </div>
+      <ul class="jobs-page__list" aria-label="Jobs">
+        <li v-for="job in jobs" :key="job.id">
+          <JobsJobRow :job="job" />
+        </li>
+      </ul>
 
-      <div v-if="hasMore" class="jobs-page__more">
+      <div class="jobs-page__more">
+        <span class="jobs-page__shown">{{ shownText }}</span>
         <v-btn
+          v-if="hasMore"
           variant="outlined"
-          prepend-icon="mdi-chevron-down"
           :loading="loadingMore"
           :disabled="loading && !loadingMore"
           @click="loadMore"
@@ -267,21 +261,18 @@ onBeforeRouteLeave((to) => {
     <v-card
       v-else-if="!loading"
       variant="outlined"
-      class="text-center pa-12"
+      class="text-center pa-10"
     >
-      <v-icon icon="mdi-briefcase-search-outline" size="64" class="mb-4" style="opacity: 0.3;" />
-      <h3 class="text-h6 mb-2">No Jobs Found</h3>
-      <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 400px; margin: 0 auto;">
-        Jobs appear here after a search runs. Set what to search for in Settings > Job search, then wait for the next scheduled run or start one with Search now.
+      <h2 class="text-h6 mb-2">No jobs match</h2>
+      <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 420px; margin: 0 auto;">
+        Clear a filter, or set what to search for in Settings > Job search.
       </p>
       <div class="d-flex flex-wrap justify-center ga-3 mt-4">
         <v-btn
-          variant="tonal"
-          color="primary"
-          prepend-icon="mdi-tune-variant"
+          variant="outlined"
           to="/settings/job-search"
         >
-          Configure Search
+          Job search settings
         </v-btn>
         <v-btn
           variant="outlined"
@@ -324,33 +315,84 @@ onBeforeRouteLeave((to) => {
 
 <style scoped lang="scss">
 .jobs-page {
-  &__status {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-bottom: 12px;
-  }
-
-  &__status-row {
+  // One row of controls: the filters, then the sort at the right end.
+  &__toolbar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px 16px;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  &__filters {
+    flex: 1 1 0;
+    min-width: 0;
+
+    // Phone: search and Filters get the whole row; the sort sits on the row under them.
+    @media (max-width: 959.98px) {
+      flex-basis: 100%;
+    }
   }
 
   &__sort {
     flex: 0 0 auto;
+    height: 40px !important;
 
     .v-btn {
       font-size: 0.8125rem;
     }
   }
 
+  &__progress {
+    margin-bottom: 4px;
+  }
+
+  // Same columns as JobRow: score 48 | role | state 148 | base 156 | total 156.
+  &__head {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr) 148px 156px 156px;
+    column-gap: 16px;
+    padding: 0 12px 8px;
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    margin-bottom: 4px;
+
+    @media (max-width: 1099.98px) {
+      grid-template-columns: 40px minmax(0, 1fr) 140px 140px;
+
+      > :nth-child(3) {
+        display: none;
+      }
+    }
+
+    @media (max-width: 639.98px) {
+      display: none;
+    }
+  }
+
+  &__h-num {
+    text-align: right;
+  }
+
+  &__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
   &__more {
     display: flex;
-    justify-content: center;
-    margin-top: 24px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 16px;
+    padding: 0 12px;
+  }
+
+  &__shown {
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 }
 </style>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { properName } from '~/composables/review/format'
-import type { CompensationBreakdown, QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
-import type { Job, JobApplicationRef, JobStatus } from '~/composables/useJobs'
+import type { CompensationBreakdown, QuestionView, RejectReasonCode, RejectSkillsMode, Requirement, ReviewItem, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
+import type { Job, JobApplicationDetail, JobApplicationRef, JobStatus } from '~/composables/useJobs'
 import { ATS_LABELS, jobStateMeta, scoreColor, uniqueTags } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
+import { payRange } from '#shared/utils/pay-format'
 
 /** GET /api/jobs/:id adds the parsed pipeline fields to the row. */
 type JobDetail = Job & {
@@ -14,7 +15,7 @@ type JobDetail = Job & {
   enrichNotes: string[]
   scoreHistory: Array<{ score: number; skillsScore: number | null; compScore: number | null; learnedAdjustment: number | null; reason: string; computedAt: string }>
   openQuestions: QuestionView[]
-  application: JobApplicationRef | null
+  application: JobApplicationDetail | null
   /** Other postings of the same role at the same company; the jobs list shows them as one card. */
   otherPostings: Array<{ id: number; location: string | null; status: string; matchScore: number | null; foundAt: string; application: JobApplicationRef | null }>
 }
@@ -29,9 +30,9 @@ const { getJob, updateJobStatus, loading, error } = useJobs()
 const snackbar = useSnackbar()
 
 const job = ref<JobDetail | null>(null)
-const generatingResume = ref(false)
-const resumeError = ref<string | null>(null)
-const applicationId = ref<number | null>(null)
+/** Which action is running; the card disables the others meanwhile. */
+const actionBusy = ref<'prepare' | 'apply' | 'reject' | 'mark' | null>(null)
+const actionError = ref<string | null>(null)
 
 const jobId = computed(() => Number(route.params.id))
 
@@ -43,17 +44,13 @@ const state = computed(() => jobStateMeta(job.value?.status, job.value?.applicat
 
 const salaryDisplay = computed(() => {
   if (!job.value) return ''
-  const { salaryMin, salaryMax, salaryCurrency } = job.value
-  if (!salaryMin && !salaryMax) return ''
+  return payRange(job.value.salaryMin, job.value.salaryMax, job.value.salaryCurrency || 'USD')
+})
 
-  const c = salaryCurrency || 'USD'
-  const symbol = c === 'USD' ? '$' : c
-  const fmt = (val: number) => (val >= 1000 ? `${symbol}${Math.round(val / 1000)}K` : `${symbol}${val}`)
-
-  if (salaryMin && salaryMax) return `${fmt(salaryMin)} to ${fmt(salaryMax)}`
-  if (salaryMin) return `${fmt(salaryMin)}+`
-  if (salaryMax) return `Up to ${fmt(salaryMax)}`
-  return ''
+/** The work type chip, only when the location does not already say it ("Remote, United States"). */
+const showWorkType = computed(() => {
+  const type = job.value?.remoteType
+  return !!type && !new RegExp(`\\b${type}\\b`, 'i').test(job.value?.location ?? '')
 })
 
 const atsLabel = computed(() => ATS_LABELS[job.value?.atsType ?? 'unknown'] ?? job.value?.atsType ?? '')
@@ -64,49 +61,122 @@ const hasHtmlDescription = computed(() => !!job.value?.description)
 async function loadJob() {
   try {
     job.value = await getJob(jobId.value) as JobDetail
-    // Any application, not only a submitted one: a job in review already has its resume.
-    applicationId.value = job.value?.application?.id ?? null
   }
   catch {
     // Error handled by composable
   }
 }
 
-async function onMarkReady() {
-  if (!job.value) return
+function errorText(e: any, fallback: string): string {
+  return e?.data?.statusMessage || e?.data?.message || e?.message || fallback
+}
+
+/**
+ * Job status `applied` closes the job: learning stops rescoring it, answers stop rescoring it, no
+ * new gap questions are asked for it, and the jobs list files it under Applied.
+ */
+async function onMarkApplied() {
+  if (!job.value || actionBusy.value) return
+  actionBusy.value = 'mark'
+  actionError.value = null
   try {
     const updated = await updateJobStatus(job.value.id, 'applied' as JobStatus)
     job.value = { ...job.value, ...updated }
-    snackbar.success('Job marked as ready to apply')
+    snackbar.success('Marked applied. This job is no longer scored.')
   }
-  catch {
-    snackbar.error('Failed to update job status')
+  catch (e: any) {
+    actionError.value = errorText(e, 'Could not mark the job applied')
+  }
+  finally {
+    actionBusy.value = null
   }
 }
 
-async function onGenerateResume() {
-  if (!job.value) return
-  generatingResume.value = true
-  resumeError.value = null
+/** No application yet: POST /api/applications/:jobId, the same Apply a Decide card makes. */
+async function onPrepare() {
+  if (!job.value || actionBusy.value) return
+  actionBusy.value = 'prepare'
+  actionError.value = null
   try {
-    const application = await $fetch<{ id: number }>(`/api/applications/${job.value.id}`, {
-      method: 'POST',
-    })
-    // The server answers at once (202) and prepares in the background: resume, cover letter,
-    // gap analysis, and the employer form dry run. Nothing is applied for until Devin approves.
-    applicationId.value = application.id
-    snackbar.success('Preparing the application: resume, cover letter, and form. Follow it on the application page.', {
-      text: 'View Application',
+    const application = await $fetch<{ id: number }>(`/api/applications/${job.value.id}`, { method: 'POST' })
+    snackbar.success('Preparing the resume, cover letter and form. Nothing is sent until you approve it.', {
+      text: 'View application',
       handler: () => router.push(`/applications/${application.id}`),
     })
+    await refreshJob()
   }
   catch (e: any) {
-    const msg = e.data?.statusMessage || e.data?.message || e.message || 'Could not start preparing the application'
-    resumeError.value = msg
-    snackbar.error('Could not start preparing the application. See details below.')
+    actionError.value = errorText(e, 'Could not start preparing the application')
   }
   finally {
-    generatingResume.value = false
+    actionBusy.value = null
+  }
+}
+
+/** Stage 1 Apply on the job page: POST /api/review/:id/apply, as the Review card does. */
+async function onApply() {
+  const app = job.value?.application
+  if (!app || actionBusy.value) return
+  actionBusy.value = 'apply'
+  actionError.value = null
+  try {
+    await $fetch<ReviewItem>(`/api/review/${app.id}/apply`, { method: 'POST' })
+    snackbar.success('Preparing the resume, cover letter and form. Nothing is sent until you approve it.', {
+      text: 'View application',
+      handler: () => router.push(`/applications/${app.id}`),
+    })
+    await refreshJob()
+  }
+  catch (e: any) {
+    actionError.value = errorText(e, 'Apply failed')
+    await refreshJob()
+  }
+  finally {
+    actionBusy.value = null
+  }
+}
+
+// ── Reject: the Review card's dialog and endpoint. Its skill chips come from the card's item. ──
+const rejectOpen = ref(false)
+const rejecting = ref(false)
+const rejectError = ref<string | null>(null)
+const rejectItem = ref<ReviewItem | null>(null)
+
+async function onReject() {
+  const app = job.value?.application
+  if (!app || actionBusy.value) return
+  actionBusy.value = 'reject'
+  actionError.value = null
+  try {
+    rejectItem.value = await $fetch<ReviewItem>(`/api/review/${app.id}`)
+    rejectError.value = null
+    rejectOpen.value = true
+  }
+  catch (e: any) {
+    actionError.value = errorText(e, 'Could not open Reject')
+  }
+  finally {
+    actionBusy.value = null
+  }
+}
+
+async function confirmReject(reasonCode: RejectReasonCode, reasonText: string | null, skills: string[], skillsMode: RejectSkillsMode) {
+  const app = job.value?.application
+  if (!app) return
+  rejecting.value = true
+  rejectError.value = null
+  try {
+    const body = skills.length ? { reasonCode, reasonText, skills, skillsMode } : { reasonCode, reasonText }
+    await $fetch(`/api/review/${app.id}/reject`, { method: 'POST', body })
+    rejectOpen.value = false
+    snackbar.success('Rejected. Nothing was sent.')
+    await refreshJob()
+  }
+  catch (e: any) {
+    rejectError.value = errorText(e, 'Reject failed')
+  }
+  finally {
+    rejecting.value = false
   }
 }
 
@@ -123,9 +193,7 @@ function openClaim(text: string, source: SkillClaimSource) {
 /** The panel saved an answer or the score changed: re-read the job without reloading the page. */
 async function refreshJob() {
   try {
-    const next = await $fetch<JobDetail>(`/api/jobs/${jobId.value}`)
-    job.value = next
-    applicationId.value = next.application?.id ?? null
+    job.value = await $fetch<JobDetail>(`/api/jobs/${jobId.value}`)
   }
   catch {
     // The panel already showed what it saved; the page keeps the version it has.
@@ -210,7 +278,7 @@ onMounted(() => {
           <!-- Job Header -->
           <v-card variant="outlined" class="mb-6">
             <v-card-item>
-              <v-card-title class="text-h5 font-weight-bold job-detail__title">
+              <v-card-title tag="h1" class="text-h5 job-detail__title">
                 {{ job.title }}
               </v-card-title>
               <v-card-subtitle class="text-body-1 mt-1">
@@ -222,8 +290,8 @@ onMounted(() => {
                   :color="state.color"
                   variant="tonal"
                   size="small"
-                  :to="job.application ? `/applications/${job.application.id}` : undefined"
-                  :aria-label="job.application ? `Application: ${state.label}. Open the application` : `Status: ${state.label}`"
+                  label
+                  :aria-label="`Status: ${state.label}`"
                 >
                   {{ state.label }}
                 </v-chip>
@@ -246,7 +314,7 @@ onMounted(() => {
                 </v-chip>
 
                 <v-chip
-                  v-if="salaryDisplay"
+                  v-if="salaryDisplay && !job.compensation"
                   variant="outlined"
                   prepend-icon="mdi-currency-usd"
                   size="small"
@@ -255,7 +323,7 @@ onMounted(() => {
                 </v-chip>
 
                 <v-chip
-                  v-if="job.remoteType"
+                  v-if="showWorkType"
                   variant="outlined"
                   :prepend-icon="job.remoteType === 'remote' ? 'mdi-earth' : job.remoteType === 'hybrid' ? 'mdi-home-city' : 'mdi-office-building'"
                   size="small"
@@ -292,8 +360,7 @@ onMounted(() => {
                   :href="job.applyUrl"
                   target="_blank"
                   rel="noopener"
-                  color="primary"
-                  variant="flat"
+                  variant="outlined"
                   size="small"
                   prepend-icon="mdi-form-select"
                 >
@@ -365,13 +432,15 @@ onMounted(() => {
           <!-- On phones the actions and the score follow the header instead of sitting below the whole description -->
           <JobsJobActions
             class="mb-6 d-md-none"
-            :application-id="applicationId"
-            :generating="generatingResume"
-            :applied="job.status === 'applied'"
-            :resume-error="resumeError"
-            @generate="onGenerateResume"
-            @mark-ready="onMarkReady"
-            @dismiss-error="resumeError = null"
+            :job="job"
+            :application="job.application"
+            :busy="actionBusy"
+            :error="actionError"
+            @prepare="onPrepare"
+            @apply="onApply"
+            @reject="onReject"
+            @mark-applied="onMarkApplied"
+            @dismiss-error="actionError = null"
           />
 
           <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-6 d-md-none" @claim="openClaim" />
@@ -411,67 +480,36 @@ onMounted(() => {
 
         <!-- Right Column: Match Analysis + Actions -->
         <v-col cols="12" md="5" lg="4">
-          <!-- Match Score -->
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-4 d-none d-md-block" @claim="openClaim" />
-
+          <!-- Actions first, on the first screen; then the match score -->
           <JobsJobActions
             class="mb-4 d-none d-md-block"
-            :application-id="applicationId"
-            :generating="generatingResume"
-            :applied="job.status === 'applied'"
-            :resume-error="resumeError"
-            @generate="onGenerateResume"
-            @mark-ready="onMarkReady"
-            @dismiss-error="resumeError = null"
+            :job="job"
+            :application="job.application"
+            :busy="actionBusy"
+            :error="actionError"
+            @prepare="onPrepare"
+            @apply="onApply"
+            @reject="onReject"
+            @mark-applied="onMarkApplied"
+            @dismiss-error="actionError = null"
           />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-4 d-none d-md-block" @claim="openClaim" />
 
-          <!-- Resume Preview -->
-          <v-card variant="outlined">
-            <v-card-item>
-              <v-card-title class="text-subtitle-1 font-weight-medium">
-                Tailored Resume
-              </v-card-title>
-            </v-card-item>
-            <v-card-text>
-              <div v-if="applicationId" class="resume-preview text-center pa-8">
-                <v-icon icon="mdi-file-check-outline" size="40" color="success" class="mb-3" />
-                <p class="text-body-2 font-weight-medium mb-1">Resume ready</p>
-                <p class="text-caption text-medium-emphasis mb-4">
-                  Your tailored resume has been generated for this role.
-                </p>
-                <div class="d-flex flex-column ga-2">
-                  <v-btn
-                    variant="tonal"
-                    color="primary"
-                    prepend-icon="mdi-download"
-                    :href="`/api/resume/pdf/${applicationId}`"
-                    target="_blank"
-                  >
-                    Download PDF
-                  </v-btn>
-                  <v-btn
-                    variant="text"
-                    size="small"
-                    prepend-icon="mdi-eye-outline"
-                    :to="`/applications/${applicationId}`"
-                  >
-                    View Full Application
-                  </v-btn>
-                </div>
-              </div>
-              <div v-else class="resume-preview text-center pa-8">
-                <v-icon icon="mdi-file-document-outline" size="40" class="mb-3" style="opacity: 0.25;" />
-                <p class="text-body-2 text-medium-emphasis mb-1">
-                  No resume yet
-                </p>
-                <p class="text-caption text-medium-emphasis">
-                  Use "Generate Tailored Resume" to create a customized resume for this position.
-                </p>
-              </div>
-            </v-card-text>
-          </v-card>
         </v-col>
       </v-row>
+
+      <ReviewRejectDialog
+        v-if="rejectItem"
+        v-model="rejectOpen"
+        :title="job.title"
+        :company="job.company"
+        :skill-options="rejectItem.rejectSkillOptions"
+        :is-sandbox="rejectItem.isSandbox"
+        :before-materials="rejectItem.status === 'to_decide'"
+        :busy="rejecting"
+        :error="rejectError"
+        @confirm="confirmReject"
+      />
 
       <SkillsClaimDialog
         v-model="claimOpen"
@@ -599,15 +637,5 @@ onMounted(() => {
     margin-top: 1rem;
     margin-bottom: 0.5rem;
   }
-}
-
-.resume-preview {
-  border: 1px dashed rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 12px;
-  min-height: 200px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
 }
 </style>

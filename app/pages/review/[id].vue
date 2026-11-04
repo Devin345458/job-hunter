@@ -52,7 +52,7 @@ async function apply() {
   applying.value = true
   try {
     await queue.apply(item.value.applicationId)
-    snackbar.notify('Preparing. This page updates as it goes, and the card moves to Ready to send when it is done.', 'success', { timeout: 6000 })
+    snackbar.notify('Preparing. This page updates as it goes, and the card moves to To send when it is done.', 'success', { timeout: 6000 })
     health.refresh()
   }
   catch (e: any) {
@@ -214,10 +214,6 @@ async function answer(questionId: number, value: string | null, skip = false) {
 
   &__top {
     margin: -8px 0 8px -12px;
-  }
-
-  &__skel {
-    background: transparent;
   }
 
   &__state {
