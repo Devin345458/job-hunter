@@ -117,6 +117,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [ ] 2026-11-04 `settings-nav`: Settings split into sub pages under an expandable sidebar group, with a list page on phones; every control kept, old /settings#... links redirected (Devin: "I feel like it's overwhelming. Maybe use a expandable navigation tab and have sub pages").
+
 - [ ] 2026-11-04 Settings stage table: "No Apply in the last 7 days." shows under Prepare after Apply beside 113 prepare calls; appliedThisWeek counts only apply decisions, and those calls belong to applications prepared without one (Prepare from a job page, retries). The 7-day column also includes about $72 of API key spend from before the move to the subscription, so it reads above the bar until that leaves the window.
 
 - [x] 2026-11-04 Car wash descriptions: Car Wash AI was renamed WashWerk, same product, Devin's own (Devin). All five Washwerk/* repos now read "car wash operations software, a SaaS product of my own" (set on production, marked as his wording).
