@@ -785,7 +785,7 @@ onMounted(async () => {
                   <li v-for="u in data.unlistedEmails" :key="u.email" class="ghe__unlisted-row">
                     <div class="ghe__unlisted-text">
                       <span class="ghe__unlisted-email">{{ u.email }}</span>
-                      <span class="ghe__repo-meta">{{ u.commits }} {{ u.commits === 1 ? 'commit' : 'commits' }} in {{ u.repos.map(repoShort).join(', ') }}</span>
+                      <span class="ghe__repo-meta">{{ u.commits.toLocaleString('en-US') }} {{ u.commits === 1 ? 'commit' : 'commits' }} in {{ u.repos.map(repoShort).join(', ') }}</span>
                     </div>
                     <v-btn variant="tonal" height="44" prepend-icon="mdi-plus" :disabled="savingIds" :aria-label="`Add ${u.email} as yours`" @click="addEmail(u.email)">
                       Add

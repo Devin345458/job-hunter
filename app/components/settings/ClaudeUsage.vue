@@ -234,7 +234,7 @@ onMounted(() => {
             <div v-for="s in g.rows" :key="s.key" class="cu__stages-row" :title="s.purposes.length ? `Counts: ${s.purposes.join(', ')}` : undefined">
               <span class="cu__stages-name">{{ s.label }}</span>
               <span class="cu__stages-num tabular">{{ usd(s.today.costUsd) }}</span>
-              <span class="cu__stages-num tabular">{{ usd(s.week.costUsd) }} <span class="cu__stages-calls">{{ s.week.calls }} {{ s.week.calls === 1 ? 'call' : 'calls' }}</span></span>
+              <span class="cu__stages-num tabular">{{ usd(s.week.costUsd) }} <span class="cu__stages-calls">{{ s.week.calls.toLocaleString('en-US') }} {{ s.week.calls === 1 ? 'call' : 'calls' }}</span></span>
             </div>
             <p v-if="g.phase === 'after'" class="cu__stages-note">{{ perApplication }}</p>
           </template>
