@@ -266,6 +266,13 @@ p {
   animation: none;
 }
 
+// Progress bar tracks: Vuetify draws the track in the bar's color at the border opacity, which is 1
+// in this theme, so a 19 of 25 bar read as full. The track goes back to the pre-restyle 11%.
+:root .v-progress-linear__background,
+:root .v-progress-linear__buffer {
+  opacity: 0.11;
+}
+
 // Nothing at rest casts a shadow. Vuetify writes a zero-size shadow string on flat buttons. taste-skill-ignore
 .v-btn,
 .v-card,
