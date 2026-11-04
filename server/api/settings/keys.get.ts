@@ -2,6 +2,7 @@
 // Which of the environment variables the Settings > API Keys card lists are set on the server.
 // Booleans only: a value, or any part of one, never leaves the server.
 const KEYS: Record<string, string> = {
+  NUXT_CLAUDE_CODE_OAUTH_TOKEN: 'claudeCodeOauthToken',
   NUXT_ANTHROPIC_API_KEY: 'anthropicApiKey',
   NUXT_JSEARCH_API_KEY: 'jsearchApiKey',
   NUXT_ADZUNA_APP_ID: 'adzunaAppId',
