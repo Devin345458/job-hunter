@@ -1,21 +1,24 @@
 # Design system: job-hunter
 
-The review dashboard set this direction on 2026-11-01. Every page inherits it through the Vuetify theme in `nuxt.config.ts` and the SASS settings in `app/assets/scss/components.scss`. Hold to it; deviate only with a stated reason, recorded below.
+The restyle of 2026-11-04 (branch feature/design-restyle, not merged until Devin compares it with production) set this direction. Every page inherits it through the Vuetify theme in `nuxt.config.ts`, the SASS settings in `app/assets/scss/components.scss`, and `app/assets/scss/global.scss`. Hold to it; deviate only with a stated reason, recorded below. The 2026-11-01 direction (dispatch desk, slate, cobalt ink, Schibsted Grotesk) is superseded; its decisions that still hold stay in the table at the end.
 
 ## Direction
 
-A dispatch desk before dawn. Devin opens the app on his phone or laptop for five minutes a day, decides on applications that go out under his real name, and leaves. The interface is dark slate, quiet, and dense enough to scan, with one cobalt "ink" accent reserved for the act of signing off.
+App style true-black-flat (design-taste-frontend `draw.mjs --app`, kind support, seed 815537509), chosen because Devin works through a queue for a few minutes a day on phone and desktop, one decision per card. One true black ground; elevation by lightness alone; color only on data and on what blocks.
 
-- **Focal point on every review card:** the decision. The match score (44px, 700) and the Approve button are the two loudest things on screen.
-- **Signature:** the score ledger (the score itemized like a receipt, each learned adjustment its own line with its reason) and the floor line (total pay drawn on a scale with Devin's salary floor as a vertical rule).
+- **Face:** the one data hue, sky `#4cb3f0` (theme color `score`), on the match score wherever it shows: the Review card's number and ledger bar, the queue rows, the Jobs score column, the job page ring, Applications rows. No status uses it, so "how well it fits" never reads as good or bad.
+- **Signature:** the score ledger (skills x 60% + pay x 40% = score) on the Decide card, and the score ring (92% filled, in the score hue) as the app's mark in the sidebar and on Sign in.
+- **One primary per screen,** made primary by inversion: white fill, black label. Links, focus rings and selected controls read in ink.
+- **Amber only on what blocks an approval** and its count: the Questions badge (blocking count), "Blocks an approval" on a question card with a 3px amber left edge, Needs you counts, Answer first, pause and limit lines.
 
 ## Banned (from the brief, enforced in the theme)
 
-- Cream or off-white backgrounds. The light theme, unused today, is pure white.
+- Cream or off-white backgrounds, violet, indigo, terracotta. The light theme, unused today, is pure white.
 - Italic accent words in headings.
 - Numbered "01 / 02 / 03" section labels.
-- Monospace labels. Inline `code` renders in the UI face. Only terminal output (test output, stack traces) keeps a fixed-width face.
-- Pill buttons. Every button and chip corner is 8px or less, including Vuetify defaults: `$rounded.pill` is 8px, icon buttons are 8px, chips are 6px.
+- Monospace labels. Inline `code` renders in the UI face. Only terminal output keeps a fixed-width face.
+- Pill buttons. Every button and chip corner is 8px or less (`$rounded.pill` is 8px). The dealt style's primary is a white 36px pill; the pill shape is dropped, the inversion kept.
+- Tracked uppercase labels, hairlines after section labels, a status pill above a heading, icons in tinted squares, gradients, shadows on anything at rest.
 
 ## Tokens
 
@@ -23,57 +26,62 @@ All colors live in the Vuetify theme. SCSS reads them as `rgb(var(--v-theme-*))`
 
 | Token | Value | Use |
 |---|---|---|
-| `background` | `#0f1318` | Page, drawer, app bar, inset panels on a card |
-| `surface` | `#151a21` | Cards, decision bar |
-| `surface-bright` | `#1c222b` | Raised surfaces |
-| `sunken` | `#0b0e12` | Documents read inline: resume, letter, posting, README, logs |
-| `primary` | `#6b93ff`, text `#08101f` | The one accent: approve, selection, links, focus ring |
-| `success` | `#3fcf8e` | Submitted, clears floor, matched skills, positive learned points |
-| `warning` | `#e9b04a` | Needs an answer, submit by hand |
-| `error` | `#f2706f` | Submit failed, below floor, missing skills, negative learned points |
-| `info` | `#79b4f2` | Sandbox marker, running |
-| `border-color` / `border-opacity` | `#d0dae6` / 0.11 | Every hairline |
+| `background` | `#000000` | Page, drawer, app bar |
+| `surface` | `#111111` | Cards, decision bar, list containers |
+| `surface-bright` | `#222222` | Nested panels inside a card, the active row fill, hover |
+| `surface-light` | `#2a2a2a` | Meter tracks, neutral tags, disabled button fill |
+| `sunken` | `#080808` | Documents read inline: resume, letter, posting, logs |
+| `primary` | `#ffffff`, text `#000000` | The one primary action (inversion), focus ring, selected controls |
+| `score` | `#4cb3f0` | The match score, everywhere; nothing else |
+| `secondary`, `accent`, `info` | `#b4b4b4`, `#b4b4b4`, `#c8c8c8` | Neutral: running, preparing, notices are not signals |
+| `success` | `#3fc07a` | Submitted, heard back, learned plus points |
+| `warning` | `#e5a93b` | Only what blocks an approval, and pauses |
+| `error` | `#e5566f` | Failed, missing requirement mark, learned minus points |
+| `border-color` / `border-opacity` | `#262626` / 1 | Row rules and control edges (solid; dividers forced to it in global.scss) |
 
-Contrast checked: primary on surface 6.5:1, dark text on primary 6.5:1, error on surface 6.0:1.
+Text: on-surface white at 0.96; medium emphasis 0.70 (`#b4b4b4` on black); disabled 0.5. Status pills are pale pairs: the hue on a 12 to 14% tint of itself; neutral states (primary, info, secondary) read as ink on `surface-light`.
 
 ## Type
 
-Schibsted Grotesk (Google Fonts, 400 to 800), a newsroom grotesk. 14px body on a 1.25 ratio, set in the `$typography` map:
+Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. `font-variant-numeric: tabular-nums` on `:root`, so every number lines up and money is one face everywhere.
 
-- `h4` 28px/700, -0.02em (page titles)
-- `h5` 22px/700, `h6` 18px/650
+- `h4` 24px/600, -0.015em (page titles, the one h1 per screen)
+- `h5` 20px/600, `h6` 17px/600
 - `subtitle-1` 16px/600, `subtitle-2` 14px/600
-- `body-2` 14px/400, line height 1.55
-- `caption` 12px
-- Buttons 14px/600, no uppercase, no tracking
-
-Three emphasis levels through opacity: default 0.94, medium 0.66, disabled 0.4. Changing numbers in columns get `.tabular`; dollar amounts with decimals do not (the tabular period is wide in this face).
+- `body-2` 14px/400, line height 1.5
+- `caption` 12px; `overline` 12px/500 sentence case (no tracking)
+- Buttons 14px/500, no uppercase, no tracking
+- The answer figure (score ledger total) 36px/600 in the score hue
 
 ## Depth and spacing
 
-- **Borders only.** No shadows; outlined variants are toned down to the border token (cards) or 38% of their color (buttons, chips).
-- **Corners:** 6px controls, 8px chips, list rows, panels; 12px cards and dialogs.
-- **Spacing:** 4px base. Card padding 20 to 24px desktop, 16px phone. Phone side gutter 16px.
-- **Tap targets:** 44px minimum on every control at phone width (queue rows 56px, section headers 52px, decision buttons 48px).
+- **Lightness only.** `v-card` outlined or flat has no border and no shadow; a card inside a card steps to `surface-bright`. Buttons, cards and sheets never cast a shadow (`box-shadow: none`).
+- **Corners:** 16px cards and dialogs (`xl`), 10px nested panels, alerts and nav rows (`lg`), 8px controls (root), 6px chips.
+- **Controls:** buttons 36px; fields compact (40px); every control 44px on a phone (global.scss).
+- **Labels above fields** (`.field-label`, 14/500, 8px over the control) on forms; filter toolbars use placeholders with an aria-label.
+- **Spacing:** 4px base. Card padding 16 to 24px desktop, 16px phone. Phone side gutter 16px.
 - **Motion:** 150 to 220ms, `cubic-bezier(0.23, 1, 0.32, 1)`; nothing moves under `prefers-reduced-motion`.
 
 ## Component patterns
 
 | Pattern | Measurements | Where |
 |---|---|---|
-| Review card | 12px radius, 1px border, header then blocking questions then verdict panels then collapsible sections, decision bar pinned to the bottom | `app/components/review/ReviewCard.vue` |
-| Collapsible section | 52px header row: icon, 15px/600 title, one-line summary in medium emphasis (tinted for warning or error), chevron | `ReviewSection.vue` |
-| Verdict panel | `background` fill inside the `surface` card, 8px radius, 16px padding | `ReviewCard.vue` |
-| Decision bar | 48px buttons: outlined Reject (112px min), primary Approve (188px min); a line saying exactly what the tap sends; stacks on phones and sticks above the bottom nav | `ReviewDecisionBar.vue` |
-| Status tag | 12px/600, 2px 8px padding, 6px radius, color at 12% fill | `ReviewCard.vue` |
-| Queue row | 56px minimum, score 17px/700 right-aligned in 30px, title two-line clamp, 3px primary bar on the selected row | `ReviewQueueList.vue` |
-| Quote from a posting | 2px primary rule on the left, 10px indent, 13px | `ReviewCompFloor.vue` |
-| Status dot | 8px square, 2px radius | health strip, run log, ledger |
+| Page header | h1 24/600 and one 14px gray line about the data (a count, a schedule), or nothing; never a sentence on how the page works | `.page-header` in global.scss, every page |
+| Shell nav | Active item by brightness: label and icon from medium emphasis to white at 600; no pill, tint or bar. Counts only on a queue that needs action (Review: to decide plus to send; Questions: blocking, amber) | `app/layouts/default.vue` |
+| Health line | One 40px line above the queue: the state that matters most in its color (account problem, pause, limit, interrupted approval) else the last run, Runs and Queue links, opens the detail on click | `ReviewHealth.vue` (variant `line`) |
+| Review card | No border; nested panels `surface-bright`; title h2 under the queue's h1, h1 on `/review/:id` (`titleTag`); state pill on the meta line under the title | `ReviewCard.vue` |
+| Decision bar | Stage 1 reads "Nothing goes to <employer> until you approve it." with "What Apply does" opening the full sentence | `ReviewDecisionBar.vue` |
+| Queue row | Score 17/600 in the score hue; the open row on `surface-bright` (no bar) | `ReviewQueueList.vue` |
+| Jobs row | Columns score 48, role, state 148, base 156, total 156, figures right-aligned under one header; tablet four columns; phone two-line rows (score, title, total; state, company, base) | `JobRow.vue`, `pages/jobs/index.vue` |
+| Underline tabs | 40px, 14/500, a 2px ink indicator on a full-width rule; only tabs with a count show; scroll sideways on a phone | `StatusPipeline.vue` |
+| Key-value rows | Key column 160 to 260px, value, source and date; rules between rows on one card | `pages/knowledge/index.vue` |
+| Question paging | Blocking first, "Next up" ten, the rest in groups by kind with counts, ten at a time, plus a find box | `pages/questions/index.vue` |
+| Status tag | 12px/500, 1px 8px, 6px corners, the hue on a 12% fill (neutral states on `surface-light`) | `StatusTag.vue`, `ReviewCard.vue` |
+| Missing value | A short 8x2px gray mark, never a dash at value size | `JobRow.vue` |
+| Nav group (Settings) | Header row 44px: icon, title, chevron (an 8px warning square before it when folded and Claude usage is paused). Children text only, 13px/500, 32px tall on desktop and 44px in the phone drawer, 40px indent under a 1px rule at 17px; the active child white at 600, the rest medium emphasis | `app/layouts/default.vue` |
+| Settings sub page header | h1 and one gray line from `settingsPages.ts` (or none); no "Settings" label above it | `app/components/settings/PageHeader.vue` |
+| Settings list row (phone) | 72px minimum, 20px icon in medium emphasis, 15px/600 title with a status tag, 13px line, chevron | `app/pages/settings/index.vue` |
 | Toast | Desktop bottom left, 280 to 340px wide, clear of the decision bar; phone top | `app/components/AppSnackbar.vue` |
-| Nav group (Settings) | Header row 44px: icon, title, chevron (an 8px warning square before it when folded and Claude usage is paused). Children text only, 13px/500, 32px tall on desktop and 44px in the phone drawer, 40px indent under a 1px rule at 17px; active child gets the primary tint, the rest medium emphasis. Opens on entering a Settings route, folds on leaving; the header click only toggles | `app/layouts/default.vue` |
-| Settings sub page header | "Settings" eyebrow 12px/600 medium emphasis, `h4` title, one sentence subtitle from `settingsPages.ts`, 24px below | `app/components/settings/PageHeader.vue` |
-| Settings list row (phone) | 72px minimum, 12px 12px 12px 16px padding, 20px icon in medium emphasis, 15px/600 title with a status tag, 13px line in medium emphasis, chevron in disabled emphasis; all rows share one 12px bordered surface with hairlines between | `app/pages/settings/index.vue` |
-| Card tabs | `v-tabs` 48px as the card's first row with a hairline under it, 14px/600, no uppercase, primary; both panels stay mounted | `app/components/settings/GithubEvidence.vue` |
 | Phone sub page app bar | Back arrow to the list in place of the menu button, title is the sub page | `app/layouts/default.vue` |
 
 ## Decisions
@@ -93,3 +101,11 @@ Three emphasis levels through opacity: default 0.94, medium 0.66, disabled 0.4. 
 | 2026-11-04 | GitHub evidence: tabs Repos and Identities and tokens; this app's repo keeps its topics in its own row | The topics set what that one repo's switch counts, so they stay beside the switch. A third tab would split one decision across two places |
 | 2026-11-04 | No tinted avatars on Settings card headers | Six avatars spent five semantic colors on decoration; the page header names the page and color stays for status |
 | 2026-11-04 | Bottom bar's active item colored through `base-color` | Vuetify colors a link button only on its exact path, so every Settings sub page (and `/review/12`) left its button gray |
+| 2026-11-04 | Restyle: true-black flat (dealt, seed 815537509) over the 2026-11-01 slate and cobalt | The slate read as the stock dark dashboard and blue sat on chrome (nav, links, pills, every button), so color said nothing. The study's darks are neutral |
+| 2026-11-04 | One data hue (`score`, sky) on the match score everywhere | Review showed the score in blue and Jobs and the job page in green; the dealt lime is also the positive color, so a 45 would have read like a Submitted pill |
+| 2026-11-04 | Primary by inversion, corners kept at 8px | The style's move; the pill shape it deals is banned by Devin's brief |
+| 2026-11-04 | Inter replaces Schibsted Grotesk; tabular figures app wide | The dealt face; Schibsted's tabular comma took a digit-wide slot, which kept money out of tabular figures and mixed faces in Settings |
+| 2026-11-04 | Kept the open-plane shell (no desktop top bar) | The dealt T-frame needs a top bar with something real in it; the app has no search or switcher, and the sheet flags an empty top bar. The redraw dealt No sidebar, which cannot hold eight destinations and the Settings group |
+| 2026-11-04 | Health folds to one line above the queue | It held the top 390px of the queue column; the line keeps the paused or blocked state visible and the Runs and Queue links |
+| 2026-11-04 | Jobs is a list with pay columns, not a card grid | Score, base and total could not be compared down a 3-up grid of 5 to 8 chips a card |
+| 2026-11-04 | Questions page ten at a time | All 232 rendered on one 129-screen page |
