@@ -179,14 +179,15 @@ const paySummary = computed(() => {
   const parts: string[] = []
   if (c.baseAnnualMin !== null || c.baseAnnualMax !== null) parts.push(`base ${moneyRange(c.baseAnnualMin, c.baseAnnualMax, c.currency)}`)
   else parts.push('no salary stated')
-  if (c.bonus) parts.push('bonus')
-  if (c.equity) parts.push('equity')
-  // What the total counts, named as the pay panel names it.
+  // What the total counts, named as the pay panel names it; a bonus or equity with no amount is only named.
   const p = compParts(c)
-  const counted = p.totalMin != null ? p.counted.filter(x => x.kind === 'benefit') : []
+  const counted = p.totalMin != null ? p.counted : []
+  if (c.bonus && !counted.some(x => x.kind === 'bonus')) parts.push('bonus')
+  if (c.equity && !counted.some(x => x.kind === 'equity')) parts.push('equity')
   if (counted.length) parts.push(`${partNames(counted)} counted`)
-  const others = c.benefits.length - counted.length
-  if (others) parts.push(`${plural(others, counted.length ? 'more benefit' : 'benefit')} quoted`)
+  const countedBenefits = counted.filter(x => x.kind === 'benefit').length
+  const others = c.benefits.length - countedBenefits
+  if (others) parts.push(`${plural(others, countedBenefits ? 'more benefit' : 'benefit')} quoted`)
   return parts.join(', ')
 })
 
