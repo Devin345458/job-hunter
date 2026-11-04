@@ -2,6 +2,7 @@ import { and, desc, eq, ne, or, sql } from 'drizzle-orm'
 import { applications, jobs, questions, scoreHistory } from '~~/server/db/schema'
 import type { CompensationBreakdown, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import { HEALTH_SUBJECT, isFullyPaidHealth } from '~~/server/utils/compensation'
+import { plainError } from '#shared/utils/plain-text'
 import { jobGroupKey, latestApplication, toJobApplication } from '~~/server/utils/job-list'
 
 // One job, with its JSON columns parsed for the detail page, its score history, the questions
@@ -39,7 +40,16 @@ export default defineEventHandler(async (event) => {
 
   const meta = parseJson<Record<string, unknown>>(job.atsMeta, {})
 
-  const app = db.select({ id: applications.id, status: applications.status, formError: applications.formError })
+  // hasResume: the job page offers the PDF only when a tailored resume was written. A Decide card
+  // (to_decide) has an application row and no resume until Apply prepares one.
+  const app = db.select({
+    id: applications.id,
+    status: applications.status,
+    formError: applications.formError,
+    statusDetail: applications.statusDetail,
+    submittedAt: applications.submittedAt,
+    hasResume: sql<number>`(${applications.tailoredResumeJson} is not null or ${applications.tailoredResumePdfPath} is not null)`,
+  })
     .from(applications).where(eq(applications.jobId, id)).orderBy(desc(applications.id)).limit(1).get()
 
   const groupKey = jobGroupKey()
@@ -68,7 +78,14 @@ export default defineEventHandler(async (event) => {
     enrichNotes: Array.isArray(meta.enrichNotes) ? meta.enrichNotes as string[] : [],
     scoreHistory: history,
     openQuestions,
-    application: app ? toJobApplication(app.id, app.status, app.formError) : null,
+    application: app
+      ? {
+          ...toJobApplication(app.id, app.status, app.formError)!,
+          hasResume: !!app.hasResume,
+          statusDetail: app.statusDetail ? plainError(app.statusDetail) : null,
+          submittedAt: app.submittedAt,
+        }
+      : null,
     otherPostings,
   }
 })

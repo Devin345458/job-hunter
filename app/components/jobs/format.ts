@@ -94,6 +94,7 @@ const JOB_STATUS: Record<string, JobStateMeta> = {
 // The application's status says more than the job's: a job stays "new" while its application
 // waits on the review queue. Labels match the Applications page where they overlap.
 const APP_STATUS: Record<string, JobStateMeta> = {
+  to_decide: { label: 'To decide', color: 'primary' },
   preparing: { label: 'Preparing', color: 'info' },
   needs_input: { label: 'Needs your answer', color: 'warning' },
   proposed: { label: 'In review', color: 'primary' },
