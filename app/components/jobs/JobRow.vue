@@ -241,6 +241,10 @@ const meta = computed(() => {
 
     &__title {
       grid-area: role;
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
     }
 
     &__meta {

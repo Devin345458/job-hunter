@@ -228,6 +228,10 @@ onMounted(() => fetchEntries())
   &__search {
     flex: 0 1 300px;
     min-width: 220px;
+
+    @media (max-width: 599.98px) {
+      flex-basis: 100%;
+    }
   }
 
   &__group {

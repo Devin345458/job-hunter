@@ -720,7 +720,13 @@ watch(() => props.pick?.nonce, () => {
     }
   }
 
-  // Skip, Ask me again, Change answer, and Cancel are small text buttons; keep them 44px tall to tap.
+  // Skip, Ask me again, Change answer, and Cancel are small text buttons; keep them 44px tall to
+  // tap. The row wraps, so on a phone Skip drops to its own line instead of running off the card.
+  &__actions {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
   &__actions :deep(.v-btn) {
     min-height: 44px;
   }

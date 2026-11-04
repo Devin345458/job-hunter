@@ -60,7 +60,7 @@ const usageStatus = computed<Status | null>(() => {
   if (!r) return null
   const sub = r.subscription
   if (sub?.pause || sub?.stop) return { text: 'Paused', tone: 'warning' }
-  if (sub?.on && sub.limits && sub.spent) return { text: `est. ${usd(sub.spent.today.estUsd)} of ${usd(sub.limits.dailyUsd)} today`, tone: 'neutral' }
+  if (sub?.limits && sub.spent && (sub.on || sub.spent.week.calls > 0)) return { text: `est. ${usd(sub.spent.today.estUsd)} of ${usd(sub.limits.dailyUsd)} today`, tone: 'neutral' }
   return { text: `${usd(r.aiSpentToday)} of ${usd(r.aiBudget)} today`, tone: 'neutral' }
 })
 
@@ -147,8 +147,7 @@ onMounted(async () => {
   list-style: none;
   margin: 0;
   padding: 0;
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 12px;
+  border-radius: 16px;
   background: rgb(var(--v-theme-surface));
   overflow: hidden;
 

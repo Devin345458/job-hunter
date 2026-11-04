@@ -8,7 +8,7 @@ defineProps<{ gap: GapAnalysis | null }>()
 
 const DECISION: Record<GapItem['decision'], { label: string; color: string; icon: string }> = {
   demo: { label: 'Demo idea', color: 'secondary', icon: 'mdi-flask-outline' },
-  ask: { label: 'Asked you', color: 'warning', icon: 'mdi-chat-question-outline' },
+  ask: { label: 'Asked you', color: 'secondary', icon: 'mdi-chat-question-outline' },
   reframe: { label: 'Use existing experience', color: 'info', icon: 'mdi-swap-horizontal' },
   skip: { label: 'Skip', color: 'grey', icon: 'mdi-minus-circle-outline' },
 }

@@ -110,7 +110,7 @@ function signed(n: number) {
             <span>{{ p.label }}</span>
             <span>{{ p.value }} / {{ p.max }}</span>
           </div>
-          <v-progress-linear :model-value="(p.value / p.max) * 100" :color="scoreColor((p.value / p.max) * 100)" height="6" rounded />
+          <v-progress-linear :model-value="(p.value / p.max) * 100" :color="scoreColor((p.value / p.max) * 100)" height="6" rounded :aria-label="`${p.label}: ${p.value} of ${p.max}`" />
         </div>
         <p class="text-body-2 score-breakdown__reasoning">
           {{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}

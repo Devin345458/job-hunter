@@ -189,7 +189,25 @@ p {
 // line, so an outlined button reads as clickable without a fill).
 .v-btn.v-btn--variant-outlined,
 .v-chip.v-chip--variant-outlined {
-  border-color: color-mix(in srgb, currentColor 32%, transparent);
+  border-color: color-mix(in srgb, currentColor 24%, transparent);
+}
+
+// Menus float, so they step up a level and take the one allowed shadow (overlays only).
+.v-menu > .v-overlay__content > .v-list,
+.v-menu > .v-overlay__content > .v-card {
+  background: rgb(var(--v-theme-surface-bright)) !important;
+}
+
+// Switches: an off switch shows a light thumb on a gray track; on is the color the screen gave it.
+.v-switch .v-selection-control:not(.v-selection-control--dirty) {
+  .v-switch__track {
+    background-color: rgb(var(--v-theme-surface-light));
+    opacity: 1;
+  }
+
+  .v-switch__thumb {
+    background-color: rgb(var(--v-theme-secondary));
+  }
 }
 
 // Nothing at rest casts a shadow. Vuetify writes a zero-size shadow string on flat buttons. taste-skill-ignore

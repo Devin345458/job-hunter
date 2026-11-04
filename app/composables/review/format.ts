@@ -216,7 +216,7 @@ export type RunOutcome = NonNullable<PipelineRunView['outcome']>
 
 export const OUTCOME: Record<RunOutcome, { label: string; color: string }> = {
   succeeded: { label: 'succeeded', color: 'success' },
-  partial: { label: 'partly failed', color: 'warning' },
+  partial: { label: 'partly failed', color: 'secondary' },
   failed: { label: 'failed', color: 'error' },
   running: { label: 'running', color: 'info' },
   skipped: { label: 'skipped', color: 'secondary' },

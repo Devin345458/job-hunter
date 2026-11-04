@@ -102,6 +102,7 @@ function confirm() {
 <template>
   <v-dialog
     :model-value="modelValue"
+    aria-label="Reject this match"
     max-width="540"
     scrollable
     @update:model-value="v => emit('update:modelValue', v)"
