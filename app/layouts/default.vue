@@ -113,10 +113,17 @@ async function logout() {
   }
 }
 
+// A count appears only on a queue that needs action. Questions counts the ones that block an
+// approval (amber); the rest wait without holding anything up.
 function badgeFor(item: NavItem): number {
   if (item.to === '/') return (health.stats.value?.review.toDecide ?? 0) + (health.stats.value?.review.toSend ?? 0)
-  if (item.to === '/questions') return health.stats.value?.questions.pending ?? 0
+  if (item.to === '/questions') return health.stats.value?.questions.blocking ?? 0
   return 0
+}
+
+function badgeLabel(item: NavItem): string {
+  const n = badgeFor(item).toLocaleString('en-US')
+  return item.to === '/questions' ? `${n} blocking an approval` : `${n} waiting`
 }
 </script>
 
@@ -156,9 +163,11 @@ function badgeFor(item: NavItem): number {
       @update:model-value="(val: boolean) => { if (!isDesktop) drawer = val }"
     >
       <div class="shell__brand">
-        <div class="shell__mark" aria-hidden="true">
-          <v-icon icon="mdi-target" size="18" />
-        </div>
+        <!-- The mark is the match score's ring, nearly full, in the score's hue. -->
+        <svg class="shell__mark" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="16" r="12" class="shell__mark-track" />
+          <circle cx="16" cy="16" r="12" class="shell__mark-arc" pathLength="100" stroke-dasharray="92 100" transform="rotate(-90 16 16)" />
+        </svg>
         <div>
           <div class="shell__name">Job Hunter</div>
           <div class="shell__owner">Devin's pipeline</div>
@@ -221,7 +230,11 @@ function badgeFor(item: NavItem): number {
             </template>
             <v-list-item-title>{{ item.title }}</v-list-item-title>
             <template v-if="badgeFor(item) > 0" #append>
-              <span class="shell__count tabular" :aria-label="`${badgeFor(item)} waiting`">{{ badgeFor(item) }}</span>
+              <span
+                class="shell__count tabular"
+                :class="{ 'shell__count--blocking': item.to === '/questions' }"
+                :aria-label="badgeLabel(item)"
+              >{{ badgeFor(item).toLocaleString('en-US') }}</span>
             </template>
           </v-list-item>
         </template>
@@ -283,8 +296,8 @@ function badgeFor(item: NavItem): number {
           <!-- Not floating: a floating badge sat above the icon and straddled the nav's top edge. -->
           <v-badge
             :model-value="badgeFor(item) > 0"
-            :content="badgeFor(item)"
-            color="primary"
+            :content="badgeFor(item).toLocaleString('en-US')"
+            :color="item.to === '/questions' ? 'warning' : 'primary'"
             offset-y="3"
             class="shell__badge"
           >
@@ -306,7 +319,7 @@ function badgeFor(item: NavItem): number {
   }
 
   &__bar-title {
-    font-weight: 700;
+    font-weight: 600;
     font-size: 1.0625rem;
     letter-spacing: -0.01em;
   }
@@ -323,17 +336,24 @@ function badgeFor(item: NavItem): number {
   }
 
   &__mark {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    display: grid;
-    place-items: center;
-    background: rgb(var(--v-theme-primary));
-    color: rgb(var(--v-theme-on-primary));
+    width: 28px;
+    height: 28px;
+    flex: none;
+    fill: none;
+    stroke-width: 4;
+  }
+
+  &__mark-track {
+    stroke: rgb(var(--v-theme-surface-light));
+  }
+
+  &__mark-arc {
+    stroke: rgb(var(--v-theme-score));
+    stroke-linecap: round;
   }
 
   &__name {
-    font-weight: 700;
+    font-weight: 600;
     font-size: 0.9375rem;
     letter-spacing: -0.01em;
     line-height: 1.2;
@@ -362,6 +382,24 @@ function badgeFor(item: NavItem): number {
 
     :deep(.v-list-item__spacer) {
       width: 0;
+    }
+
+    // On dark the active item is marked by brightness alone: the label and icon go from the
+    // secondary gray to white. No pill, no tint, no bar.
+    &:not(.v-list-item--active) {
+      color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    }
+
+    &.v-list-item--active {
+      color: rgb(var(--v-theme-on-surface));
+
+      :deep(.v-list-item__overlay) {
+        opacity: 0;
+      }
+
+      :deep(.v-list-item-title) {
+        font-weight: 600;
+      }
     }
   }
 
@@ -409,6 +447,17 @@ function badgeFor(item: NavItem): number {
     &:not(.v-list-item--active) :deep(.v-list-item-title) {
       color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     }
+
+    &.v-list-item--active {
+      :deep(.v-list-item__overlay) {
+        opacity: 0;
+      }
+
+      :deep(.v-list-item-title) {
+        color: rgb(var(--v-theme-on-surface));
+        font-weight: 600;
+      }
+    }
   }
 
   &__attn {
@@ -442,8 +491,14 @@ function badgeFor(item: NavItem): number {
     place-items: center;
     font-size: 0.75rem;
     font-weight: 600;
-    background: rgba(var(--v-theme-on-surface), 0.08);
+    background: rgb(var(--v-theme-surface-bright));
     color: rgb(var(--v-theme-on-surface));
+
+    // Questions that block an approval: the one place the nav carries amber.
+    &--blocking {
+      background: rgba(var(--v-theme-warning), 0.16);
+      color: rgb(var(--v-theme-warning));
+    }
   }
 
   &__foot {

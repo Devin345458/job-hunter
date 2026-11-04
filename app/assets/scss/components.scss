@@ -1,24 +1,25 @@
 // Vuetify SASS settings. vuetify-nuxt-module compiles every component's styles through
 // this file (moduleOptions.styles.configFile), so the overrides must live here.
 //
-// Direction (see .claude/context/design-system.md): a dispatch desk before dawn. Dark slate
-// surfaces, one cobalt "ink" accent for the act of signing off, and Schibsted Grotesk, a
-// newsroom grotesk, for type. Every corner on a button or chip stays at 8px or less, including
-// Vuetify's own defaults, so no pill or circle buttons exist anywhere in the app.
-$ui-font: ('Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif);
+// Direction (see .claude/context/design-system.md): true-black flat. One true black ground,
+// elevation by lightness alone, color only on data and status, and Inter for type with tabular
+// figures on every number that lines up or changes. Corners step down from 16px cards to 10px
+// nested panels, 8px controls and 6px chips; no button or chip corner goes over 8px, so no pill
+// or circle buttons exist anywhere in the app.
+$ui-font: ('Inter', 'Helvetica Neue', Arial, sans-serif);
 
 @forward 'vuetify/settings' with (
   $body-font-family: $ui-font,
   $heading-font-family: $ui-font,
-  $border-radius-root: 6px,
-  // sm 4, default 6, lg 8, xl 12 (cards and dialogs). 'pill' is capped at 8px so a
-  // rounded="pill" anywhere still renders as a modest rectangle.
+  $border-radius-root: 8px,
+  // sm 4, default 8 (controls), lg 10 (nested panels, alerts, nav rows), xl 16 (cards and
+  // dialogs). 'pill' is capped at 8px so a rounded="pill" anywhere still renders as a modest rectangle.
   $rounded: (
     'sm': 4px,
-    'lg': 8px,
-    'xl': 12px,
+    'lg': 10px,
+    'xl': 16px,
     'pill': 8px,
-    'shaped': 12px 0,
+    'shaped': 16px 0,
   ),
   $button-icon-border-radius: 8px,
   $button-rounded-border-radius: 8px,
@@ -27,20 +28,24 @@ $ui-font: ('Schibsted Grotesk', 'Helvetica Neue', Arial, sans-serif);
   $fab-border-radius: 8px,
   // Five bottom-nav buttons at the default 80px minimum overflow a 390px phone.
   $bottom-navigation-min-width: 64px,
-  $button-height: 40px,
+  // Controls in title and filter rows are 36px (the style's control height); phones raise every
+  // button to 44px in global.scss.
+  $button-height: 36px,
   $chip-font-weight: 500,
   $list-item-nav-title-font-weight: 500,
-  // Type: 14px body on a 1.25 ratio. Weight and opacity carry hierarchy before size does.
+  // Type: 14px body. Three weights (400, 500, 600); nothing above 600. App type, not display
+  // type: the page title is 24px.
   $typography: (
-    'h4': ('size': 1.75rem, 'weight': 700, 'line-height': 1.2, 'letter-spacing': -0.02em),
-    'h5': ('size': 1.375rem, 'weight': 700, 'line-height': 1.25, 'letter-spacing': -0.015em),
-    'h6': ('size': 1.125rem, 'weight': 650, 'line-height': 1.35, 'letter-spacing': -0.01em),
-    'subtitle-1': ('size': 1rem, 'weight': 600, 'line-height': 1.45, 'letter-spacing': -0.005em),
+    'h4': ('size': 1.5rem, 'weight': 600, 'line-height': 1.25, 'letter-spacing': -0.015em),
+    'h5': ('size': 1.25rem, 'weight': 600, 'line-height': 1.3, 'letter-spacing': -0.01em),
+    'h6': ('size': 1.0625rem, 'weight': 600, 'line-height': 1.35, 'letter-spacing': -0.005em),
+    'subtitle-1': ('size': 1rem, 'weight': 600, 'line-height': 1.45, 'letter-spacing': 0),
     'subtitle-2': ('size': 0.875rem, 'weight': 600, 'line-height': 1.45, 'letter-spacing': 0),
-    'body-1': ('size': 1rem, 'weight': 400, 'line-height': 1.6, 'letter-spacing': 0),
-    'body-2': ('size': 0.875rem, 'weight': 400, 'line-height': 1.55, 'letter-spacing': 0),
-    'button': ('size': 0.875rem, 'weight': 600, 'line-height': 1.2, 'letter-spacing': 0, 'text-transform': none),
-    'caption': ('size': 0.75rem, 'weight': 400, 'line-height': 1.5, 'letter-spacing': 0.005em),
-    'overline': ('size': 0.75rem, 'weight': 600, 'line-height': 1.6, 'letter-spacing': 0.06em, 'text-transform': uppercase),
+    'body-1': ('size': 1rem, 'weight': 400, 'line-height': 1.55, 'letter-spacing': 0),
+    'body-2': ('size': 0.875rem, 'weight': 400, 'line-height': 1.5, 'letter-spacing': 0),
+    'button': ('size': 0.875rem, 'weight': 500, 'line-height': 1.2, 'letter-spacing': 0, 'text-transform': none),
+    'caption': ('size': 0.75rem, 'weight': 400, 'line-height': 1.5, 'letter-spacing': 0),
+    // No tracked capitals anywhere: the overline reads as a small sentence-case label.
+    'overline': ('size': 0.75rem, 'weight': 500, 'line-height': 1.5, 'letter-spacing': 0, 'text-transform': none),
   ),
 );

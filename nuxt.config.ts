@@ -36,47 +36,61 @@ export default defineNuxtConfig({
       disableVuetifyStyles: true,
     },
     vuetifyOptions: {
-      // Dispatch desk before dawn: slate surfaces a few points apart, one cobalt "ink" accent
-      // for signing off, semantic colors only for status. Rationale in .claude/context/design-system.md.
+      // True-black flat (design-taste-frontend app style, seed 815537509): one true black ground,
+      // elevation by lightness alone (#000 page, #111 card, #222 nested panel), no borders or
+      // shadows on cards. The primary action is made primary by inversion (white fill, black
+      // label), never by a hue. Color is for data and status only: `score` is the one data hue and
+      // marks the match score wherever it shows; warning (amber) marks only what blocks an approval.
+      // Rationale in .claude/context/design-system.md.
       theme: {
         defaultTheme: 'dark',
         themes: {
           dark: {
             dark: true,
             colors: {
-              'background': '#0f1318',
-              'surface': '#151a21',
-              'surface-bright': '#1c222b',
-              'surface-light': '#222a34',
-              'surface-variant': '#d9e0e8',
-              'on-surface-variant': '#10151b',
-              'on-background': '#e6ebf1',
-              'on-surface': '#e6ebf1',
-              'sunken': '#0b0e12',
-              'primary': '#6b93ff',
-              'on-primary': '#08101f',
-              'secondary': '#9aa7b8',
-              'on-secondary': '#0f1318',
-              'accent': '#8fb0ff',
-              'on-accent': '#08101f',
-              'info': '#79b4f2',
-              'on-info': '#06121f',
-              'success': '#3fcf8e',
+              'background': '#000000',
+              'surface': '#111111',
+              'surface-bright': '#222222',
+              'surface-light': '#2a2a2a',
+              'surface-variant': '#e6e6e6',
+              'on-surface-variant': '#111111',
+              'on-background': '#ffffff',
+              'on-surface': '#ffffff',
+              // Documents read inline (resume, letter, posting, logs): a step below the card.
+              'sunken': '#080808',
+              // Inversion: the one primary action per screen is white with a black label. Links,
+              // focus rings and selected controls read in ink, not in a hue.
+              'primary': '#ffffff',
+              'on-primary': '#000000',
+              'secondary': '#b4b4b4',
+              'on-secondary': '#000000',
+              'accent': '#b4b4b4',
+              'on-accent': '#000000',
+              // The one data hue: the match score (number, ring, ledger total) on every screen.
+              'score': '#4cb3f0',
+              'on-score': '#00131f',
+              // Neutral: running, preparing and notices are not a signal.
+              'info': '#c8c8c8',
+              'on-info': '#000000',
+              'success': '#3fc07a',
               'on-success': '#04140c',
-              'warning': '#e9b04a',
+              // Only on what blocks an approval, and its count.
+              'warning': '#e5a93b',
               'on-warning': '#1d1404',
-              'error': '#f2706f',
+              'error': '#e5566f',
               'on-error': '#1f0707',
             },
             variables: {
-              'border-color': '#d0dae6',
-              'border-opacity': 0.11,
-              'high-emphasis-opacity': 0.94,
-              'medium-emphasis-opacity': 0.66,
-              'disabled-opacity': 0.4,
-              'hover-opacity': 0.05,
-              'focus-opacity': 0.1,
-              'activated-opacity': 0.1,
+              // Solid lines, about 1.3:1 on the #111 card and 1.4:1 on the #000 ground.
+              'border-color': '#262626',
+              'border-opacity': 1,
+              'high-emphasis-opacity': 0.96,
+              // White at 0.70 is #b4b4b4 on the ground, the sheet's secondary grey.
+              'medium-emphasis-opacity': 0.70,
+              'disabled-opacity': 0.5,
+              'hover-opacity': 0.06,
+              'focus-opacity': 0.12,
+              'activated-opacity': 0.12,
             },
           },
           // Not switched to anywhere today. Kept so a future toggle has white surfaces, never cream.
@@ -96,16 +110,18 @@ export default defineNuxtConfig({
           },
         },
       },
-      // Borders carry depth (no shadows). Corners: 6px controls, 8px chips and list items, 12px cards.
+      // Lightness carries depth (no borders on cards, no shadows at rest). Corners: 16px cards and
+      // dialogs, 10px nested panels and alerts, 8px controls, 6px chips. Fields and filter
+      // controls are compact (40px; 44px on a phone, global.scss).
       defaults: {
         VCard: { elevation: 0, rounded: 'xl' },
         VSheet: { elevation: 0 },
         VBtn: { elevation: 0 },
-        VTextField: { variant: 'outlined', density: 'comfortable' },
-        VTextarea: { variant: 'outlined', density: 'comfortable' },
-        VSelect: { variant: 'outlined', density: 'comfortable' },
-        VCombobox: { variant: 'outlined', density: 'comfortable' },
-        VAutocomplete: { variant: 'outlined', density: 'comfortable' },
+        VTextField: { variant: 'outlined', density: 'compact' },
+        VTextarea: { variant: 'outlined', density: 'compact' },
+        VSelect: { variant: 'outlined', density: 'compact' },
+        VCombobox: { variant: 'outlined', density: 'compact' },
+        VAutocomplete: { variant: 'outlined', density: 'compact' },
         VAlert: { rounded: 'lg', variant: 'tonal' },
         VDialog: { VCard: { rounded: 'xl' } },
         VMenu: { VList: { rounded: 'lg' } },
@@ -269,7 +285,7 @@ export default defineNuxtConfig({
         },
         {
           rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..800&display=swap',
+          href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap',
         },
       ],
     },

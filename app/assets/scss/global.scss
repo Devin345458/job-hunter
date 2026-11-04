@@ -15,8 +15,14 @@ body {
   background: rgb(var(--v-theme-background));
 }
 
-// Numbers that change or line up in columns. Not for money with a thousands separator: under
-// tabular figures Schibsted Grotesk gives the comma a digit-wide slot, so "$7,100" reads "$7 ,100".
+// Tabular figures on every number in the app: columns line up digit for digit and a figure that
+// changes (a count, a timer, a score) does not shift its neighbors. Inter keeps the comma and the
+// period at their own width under tnum, so "$164,400" reads normally.
+:root,
+.v-application {
+  font-variant-numeric: tabular-nums;
+}
+
 .tabular {
   font-variant-numeric: tabular-nums;
 }
@@ -59,20 +65,23 @@ p {
 
 // ── Page header (every page) ──
 .page-header {
-  margin-bottom: 28px;
+  margin-bottom: 24px;
 
   &__title {
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    line-height: 1.2;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.25;
+    margin: 0;
   }
 
+  // One gray line about the data (a count, a period), never about how the interface works.
   &__subtitle {
-    margin-top: 6px;
+    margin: 4px 0 0;
+    font-size: 0.875rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     font-weight: 400;
-    line-height: 1.55;
-    max-width: 62ch;
+    line-height: 1.5;
+    max-width: 72ch;
   }
 
   // Title and subtitle on the left, the page's main action on the right. The action drops
@@ -95,64 +104,22 @@ p {
   }
 }
 
-// ── Emphasis outline (was a glow; borders carry depth in this theme) ──
-.glow-primary {
-  box-shadow: inset 0 0 0 1px rgba(var(--v-theme-primary), 0.45);
-}
-
-.glow-accent {
-  box-shadow: inset 0 0 0 1px rgba(var(--v-theme-accent), 0.45);
-}
-
-.glow-success {
-  box-shadow: inset 0 0 0 1px rgba(var(--v-theme-success), 0.45);
-}
-
-// ── Section label with a hairline after it ──
+// ── Section label: a small sentence-case heading, no rule after it ──
 .section-label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  margin: 0 0 12px;
   font-weight: 600;
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
+  font-size: 0.875rem;
+  line-height: 1.4;
   color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-
-  &::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: rgba(var(--v-border-color), var(--v-border-opacity));
-  }
 }
 
-// ── Clickable card: border brightens, no lift ──
+// ── Clickable card: one lightness step up on hover, no lift, no border ──
 .card-hover {
   cursor: pointer;
-  transition: border-color 0.15s cubic-bezier(0.23, 1, 0.32, 1), background-color 0.15s cubic-bezier(0.23, 1, 0.32, 1);
+  transition: background-color 0.15s cubic-bezier(0.23, 1, 0.32, 1);
 
   &:hover {
-    border-color: rgba(var(--v-theme-on-surface), 0.22) !important;
-    background-color: rgba(var(--v-theme-on-surface), 0.02);
-  }
-}
-
-// ── Help text panel ──
-.info-banner {
-  background: rgba(var(--v-theme-primary), 0.07);
-  border: 1px solid rgba(var(--v-theme-primary), 0.18);
-  border-radius: 8px;
-  padding: 14px 16px;
-
-  &__icon {
-    color: rgb(var(--v-theme-primary));
-  }
-
-  &__text {
-    font-size: 0.8125rem;
-    line-height: 1.6;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    background-color: rgb(var(--v-theme-surface-bright)) !important;
   }
 }
 
@@ -189,15 +156,66 @@ p {
   }
 }
 
-// Outlined variants draw their edge in the text color at full strength, which reads as a
-// harsh white line on these dark surfaces. Keep the hue, drop the intensity.
-.v-card.v-card--variant-outlined {
-  border-color: rgba(var(--v-border-color), 0.16);
+// ── Elevation by lightness alone ──
+// A card is the #111 surface on the #000 ground with no border and no shadow. A card inside a card
+// (a nested panel) steps up once more to #222. Every v-card variant="outlined" in the app reads
+// this way, so the move holds without touching each card.
+.v-card.v-card--variant-outlined,
+.v-card.v-card--variant-flat {
+  border: none;
+  background: rgb(var(--v-theme-surface));
 }
 
+.v-card .v-card.v-card--variant-outlined,
+.v-card .v-card.v-card--variant-flat,
+.v-dialog .v-card .v-card.v-card--variant-outlined {
+  background: rgb(var(--v-theme-surface-bright));
+}
+
+// Outlined controls keep a visible edge (an interactive outline is brighter than a structural
+// line, so an outlined button reads as clickable without a fill).
 .v-btn.v-btn--variant-outlined,
 .v-chip.v-chip--variant-outlined {
-  border-color: color-mix(in srgb, currentColor 38%, transparent);
+  border-color: color-mix(in srgb, currentColor 32%, transparent);
+}
+
+// Nothing at rest casts a shadow. Vuetify writes a zero-size shadow string on flat buttons.
+.v-btn,
+.v-card,
+.v-sheet {
+  box-shadow: none !important;
+}
+
+// A disabled button stays legible (the label at the medium gray, not 26%) and its reason is
+// written next to it by the screen that disables it.
+.v-btn.v-btn--disabled {
+  opacity: 1;
+  color: rgba(var(--v-theme-on-surface), 0.55) !important;
+
+  &.v-btn--variant-flat,
+  &.v-btn--variant-elevated,
+  &.v-btn--variant-tonal {
+    background: rgb(var(--v-theme-surface-light)) !important;
+  }
+
+  .v-btn__overlay {
+    opacity: 0 !important;
+  }
+}
+
+// Field labels sit above the field (label-above pattern): a 14/500 line, 8px over the control.
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+// Notices (info alerts) are neutral: a lightness step with ink text, not a tinted box.
+.v-alert.v-alert--variant-tonal.text-info,
+.v-alert.v-alert--variant-tonal.bg-info {
+  color: rgb(var(--v-theme-on-surface)) !important;
 }
 
 // Inline code reads in the UI face on a tinted inset, never as a monospace label.
@@ -260,6 +278,16 @@ p {
 @media (max-width: 959.98px) {
   :root .v-btn {
     min-height: 44px;
+  }
+
+  // Compact fields are 40px on desktop; on a phone they are a 44px target like every control.
+  :root .v-input--density-compact {
+    --v-input-control-height: 44px;
+  }
+
+  :root .v-input--density-compact .v-field {
+    --v-field-input-padding-top: 10px;
+    --v-field-input-padding-bottom: 10px;
   }
 
   :root .v-btn.v-btn--icon {
