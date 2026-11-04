@@ -51,18 +51,24 @@ export async function withRun<T extends Record<string, unknown>>(
       stats = await fn(log)
     }
     catch (e) {
-      // Devin's subscription reached its limit: the run is paused, not failed. The queue puts the
-      // item back to run after the reset (server/plugins/queue.ts).
-      if (!(e instanceof AiSubscriptionLimit)) throw e
+      // Devin's subscription reached its limit, or this app's own limit on it: the run is paused,
+      // not failed. The queue puts the item back to run after the reset (server/plugins/queue.ts).
+      if (!(e instanceof AiSubscriptionLimit) && !(e instanceof AiAppLimitReached)) throw e
       log(e.message)
       stats = { budgetStop: true, errors: [e.message] } as unknown as T
     }
     // A run that stopped early at the AI budget says why: the daily budget, an account problem
-    // (out of credit) that no amount of waiting for midnight fixes, or the subscription limit.
+    // (out of credit) that no amount of waiting for midnight fixes, the subscription limit, or this
+    // app's own limit on the subscription. A step whose per-job items the limit stopped (they stop
+    // as background work even when Devin started the step) reads the limit that holds now.
     const s = stats as Record<string, unknown> | null
     if (s && (s.budgetStop === true || s.budgetStopped === true) && !('stopReason' in s)) {
-      const pausedUntil = currentQueueContext()?.subscriptionPausedUntil
-      if (pausedUntil) Object.assign(s, { stopReason: 'subscription', pausedUntil })
+      const ctx = currentQueueContext()
+      const pause = ctx?.subscriptionPausedUntil ? null : activeSubscriptionPause()
+      const limit = ctx?.subscriptionPausedUntil || pause || !subscriptionTokenSet() ? null : appLimitStopNow(true)
+      if (ctx?.subscriptionPausedUntil) Object.assign(s, { stopReason: ctx.subscriptionStopKind ?? 'subscription', pausedUntil: ctx.subscriptionPausedUntil })
+      else if (pause) Object.assign(s, { stopReason: 'subscription', pausedUntil: pause.until })
+      else if (limit) Object.assign(s, { stopReason: limit.kind, pausedUntil: limit.until })
       else (s as Record<string, unknown>).stopReason = aiAccountProblem()?.kind ?? budgetStopKind()
     }
     const recorded = resumed ? { ...s, resumedAfterRestart: resumed } : stats

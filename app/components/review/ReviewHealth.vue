@@ -3,9 +3,9 @@ import { OUTCOME, clockTime, outcomeOf } from '~/composables/review/format'
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
 import { bulkText, queueItemName, queueItemText } from '#shared/utils/queue-text'
-import { subscriptionPauseText } from '#shared/utils/subscription'
+import { appLimitPauseText, subscriptionPauseText } from '#shared/utils/subscription'
 
-// Pipeline health, kept small: did the last run work, how much of today's AI budget is gone,
+// Pipeline health, kept small: did the last run work, how much of today's Claude limit is gone,
 // and how many questions are waiting. Detail lives in Settings and on the Questions page.
 const props = withDefaults(defineProps<{
   /** inline: one tappable line that opens the detail (phones). panel: always open (desktop). */
@@ -34,11 +34,22 @@ const runError = computed(() => (outcome.value === 'failed' ? plainError(run.val
 const subscription = computed(() => health.runs.value?.subscription ?? null)
 const onSubscription = computed(() => !!subscription.value?.on)
 const pausedText = computed(() => (subscription.value?.pause ? subscriptionPauseText(subscription.value.pause.until) : null))
+// This app's own limit on the subscription: in amber while it stops background work (its share of
+// the daily limit) or every call (the daily or 7-day limit).
+const limitText = computed(() => {
+  const stop = subscription.value?.stop
+  return stop ? appLimitPauseText(stop.kind, stop.until, { sharePct: stop.sharePct }) : null
+})
 
-const spent = computed(() => health.runs.value?.aiSpentToday ?? 0)
-const budget = computed(() => health.runs.value?.aiBudget ?? 0)
+// On the subscription the meter is today's estimate against this app's daily limit; on the API key,
+// today's spend against the key's budget.
+const subLimits = computed(() => (onSubscription.value ? subscription.value?.limits ?? null : null))
+const subSpent = computed(() => subscription.value?.spent ?? null)
+const spent = computed(() => (subLimits.value ? subSpent.value?.today.estUsd ?? 0 : health.runs.value?.aiSpentToday ?? 0))
+const budget = computed(() => (subLimits.value ? subLimits.value.dailyUsd : health.runs.value?.aiBudget ?? 0))
 const spentPct = computed(() => (budget.value > 0 ? Math.min(100, (spent.value / budget.value) * 100) : 0))
-const spendTone = computed(() => (spentPct.value >= 90 ? 'error' : spentPct.value >= 70 ? 'warning' : 'primary'))
+const warnAt = computed(() => subLimits.value?.backgroundSharePct ?? 70)
+const spendTone = computed(() => (spentPct.value >= (subLimits.value ? 100 : 90) ? 'error' : spentPct.value >= warnAt.value ? 'warning' : 'primary'))
 
 const pending = computed(() => health.stats.value?.questions.pending ?? 0)
 const blocking = computed(() => health.stats.value?.questions.blocking ?? 0)
@@ -49,12 +60,13 @@ const inlineSummary = computed(() => {
   if (open.value) return 'Pipeline health'
   if (aiProblem.value) return aiProblem.value.message
   if (pausedText.value) return pausedText.value
+  if (limitText.value) return limitText.value
   const parts = [run.value ? `${runLabel.value} ${clockTime(run.value.startedAt)}` : 'No runs yet']
-  parts.push(`$${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} AI`)
+  parts.push(subLimits.value ? `est. $${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} Claude` : `$${spent.value.toFixed(2)} of $${budget.value.toFixed(0)} AI`)
   if (pending.value) parts.push(`${pending.value} question${pending.value === 1 ? '' : 's'}`)
   return parts.join(' · ')
 })
-const summaryTone = computed(() => (aiProblem.value ? 'error' : pausedText.value ? 'warning' : runTone.value))
+const summaryTone = computed(() => (aiProblem.value ? 'error' : pausedText.value || limitText.value ? 'warning' : runTone.value))
 
 // The job queue in one or two lines: what runs now and what waits, or an approval a restart
 // interrupted today. The clock ticks so "queued 2 minutes ago" stays true between refreshes.
@@ -114,6 +126,10 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
           <v-icon icon="mdi-pause-circle-outline" size="16" class="hl__paused-icon" />
           <span>{{ pausedText }}</span>
         </div>
+        <div v-if="limitText" class="hl__paused" role="status">
+          <v-icon icon="mdi-pause-circle-outline" size="16" class="hl__paused-icon" />
+          <span>{{ limitText }}</span>
+        </div>
 
         <div class="hl__row">
           <span class="hl__dot" :class="`bg-${runTone}`" />
@@ -143,10 +159,12 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
         <div class="hl__row">
           <v-icon icon="mdi-robot-outline" size="16" class="hl__icon" />
           <div class="hl__text">
-            <div class="hl__strong">${{ spent.toFixed(2) }} <span class="hl__muted">of ${{ budget.toFixed(2) }} {{ onSubscription ? 'API key budget' : 'AI budget' }} today</span></div>
-            <div class="hl__meter" role="meter" :aria-valuenow="Math.round(spentPct)" aria-valuemin="0" aria-valuemax="100" aria-label="AI budget used today">
+            <div v-if="subLimits" class="hl__strong">est. ${{ spent.toFixed(2) }} <span class="hl__muted">of ${{ budget.toFixed(2) }} daily Claude limit today</span></div>
+            <div v-else class="hl__strong">${{ spent.toFixed(2) }} <span class="hl__muted">of ${{ budget.toFixed(2) }} AI budget today</span></div>
+            <div class="hl__meter" role="meter" :aria-valuenow="Math.round(spentPct)" aria-valuemin="0" aria-valuemax="100" :aria-label="subLimits ? 'Daily Claude limit used today' : 'AI budget used today'">
               <span :class="`bg-${spendTone}`" :style="{ width: `${spentPct}%` }" />
             </div>
+            <div v-if="subLimits && subSpent" class="hl__muted">est. ${{ subSpent.week.estUsd.toFixed(2) }} of ${{ subLimits.weekUsd.toFixed(2) }} in the last 7 days</div>
           </div>
         </div>
 

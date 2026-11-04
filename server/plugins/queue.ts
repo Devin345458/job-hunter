@@ -114,20 +114,22 @@ function createWorker() {
         console.warn(`[queue] could not renew the lease on #${item.id}`, e)
       }
     }, RENEW_EVERY_MS)
-    // The limit of Devin's subscription stopped the item's work: it goes back in the queue to run
-    // after the reset instead of ending (pausedByLimit; never an approval, which may have submitted).
+    // The limit of Devin's subscription, or this app's own limit on it, stopped the item's work: it
+    // goes back in the queue to run after the reset, with a note saying which limit, instead of
+    // ending (pausedByLimit; never an approval, which may have submitted).
     const run = () => runQueueItem(item, owner)
       .catch((e): ItemOutcome => {
         console.error(`[queue] #${item.id} ${item.task} failed`, e)
         return { status: 'failed', error: e?.message || String(e) }
       })
       .then((outcome) => {
-        const until = currentQueueContext()?.subscriptionPausedUntil
-        return { outcome, pause: pausedByLimit(item, outcome, until) ? { until: until!, background: isBackgroundWork() } : null }
+        const ctx = currentQueueContext()
+        const until = ctx?.subscriptionPausedUntil
+        return { outcome, pause: pausedByLimit(item, outcome, until) ? { until: until!, background: isBackgroundWork(), note: ctx?.subscriptionStopNote } : null }
       })
     const promise = runInQueueContext(item, run)
       .then(({ outcome, pause }) => {
-        if (pause) pauseItem(item.id, owner, pause.until, { background: pause.background })
+        if (pause) pauseItem(item.id, owner, pause.until, { background: pause.background, note: pause.note })
         else if (outcome !== 'waiting') completeItem(item.id, owner, outcome)
       })
       .catch((e) => {

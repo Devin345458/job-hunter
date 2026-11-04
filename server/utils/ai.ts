@@ -4,10 +4,13 @@ import { z } from 'zod'
 import { and, gte, sql } from 'drizzle-orm'
 import { aiCalls } from '../db/schema'
 import { FALLBACK_MODEL, MODEL, profileOf, usageCost, type Effort } from './model'
-import { BULK_TASKS, currentQueueContext, getItem } from './queue'
+import { APPROVE_TASK, BULK_TASKS, currentQueueContext, getItem } from './queue'
 import { agentThinking, redactAgentSecrets, runAgentQuery, subscriptionTokenSet, type AgentRunResult } from './agent-backend'
-import { activeSubscriptionPause, clearSubscriptionPause, recordSubscriptionLimit, subscriptionPauseMessage } from './subscription-pause'
-import type { TailoredResume } from '#shared/types/pipeline'
+import { activeSubscriptionPause, clearSubscriptionPause, recordSubscriptionLimit, subscriptionPauseMessage, subscriptionPauseView } from './subscription-pause'
+import { appLimitStop, subscriptionLimits, subscriptionSpend, type AppLimitStop } from './subscription-budget'
+import { appLimitPauseText, type AppLimitKind } from '#shared/utils/subscription'
+import { PIPELINE_TIME_ZONE } from '#shared/utils/schedule'
+import type { SubscriptionStatus, TailoredResume } from '#shared/types/pipeline'
 
 let _client: Anthropic | null = null
 
@@ -57,6 +60,26 @@ export class AiSubscriptionLimit extends AiBudgetExceeded {
     super(0, 0, `${subscriptionPauseMessage({ until })}.`)
     this.name = 'AiSubscriptionLimit'
     this.until = until
+  }
+}
+
+/**
+ * This app's own limit on Devin's subscription is reached (server/utils/subscription-budget.ts):
+ * the daily limit, its background share, or the 7-day limit. A subclass of AiBudgetExceeded, so
+ * callers stop their run as at the budget; the queue puts the item back to run after `until`.
+ */
+export class AiAppLimitReached extends AiBudgetExceeded {
+  readonly until: string
+  readonly kind: AppLimitKind
+  readonly spentUsd: number
+  readonly limitUsd: number
+  constructor(stop: AppLimitStop) {
+    super(stop.spentUsd, stop.limitUsd, stop.message)
+    this.name = 'AiAppLimitReached'
+    this.until = stop.until
+    this.kind = stop.kind
+    this.spentUsd = stop.spentUsd
+    this.limitUsd = stop.limitUsd
   }
 }
 
@@ -200,8 +223,9 @@ export function budgetStopKind(): 'budget' | 'background' {
  * Why no Claude call can go out right now (the daily budget is spent, or the account was refused
  * in the last ten minutes), as the error a call would throw; null when calls can go out. Per-job
  * queue items check it first, so a backlog stops at the budget without fetching anything.
- * With `purpose`, a step that runs on the subscription is checked against the subscription pause
- * and the token instead: the dollar budget never stops it.
+ * With `purpose`, a step that runs on the subscription is checked against the subscription pause,
+ * the token, and this app's own subscription limit instead: the API key's dollar budget never
+ * stops it.
  */
 export function aiStopError(purpose?: string): AiBudgetExceeded | null {
   if (purpose && stepBackend(purpose) === 'agent') return subscriptionStopError()
@@ -354,15 +378,63 @@ export function stepBackend(purpose: string): AiBackend {
   return subscriptionTokenSet() ? 'agent' : 'api'
 }
 
-/** Notes on the queue item being run that a subscription limit stopped it, so the worker puts it back to run after `until`. */
-function markSubscriptionStop(until: string) {
+/**
+ * Notes on the queue item being run that a limit stopped it, so the worker puts it back to run
+ * after `until` with the note that says which limit (plugins/queue.ts, pauseItem). Without `stop`
+ * it is Anthropic's subscription limit.
+ */
+function markSubscriptionStop(until: string, stop?: { kind: AppLimitKind; note: string }) {
   const ctx = currentQueueContext()
-  if (ctx) ctx.subscriptionPausedUntil = until
+  if (!ctx) return
+  ctx.subscriptionPausedUntil = until
+  ctx.subscriptionStopKind = stop?.kind ?? 'subscription'
+  ctx.subscriptionStopNote = stop?.note ?? subscriptionPauseMessage({ until })
 }
 
 /**
- * Why no call can go out on the subscription right now (its limit holds, or Claude refused the
- * token in the last ten minutes), as the error a call would throw; null when calls can go out.
+ * This app's own limit on the subscription that stops a call right now, or null. `background`
+ * applies the background share of the daily limit (default: whether the work being run is
+ * background). Calls inside an approval are never stopped: it may be mid-submit.
+ */
+export function appLimitStopNow(background = isBackgroundWork()): AppLimitStop | null {
+  if (currentQueueContext()?.item.task === APPROVE_TASK) return null
+  return appLimitStop({ background, share: backgroundBudgetShare() })
+}
+
+const round4 = (n: number) => Math.round(n * 10000) / 10000
+
+/**
+ * Devin's subscription as the dashboard shows it (GET /api/pipeline/runs, and the limits route):
+ * whether steps run on it, Anthropic's pause, this app's limits, what was spent against them, and
+ * the limit that stops work now (background work counted, so the background share shows).
+ */
+export function subscriptionStatusView(): SubscriptionStatus {
+  const limits = subscriptionLimits()
+  const spend = subscriptionSpend()
+  const on = subscriptionTokenSet()
+  const stop = on ? appLimitStop({ background: true, share: backgroundBudgetShare() }) : null
+  return {
+    on,
+    pause: subscriptionPauseView(),
+    limits: { ...limits, backgroundSharePct: Math.round(backgroundBudgetShare() * 100) },
+    spent: {
+      today: { estUsd: round4(spend.today.estUsd), calls: spend.today.calls },
+      week: { estUsd: round4(spend.week.estUsd), calls: spend.week.calls },
+    },
+    stop: stop ? { kind: stop.kind, until: stop.until, sharePct: stop.sharePct } : null,
+    apiKey: String(useRuntimeConfig().anthropicApiKey ?? '').trim().length > 0,
+  }
+}
+
+/** The sentence a queue item this app's limit put back carries ("Paused: this app's daily Claude limit is reached, resumes at midnight"). */
+export function appLimitNote(stop: Pick<AppLimitStop, 'kind' | 'until' | 'sharePct'>): string {
+  return appLimitPauseText(stop.kind, stop.until, { timeZone: PIPELINE_TIME_ZONE, sharePct: stop.sharePct })
+}
+
+/**
+ * Why no call can go out on the subscription right now (its limit holds, Claude refused the token
+ * in the last ten minutes, or this app's own limit is reached), as the error a call would throw;
+ * null when calls can go out.
  */
 export function subscriptionStopError(): AiBudgetExceeded | null {
   const pause = activeSubscriptionPause()
@@ -371,6 +443,11 @@ export function subscriptionStopError(): AiBudgetExceeded | null {
     return new AiSubscriptionLimit(pause.until)
   }
   if (Date.now() < tokenStopUntil) return new AiTokenRejected()
+  const limit = appLimitStopNow()
+  if (limit) {
+    markSubscriptionStop(limit.until, { kind: limit.kind, note: appLimitNote(limit) })
+    return new AiAppLimitReached(limit)
+  }
   return null
 }
 
@@ -392,8 +469,9 @@ export function agentJsonSchema(schema: z.ZodType): Record<string, unknown> {
 }
 
 /**
- * One call on the subscription. Not counted against the dollar budget: the SDK's cost estimate
- * is logged as est_cost_usd and cost_usd stays 0. A limit records the pause and throws
+ * One call on the subscription. Not counted against the API key's dollar budget: the SDK's cost
+ * estimate is logged as est_cost_usd and cost_usd stays 0, and this app's own subscription limit
+ * (subscriptionStopError) counts that estimate. A limit records the pause and throws
  * AiSubscriptionLimit; nothing falls back to the API key. A model the subscription cannot use is
  * tried once on the fallback model. Every attempt is logged with backend 'agent'.
  */

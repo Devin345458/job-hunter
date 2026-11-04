@@ -7,6 +7,7 @@ import type { ChatMemoryUse } from '#shared/types/memory'
 import type { GithubChatSearch } from '#shared/types/repos'
 import { plainError } from '#shared/utils/plain-text'
 import {
+  AiAppLimitReached,
   AiBudgetExceeded,
   AiCreditExhausted,
   AiKeyRejected,
@@ -727,6 +728,13 @@ export function stopFor(e: unknown): Extract<QuestionChatResponse, { ok: false }
   }
   if (e instanceof AiTokenRejected) {
     return stop('token', 'Claude rejected the subscription token, so the chat cannot answer until a new token from claude setup-token is set as NUXT_CLAUDE_CODE_OAUTH_TOKEN in Coolify.')
+  }
+  if (e instanceof AiAppLimitReached) {
+    const spent = `est. $${e.spentUsd.toFixed(2)} of $${e.limitUsd.toFixed(2)}`
+    if (e.kind === 'app_week') {
+      return stop('budget', `This app's 7-day Claude limit is reached (${spent} in the last 7 days), so the chat is paused until ${resumeClock(e.until, { timeZone: PIPELINE_TIME_ZONE })}. Raise the limit in Settings > Pipeline to keep going sooner.`)
+    }
+    return stop('budget', `This app's daily Claude limit is reached (${spent} today), so the chat is paused until midnight. Raise the limit in Settings > Pipeline to keep going today.`)
   }
   if (e instanceof AiBudgetExceeded) {
     return stop('budget', `Today's Claude budget is used up ($${aiSpentToday().toFixed(2)} of $${aiBudget().toFixed(2)}), so the chat is paused until midnight. Raise NUXT_DAILY_AI_BUDGET_USD in Coolify to keep going today.`)

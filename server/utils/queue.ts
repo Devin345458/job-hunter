@@ -10,6 +10,8 @@ import { runOutcome, runProblems, taskLabel } from '#shared/utils/run-outcome'
 import { DAILY_STEPS } from '#shared/utils/schedule'
 import type { RunTrigger } from './runs'
 import { PRIORITY_WINDOW_MS, subscriptionPauseMessage } from './subscription-pause'
+import { APP_LIMIT_NOTE_SQL } from './subscription-budget'
+import type { AppLimitKind } from '#shared/utils/subscription'
 
 // The durable job queue (table task_queue, migration 0005). Producers call enqueue() instead of
 // running work in the request; a worker (server/plugins/queue.ts, roles all and worker) claims the
@@ -263,22 +265,34 @@ export function pausedByLimit(item: Pick<QueueRow, 'task'>, outcome: ItemOutcome
 }
 
 /**
- * Puts an item that Devin's subscription limit stopped back in the queue, to run after the reset.
- * Its attempts are not counted (a limit is not a failure). Background items (per-job items, the
- * steps of a scheduled run) wait PRIORITY_WINDOW_MS longer, so what Devin started goes first.
+ * Puts an item that Devin's subscription limit, or this app's own limit on it, stopped back in the
+ * queue, to run after the reset (`until`). Its attempts are not counted (a limit is not a failure).
+ * Background items (per-job items, the steps of a scheduled run) wait PRIORITY_WINDOW_MS longer, so
+ * what Devin started goes first. `note` says which limit; without it, Anthropic's.
  */
-export function pauseItem(id: number, owner: string, until: string, opts: { background: boolean }) {
+export function pauseItem(id: number, owner: string, until: string, opts: { background: boolean; note?: string }) {
   const runAfter = new Date(Date.parse(until) + (opts.background ? PRIORITY_WINDOW_MS : 0))
+  const note = opts.note ?? subscriptionPauseMessage({ until })
   const changed = useDb().update(taskQueue).set({
     status: 'queued',
     runAfter: sqlTime(runAfter),
     leaseOwner: null,
     leaseExpiresAt: null,
     progressJson: null,
-    note: subscriptionPauseMessage({ until }),
+    note,
   }).where(and(eq(taskQueue.id, id), eq(taskQueue.status, 'running'), eq(taskQueue.leaseOwner, owner))).run().changes
-  if (changed) console.log(`[queue] #${id} paused at the Claude subscription limit; it runs again after ${sqlTime(runAfter)} UTC`)
-  else console.warn(`[queue] #${id} stopped at the subscription limit after its lease was taken away`)
+  if (changed) console.log(`[queue] #${id} paused (${note}); it runs again after ${sqlTime(runAfter)} UTC`)
+  else console.warn(`[queue] #${id} stopped at a Claude limit after its lease was taken away`)
+}
+
+/**
+ * Puts the items this app's own subscription limit put back to the front again, to run now: a
+ * raised limit lets them go on today. An item still stopped by the new limit is put back again
+ * at its first Claude call. Returns how many.
+ */
+export function releaseAppLimitItems(): number {
+  return useDb().update(taskQueue).set({ runAfter: sqlTime(), note: null })
+    .where(and(eq(taskQueue.status, 'queued'), APP_LIMIT_NOTE_SQL)).run().changes
 }
 
 /** Records how an item ended and moves its daily run on. Ignored when the lease was taken away. */
@@ -560,8 +574,12 @@ export interface QueueContext {
   progress: Record<string, unknown>
   flushTimer: ReturnType<typeof setTimeout> | null
   lastFlush: number
-  /** Set (to the reset time) when a call in this item met Devin's subscription limit. */
+  /** Set (to the reset time) when a call in this item met Devin's subscription limit or this app's own limit on it. */
   subscriptionPausedUntil?: string
+  /** Which limit: 'subscription' (Anthropic's) or one of this app's (app_daily, app_background, app_week). */
+  subscriptionStopKind?: 'subscription' | AppLimitKind
+  /** The note the item carries back in the queue ("Paused: this app's daily Claude limit is reached, resumes at midnight"). */
+  subscriptionStopNote?: string
 }
 
 const context = new AsyncLocalStorage<QueueContext>()
@@ -700,7 +718,7 @@ export function queueSnapshot(): QueueSnapshot {
     backlog: {
       toRead: pendingEnrichCount(),
       toScore: pendingScoreCount(),
-      budgetStopped: aiSpentToday() >= aiBudget() * backgroundBudgetShare(),
+      budgetStopped: aiSpentToday() >= aiBudget() * backgroundBudgetShare() || (subscriptionTokenSet() && !!appLimitStopNow(true)),
     },
   }
 }

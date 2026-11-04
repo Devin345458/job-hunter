@@ -105,6 +105,13 @@ before(async () => {
   m.sql = (await import('drizzle-orm')).sql
   m.runProblems = (await import('../../shared/utils/run-outcome')).runProblems
   m.itemOutcomeFromRun = (await import('../../server/utils/queue-run')).itemOutcomeFromRun
+  Object.assign(m, await import('../../server/utils/subscription-budget'))
+  m.perJobQueueCounts = (await import('../../server/utils/queue-jobs')).perJobQueueCounts
+  m.matchStep = (await import('../../server/utils/queue-jobs')).matchStep
+  m.runOutcome = (await import('../../shared/utils/run-outcome')).runOutcome
+  m.queueItemText = (await import('../../shared/utils/queue-text')).queueItemText
+  m.appLimitPauseText = (await import('../../shared/utils/subscription')).appLimitPauseText
+  m.stopFor = (await import('../../server/utils/question-chat')).stopFor
   m.useDb = (globalThis as any).useDb
   m.setAgentTestHooks({ query: stubQuery as any })
   globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
@@ -128,8 +135,10 @@ beforeEach(() => {
   config.dailyAiBudgetUsd = '10'
   config.agentConcurrency = '4'
   config.agentThinking = 'off'
+  config.subscriptionDailyLimitUsd = ''
+  config.subscriptionWeekLimitUsd = ''
   m.resetAiAccountStops()
-  db().run(m.sql`delete from app_settings where key = 'subscription_pause'`)
+  db().run(m.sql`delete from app_settings where key in ('subscription_pause', 'subscription_limits')`)
   db().run(m.sql`delete from ai_calls`)
   db().run(m.sql`delete from task_queue`)
   script = () => ok({ answer: 'yes', score: 7 })
@@ -426,6 +435,179 @@ describe('queue', () => {
     assert.equal(problems.length, 1)
     assert.match(problems[0], /^paused: Claude subscription limit reached, resumes at (\w{3} )?\d{1,2}:\d{2}/)
     assert.ok(item)
+  })
+})
+
+// ── This app's own limit on the subscription ────────────────
+
+/** One call on the subscription that cost `usd` (the SDK's estimate), made `ago` before now ("-3 days"). */
+function spend(usd: number, ago = '+0 seconds') {
+  db().run(m.sql`insert into ai_calls (purpose, model, backend, est_cost_usd, cost_usd, created_at) values ('tailor', 'claude-sonnet-5-5', 'agent', ${usd}, 0, datetime('now', ${ago}))`)
+}
+
+/** Claims the item `enqueue()` just made and runs `fn` in its queue context, as the worker does. */
+async function asItem<T>(task: string, payload: Record<string, unknown>, trigger: string, fn: () => Promise<T>): Promise<T> {
+  const item = m.enqueue(task, payload, { trigger }).item
+  const claimed = m.claimNext('limit-test', { only: [task] })
+  assert.equal(claimed?.id, item.id)
+  return m.runInQueueContext(claimed, fn)
+}
+
+const isoNear = (a: string, b: number, ms = 5000) => Math.abs(Date.parse(a) - b) < ms
+
+describe('this app\'s subscription limit', () => {
+  test('defaults to $15 a day and $75 over 7 days; the environment is the first default and Settings win', () => {
+    assert.deepEqual(m.subscriptionLimits(), { dailyUsd: 15, weekUsd: 75, fromSettings: false })
+    config.subscriptionDailyLimitUsd = '20'
+    assert.equal(m.subscriptionLimits().dailyUsd, 20)
+    m.saveSubscriptionLimits({ dailyUsd: 5, weekUsd: 30 })
+    assert.deepEqual(m.subscriptionLimits(), { dailyUsd: 5, weekUsd: 30, fromSettings: true })
+    assert.throws(() => m.cleanLimit('0', 'daily limit'), /above \$0/)
+    assert.throws(() => m.cleanLimit('abc', 'daily limit'), /above \$0/)
+    assert.throws(() => m.cleanLimit('', 'daily limit'), /above \$0/)
+    assert.throws(() => m.cleanLimit(10_001, '7-day limit'), /at most \$10,000/)
+    assert.equal(m.cleanLimit('12.345', 'daily limit'), 12.35)
+  })
+
+  test('at the daily limit every call stops before a process starts, naming the limit and where to raise it', async () => {
+    spend(15.5)
+    const err = await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' }).catch((e: unknown) => e)
+    assert.ok(err instanceof m.AiAppLimitReached)
+    assert.ok(err instanceof m.AiBudgetExceeded, 'callers stop their run as at the budget')
+    assert.equal(err.kind, 'app_daily')
+    assert.match(err.message, /^This app's daily Claude limit is reached \(est\. \$15\.50 of \$15\.00 today\)\. Claude calls resume at midnight\. Raise the limit in Settings > Pipeline/)
+    assert.equal(err.until, m.nextMidnight())
+    assert.ok(Date.parse(err.until) > Date.now() && Date.parse(err.until) <= Date.now() + 25 * 3600_000)
+    assert.equal(calls.length, 0, 'no Claude Code process started')
+    assert.equal(apiRequests, 0, 'nothing went to the API key instead')
+    assert.ok(m.aiStopError('match_gaps') instanceof m.AiAppLimitReached, 'a per-job item checks it before fetching')
+    assert.doesNotThrow(() => m.assertAiBudget(), 'the API key budget is a separate count')
+    // The chat says it in its own words, with no API key advice.
+    const chat = m.stopFor(err)
+    assert.equal(chat.stop, 'budget')
+    assert.match(chat.message, /daily Claude limit is reached .* paused until midnight\. Raise the limit in Settings > Pipeline/)
+    assert.doesNotMatch(chat.message, /NUXT_DAILY_AI_BUDGET_USD/)
+  })
+
+  test('background work stops at 70% of the daily limit; what Devin starts can use the rest', async () => {
+    spend(11) // 73% of $15
+    // A chat or a draft (no queue item): runs.
+    await m.aiStructured(Answer, { purpose: 'question_chat', prompt: 'x' })
+    // Something Devin queued: runs.
+    await asItem('repos:suggest', {}, 'manual', () => m.aiStructured(Answer, { purpose: 'repo_judge', prompt: 'x' }))
+    assert.equal(calls.length, 2)
+    // A per-job item (whoever queued it) and a scheduled step: stop.
+    const bulk = await asItem(m.MATCH_ONE_TASK, { jobId: 1 }, 'manual', () => m.aiStructured(Answer, { purpose: 'match_gaps', prompt: 'x' }).catch((e: unknown) => e))
+    assert.ok(bulk instanceof m.AiAppLimitReached)
+    assert.equal(bulk.kind, 'app_background')
+    assert.match(bulk.message, /^Background work paused at 70% of this app's daily Claude limit \(est\. \$11\.02 of \$15\.00 today\)\./, 'the $11 plus the two calls that went out')
+    const scheduled = await asItem('learn:daily', {}, 'schedule', () => m.aiStructured(Answer, { purpose: 'learn', prompt: 'x' }).catch((e: unknown) => e))
+    assert.ok(scheduled instanceof m.AiAppLimitReached)
+    assert.equal(calls.length, 2, 'neither started a process')
+    // The dashboard shows the background stop in amber.
+    const view = m.subscriptionStatusView()
+    assert.equal(view.stop?.kind, 'app_background')
+    assert.equal(view.limits.backgroundSharePct, 70)
+    assert.equal(view.spent.today.estUsd, 11 + 2 * 0.0123)
+    assert.equal(m.appLimitPauseText(view.stop.kind, view.stop.until, { sharePct: 70 }), 'Paused: background work is at 70% of this app\'s daily Claude limit, resumes at midnight')
+    assert.equal(m.queueSnapshot().backlog.budgetStopped, true, 'the backlog line says it resumes when the limit allows')
+  })
+
+  test('the 7-day limit stops every call until enough of the oldest spend leaves the window', async () => {
+    spend(40, '-6 days')
+    spend(40, '-2 days')
+    const err = await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' }).catch((e: unknown) => e)
+    assert.ok(err instanceof m.AiAppLimitReached)
+    assert.equal(err.kind, 'app_week')
+    assert.match(err.message, /^This app's 7-day Claude limit is reached \(est\. \$80\.00 of \$75\.00 in the last 7 days\)\. Claude calls resume at (\w{3} )?\d{1,2}:\d{2} [AP]M\. Raise the limit in Settings > Pipeline/)
+    // Dropping the call made 6 days ago leaves $40, under $75: that happens in one day.
+    assert.ok(isoNear(err.until, Date.now() + 86_400_000), `until ${err.until}`)
+    assert.equal(calls.length, 0)
+    assert.equal(m.stopFor(err).stop, 'budget')
+    assert.match(m.stopFor(err).message, /7-day Claude limit is reached .* paused until /)
+    // A higher limit lets calls go out again at once.
+    m.saveSubscriptionLimits({ dailyUsd: 15, weekUsd: 100 })
+    await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' })
+    assert.equal(calls.length, 1)
+  })
+
+  test('an item the limit stopped goes back in the queue with the limit\'s note, after midnight, attempts not counted', async () => {
+    spend(11)
+    const item = m.enqueue(m.MATCH_ONE_TASK, { jobId: 9 }, { trigger: 'chained' }).item
+    const claimed = m.claimNext('w', { only: [m.MATCH_ONE_TASK] })
+    const r = await m.runInQueueContext(claimed, async () => {
+      // As scoreOne does: the budget error ends the job 'budget', and it stays waiting.
+      const outcome = await m.aiStructured(Answer, { purpose: 'match_gaps', prompt: 'x' })
+        .then(() => ({ status: 'done', result: { jobId: 9, outcome: 'scored' } }))
+        .catch((e: any) => ({ status: 'done', result: { jobId: 9, outcome: 'budget', error: e.message } }))
+      const ctx = m.currentQueueContext()
+      return { outcome, until: ctx.subscriptionPausedUntil, note: ctx.subscriptionStopNote, kind: ctx.subscriptionStopKind, background: m.isBackgroundWork() }
+    })
+    assert.equal(r.kind, 'app_background')
+    assert.equal(r.until, m.nextMidnight())
+    assert.equal(m.pausedByLimit(claimed, r.outcome, r.until), true)
+    m.pauseItem(claimed.id, 'w', r.until, { background: r.background, note: r.note })
+    const back = m.getItem(item.id)
+    assert.equal(back.status, 'queued')
+    assert.equal(back.attempts, 0, 'a limit is not counted as an attempt')
+    assert.equal(back.note, 'Paused: background work is at 70% of this app\'s daily Claude limit, resumes at midnight')
+    assert.ok(isoNear(`${back.runAfter.replace(' ', 'T')}Z`, Date.parse(r.until) + 60_000, 1500), 'background work waits a minute past midnight')
+    assert.match(m.queueItemText({ status: 'queued', label: 'Score a job', step: null, note: back.note, attempts: 0 }), /^Paused: Score a job; background work is at 70%/)
+    // A step waiting on per-job items does not wait for one the limit put back.
+    assert.deepEqual(m.perJobQueueCounts([m.MATCH_ONE_TASK]), { running: 0, due: 0, deferred: 1, note: back.note })
+    // Raising the limit in Settings lets it run now.
+    m.saveSubscriptionLimits({ dailyUsd: 50, weekUsd: 200 })
+    assert.equal(m.releaseAppLimitItems(), 1)
+    const released = m.getItem(item.id)
+    assert.equal(released.note, null)
+    assert.equal(m.perJobQueueCounts([m.MATCH_ONE_TASK]).due, 1)
+  })
+
+  test('a run the limit stopped reads partial with the reason; a manual step whose per-job items it stopped finishes', async () => {
+    spend(16)
+    const res = await asItem('repos:suggest', {}, 'manual', async () => {
+      const run = await m.withRun('repos:suggest', 'manual', async () => {
+        await m.aiStructured(Answer, { purpose: 'repo_judge', prompt: 'x' })
+        return { judged: 1 }
+      })
+      return { run, until: m.currentQueueContext().subscriptionPausedUntil }
+    })
+    assert.equal(res.run.status, 'succeeded', 'paused, not failed')
+    assert.equal(res.run.stats.stopReason, 'app_daily')
+    const problems = m.runProblems({ task: 'repos:suggest', status: 'succeeded', stats: res.run.stats })
+    assert.deepEqual(problems, ['paused: this app\'s daily Claude limit reached, continues after midnight'])
+    assert.equal(m.runOutcome({ task: 'repos:suggest', status: 'succeeded', stats: res.run.stats }, problems), 'partial')
+    const outcome = m.itemOutcomeFromRun(res.run)
+    assert.equal(outcome.result.stoppedAtLimit, true)
+    assert.equal(m.pausedByLimit({ task: 'repos:suggest' }, outcome, res.until), true, 'the item goes back for midnight')
+    // The 7-day stop names when it lifts.
+    const week = m.runProblems({ task: 'jobs:match', status: 'succeeded', stats: { budgetStopped: true, stopReason: 'app_week', pausedUntil: new Date(Date.now() + 3600_000).toISOString() } })
+    assert.match(week[0], /^paused: this app's 7-day Claude limit reached, resumes at (\w{3} )?\d{1,2}:\d{2}/)
+
+    // Score matches started by hand at the background share: its per-job items stop (they are
+    // background work) and go back for midnight; the step stops waiting for them and reads partial.
+    db().run(m.sql`delete from ai_calls`)
+    db().run(m.sql`delete from task_queue`)
+    spend(11)
+    m.enqueue(m.MATCH_ONE_TASK, { jobId: 5 }, { trigger: 'chained', runAfter: new Date(Date.now() + 3600_000) })
+    db().run(m.sql`update task_queue set note = 'Paused: background work is at 70% of this app''s daily Claude limit, resumes at midnight'`)
+    const step = await asItem('jobs:match', {}, 'manual', async () => {
+      const run = await m.withRun('jobs:match', 'manual', log => m.matchStep({}, log))
+      return { run, until: m.currentQueueContext().subscriptionPausedUntil }
+    })
+    assert.equal(step.run.status, 'succeeded')
+    assert.equal(step.run.stats.budgetStopped, true)
+    assert.equal(step.run.stats.stopReason, 'app_background')
+    assert.ok(step.run.stats.errors.some((e: string) => e.startsWith('Paused: background work is at 70%')))
+    assert.equal(step.until, undefined, 'the step itself met no stop')
+    assert.equal(m.pausedByLimit({ task: 'jobs:match' }, m.itemOutcomeFromRun(step.run), step.until), false, 'so it finishes instead of waiting until midnight')
+  })
+
+  test('an approval is never stopped by the limit and never put back', async () => {
+    spend(16)
+    await asItem(m.APPROVE_TASK, { applicationId: 1 }, 'manual', () => m.aiStructured(Answer, { purpose: 'form_answers', prompt: 'x' }))
+    assert.equal(calls.length, 1, 'the call inside the approval went out')
+    assert.equal(m.pausedByLimit({ task: m.APPROVE_TASK }, { status: 'failed', error: 'x' }, new Date(Date.now() + 3600_000).toISOString()), false)
   })
 })
 

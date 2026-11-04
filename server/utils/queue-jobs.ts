@@ -14,7 +14,9 @@ import type { RunTrigger } from './runs'
 //   row with the counts (read, scored, waiting), so the run log still reads as one run.
 // The daily budget is checked before every Claude call on the API key. A job the budget stops stays
 // waiting and the next day's run queues it again; nothing is marked failed for it. On Devin's
-// subscription no budget applies; a job its limit stops waits for the reset in the queue.
+// subscription, a job that his subscription's limit or this app's own limit on it stops waits in
+// the queue for the reset (midnight, or when the 7-day total drops), and the step stops waiting
+// for it.
 
 /**
  * True where finished work queues the next step by itself (search queues reading, reading queues
@@ -98,20 +100,48 @@ function stepStartedAt(): string {
 }
 
 /** Waits until no item of these tasks is queued or running, saying how far it got every 30 seconds. */
-async function waitForTasks(tasks: readonly string[], verb: string, log: (msg: string) => void) {
+/**
+ * Per-job items of `tasks` still in the queue: running, due (queued to run now), and deferred
+ * (queued to run later: put back by a Claude limit until its reset), with the note of one deferred
+ * item ("Paused: this app's daily Claude limit is reached, resumes at midnight").
+ */
+export function perJobQueueCounts(tasks: readonly string[]): { running: number; due: number; deferred: number; note: string | null } {
+  const now = sqlTime()
+  const row = useDb().select({
+    running: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'running' then 1 else 0 end), 0)`,
+    due: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'queued' and ${taskQueue.runAfter} <= ${now} then 1 else 0 end), 0)`,
+    deferred: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'queued' and ${taskQueue.runAfter} > ${now} then 1 else 0 end), 0)`,
+    note: sql<string | null>`max(case when ${taskQueue.status} = 'queued' and ${taskQueue.runAfter} > ${now} then ${taskQueue.note} end)`,
+  }).from(taskQueue).where(and(inArray(taskQueue.task, [...tasks]), inArray(taskQueue.status, ['queued', 'running']))).get()
+  return { running: row?.running ?? 0, due: row?.due ?? 0, deferred: row?.deferred ?? 0, note: row?.note ?? null }
+}
+
+/**
+ * Waits until no item of `tasks` runs or is due. Items a Claude limit put back to run after its
+ * reset are not waited for (the step would otherwise hold its slot, and a full run, until
+ * midnight); they run on their own later. Returns how many were left that way and their note.
+ */
+async function waitForTasks(tasks: readonly string[], verb: string, log: (msg: string) => void): Promise<{ deferred: number; note: string | null }> {
   let lastSaid = Date.now()
   for (;;) {
-    const rows = useDb().select({ status: taskQueue.status, n: sql<number>`count(*)` }).from(taskQueue)
-      .where(and(inArray(taskQueue.task, [...tasks]), inArray(taskQueue.status, ['queued', 'running']))).groupBy(taskQueue.status).all()
-    const waiting = rows.find(r => r.status === 'queued')?.n ?? 0
-    const running = rows.find(r => r.status === 'running')?.n ?? 0
-    if (!waiting && !running) return
+    const c = perJobQueueCounts(tasks)
+    if (!c.due && !c.running) {
+      if (c.deferred) log(`${c.deferred} left in the queue for later: ${c.note ?? 'waiting for a Claude limit to reset'}`)
+      return { deferred: c.deferred, note: c.note }
+    }
     if (Date.now() - lastSaid > 30_000) {
-      log(`${running} ${verb} now, ${waiting} waiting`)
+      log(`${c.running} ${verb} now, ${c.due} waiting${c.deferred ? `, ${c.deferred} for later` : ''}`)
       lastSaid = Date.now()
     }
     await new Promise(r => setTimeout(r, 2000))
   }
+}
+
+/** A step whose per-job items a Claude limit put back reads stopped at the budget, with the limit's note. */
+function noteDeferred(stats: { budgetStopped: boolean; errors: string[] }, waited: { deferred: number; note: string | null }) {
+  if (!waited.deferred) return
+  stats.budgetStopped = true
+  if (waited.note && !stats.errors.includes(waited.note)) stats.errors.push(waited.note)
 }
 
 /** Results of a per-job task's items that ended since `since`. An item that threw counts as failed. */
@@ -171,9 +201,10 @@ export async function enrichStep(payload: Record<string, unknown>, log: (msg: st
   }
   stats.selected = queued
   log(`${queued} ${queued === 1 ? 'job' : 'jobs'} queued to be read, one item each`)
-  await waitForTasks([ENRICH_ONE_TASK], 'being read', log)
+  const waited = await waitForTasks([ENRICH_ONE_TASK], 'being read', log)
   const results = resultsSince<EnrichOneResult>(ENRICH_ONE_TASK, since)
   for (const r of results) tallyEnrich(stats, r)
+  noteDeferred(stats, waited)
   // Every job this run handled, including items queued before a restart cut it off.
   stats.selected = Math.max(queued, results.filter(r => r.outcome !== 'already').length)
   stats.pending = pendingEnrichJobs().length
@@ -209,8 +240,9 @@ export async function matchStep(payload: Record<string, unknown>, log: (msg: str
     }
   }
   log(`${queued} ${queued === 1 ? 'job' : 'jobs'} queued to be scored, one item each`)
-  await waitForTasks([MATCH_ONE_TASK], 'being scored', log)
+  const waited = await waitForTasks([MATCH_ONE_TASK], 'being scored', log)
   for (const r of resultsSince<ScoreOneResult>(MATCH_ONE_TASK, since)) tallyScore(stats, r)
+  noteDeferred(stats, waited)
   if (!ids.length) stats.rescored = (await rescoreJobs('open', 'rescore')).rescored
   stats.pending = pendingScoreJobs().length
   stats.costUsd = costSince(['match', 'match_gaps'], since)

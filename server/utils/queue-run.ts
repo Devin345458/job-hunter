@@ -9,6 +9,7 @@ import { refreshRepoList } from './repos/settings'
 import { runEnrichOne, runMatchOne } from './queue-jobs'
 import type { ItemOutcome, QueueRow } from './queue'
 import type { RunTrigger } from './runs'
+import { isAppLimitKind } from '#shared/utils/subscription'
 
 // What the worker does with each kind of queue item. Pipeline tasks (server/tasks) run through
 // Nitro's runTask exactly as the schedule ran them before the queue; the one-off jobs that routes
@@ -17,9 +18,13 @@ import type { RunTrigger } from './runs'
 
 type RunResult = { runId: number; status: 'succeeded' | 'failed' | 'skipped'; error: string | null; stats?: Record<string, unknown> | null }
 
-/** The item's outcome from its run. `stoppedAtLimit` marks a run Devin's subscription limit stopped (pausedByLimit puts it back). */
+/**
+ * The item's outcome from its run. `stoppedAtLimit` marks a run Devin's subscription limit, or this
+ * app's own limit on it, stopped (pausedByLimit puts it back when the stop was met in this item).
+ */
 export function itemOutcomeFromRun(r: RunResult): ItemOutcome {
-  const stoppedAtLimit = r.stats?.stopReason === 'subscription'
+  const reason = r.stats?.stopReason
+  const stoppedAtLimit = reason === 'subscription' || isAppLimitKind(reason)
   return {
     status: r.status === 'failed' ? 'failed' : 'done',
     error: r.status === 'failed' ? r.error : null,

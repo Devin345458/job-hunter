@@ -184,8 +184,14 @@ export default defineNuxtConfig({
     // subscription never count)
     dailyAiBudgetUsd: '10',
     // Background work (scheduled steps, per-job read and score items) stops at this share of the
-    // daily budget, leaving the rest for what Devin starts by hand.
+    // daily budget, leaving the rest for what Devin starts by hand. The same share applies to the
+    // daily subscription limit below.
     backgroundBudgetShare: '0.7',
+    // This app's own limit on Devin's Claude subscription, in the Agent SDK's estimated dollars:
+    // per local day and over a rolling 7 days (server/utils/subscription-budget.ts). Only the first
+    // defaults: Settings > Pipeline stores the limits in app_settings, and those win.
+    subscriptionDailyLimitUsd: '15',
+    subscriptionWeekLimitUsd: '75',
     // uid of the unprivileged user that runs demo build commands in the container
     demoUid: '10001',
     // Safety switch for real employer submits. 'false' lets the approve path submit only to the

@@ -1,6 +1,6 @@
 import { isCreditError } from './plain-text'
 import { properName, properNamesIn } from './names'
-import { resumeClock } from './subscription'
+import { isAppLimitKind, resumeClock } from './subscription'
 
 // One outcome per pipeline run, derived from what the run recorded. A run that finished without
 // throwing is not automatically a success: a step that scored 0 of 38 jobs, or stopped because
@@ -48,11 +48,15 @@ interface RunLike {
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 
-export type BudgetStop = 'key' | 'credit' | 'background' | 'budget' | 'subscription' | 'token'
+export type BudgetStop = 'key' | 'credit' | 'background' | 'budget' | 'subscription' | 'token' | 'app_daily' | 'app_background' | 'app_week'
 
 /** How a run that stopped at the AI budget says so. The run reads partial, in amber. */
 export const STOP_TEXT: Record<BudgetStop, string> = {
   subscription: 'paused: Claude subscription limit reached, continues after the reset',
+  // This app's own limit on the subscription (server/utils/subscription-budget.ts).
+  app_daily: 'paused: this app\'s daily Claude limit reached, continues after midnight',
+  app_background: 'paused: background share of this app\'s daily Claude limit reached, continues after midnight',
+  app_week: 'paused: this app\'s 7-day Claude limit reached, continues when the 7-day total drops',
   token: 'stopped: Claude rejected the subscription token',
   key: 'stopped: Anthropic rejected the API key',
   credit: 'stopped: out of credit',
@@ -71,7 +75,7 @@ export function budgetStop(stats: Record<string, unknown>): BudgetStop | null {
   const background = errors.some(e => e.startsWith('Background work stopped at'))
   if (!flagged && !background && !errors.some(e => e.startsWith('Daily AI budget reached'))) return null
   const reason = stats.stopReason
-  if (reason === 'key' || reason === 'credit' || reason === 'background' || reason === 'budget' || reason === 'subscription' || reason === 'token') return reason
+  if (reason === 'key' || reason === 'credit' || reason === 'background' || reason === 'budget' || reason === 'subscription' || reason === 'token' || isAppLimitKind(reason)) return reason
   return background ? 'background' : 'budget'
 }
 
@@ -122,6 +126,7 @@ export function runProblems(run: RunLike, children: RunLike[] = []): string[] {
   if (failed > 0) out.push(creditErrors(stats) ? `${failed} failed, Claude is out of credit` : `${failed} failed`)
   const stop = budgetStop(stats)
   if (stop === 'subscription' && typeof stats.pausedUntil === 'string') out.push(`paused: Claude subscription limit reached, resumes at ${resumeClock(stats.pausedUntil)}`)
+  else if (stop === 'app_week' && typeof stats.pausedUntil === 'string') out.push(`paused: this app's 7-day Claude limit reached, resumes at ${resumeClock(stats.pausedUntil)}`)
   else if (stop) out.push(STOP_TEXT[stop])
   if (num(stats.noteErrors) > 0) out.push(`${num(stats.noteErrors)} rejection note${num(stats.noteErrors) === 1 ? '' : 's'} not read`)
   if (num(stats.interrupted) > 0) out.push(`${num(stats.interrupted)} interrupted`)

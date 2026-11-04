@@ -3,6 +3,7 @@
 // Change a shape here first, then the code that writes it, then the code that reads it.
 
 import type { RepoSuggestionView } from './repos'
+import type { AppLimitKind } from '../utils/subscription'
 
 export type AtsType =
   | 'greenhouse'
@@ -381,6 +382,22 @@ export interface SubscriptionStatus {
   on: boolean
   /** While its limit holds: when it ends (ISO) and the sentence to show, in the server's time zone. */
   pause: { until: string; since: string; reported: boolean; message: string } | null
+  /**
+   * This app's own limit on the subscription, in the Agent SDK's estimated dollars
+   * (server/utils/subscription-budget.ts): per local day and over the last 7 days. Background work
+   * stops at `backgroundSharePct` of the daily limit. `fromSettings` is false while the defaults apply.
+   */
+  limits: { dailyUsd: number; weekUsd: number; backgroundSharePct: number; fromSettings: boolean }
+  /** What calls on the subscription are estimated to have cost, today and in the last 7 days. */
+  spent: { today: { estUsd: number; calls: number }; week: { estUsd: number; calls: number } }
+  /**
+   * The app limit that stops work right now, or null: app_background stops only background work
+   * (scheduled steps, per-job read and score items); app_daily and app_week stop every call.
+   * `until` (ISO) is when it lifts: the next midnight, or when the 7-day total drops under the limit.
+   */
+  stop: { kind: AppLimitKind; until: string; sharePct: number } | null
+  /** NUXT_ANTHROPIC_API_KEY is set, so steps mapped to the API key and its dollar budget still apply. */
+  apiKey: boolean
 }
 
 export const REJECT_REASONS = [

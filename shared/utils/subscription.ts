@@ -20,3 +20,29 @@ export function resumeClock(until: string | Date, opts: { now?: Date; timeZone?:
 export function subscriptionPauseText(until: string | Date, opts: { now?: Date; timeZone?: string } = {}): string {
   return `Paused: your Claude subscription limit is reached, resumes at ${resumeClock(until, opts)}`
 }
+
+// ── This app's own limit on the subscription (server/utils/subscription-budget.ts) ──
+
+/**
+ * Which of this app's limits stops Claude calls on Devin's subscription: the daily limit, the
+ * background share of it (only scheduled steps and per-job read and score items stop), or the
+ * rolling 7-day limit. Also the run's stopReason (shared/utils/run-outcome.ts).
+ */
+export type AppLimitKind = 'app_daily' | 'app_background' | 'app_week'
+
+export const APP_LIMIT_KINDS: readonly AppLimitKind[] = ['app_daily', 'app_background', 'app_week']
+
+export function isAppLimitKind(v: unknown): v is AppLimitKind {
+  return typeof v === 'string' && (APP_LIMIT_KINDS as readonly string[]).includes(v)
+}
+
+/**
+ * The amber line on the Review and Settings boxes, and the note on queue items it put back:
+ * "Paused: this app's daily Claude limit is reached, resumes at midnight". `sharePct` is the
+ * background share in percent (70).
+ */
+export function appLimitPauseText(kind: AppLimitKind, until: string | Date, opts: { now?: Date; timeZone?: string; sharePct?: number } = {}): string {
+  if (kind === 'app_week') return `Paused: this app's 7-day Claude limit is reached, resumes at ${resumeClock(until, opts)}`
+  if (kind === 'app_background') return `Paused: background work is at ${opts.sharePct ?? 70}% of this app's daily Claude limit, resumes at midnight`
+  return 'Paused: this app\'s daily Claude limit is reached, resumes at midnight'
+}
