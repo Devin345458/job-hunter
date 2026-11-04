@@ -51,6 +51,8 @@ export interface MemoryResult {
   score: number
   /** Raw excerpt, cleaned of index metadata and capped at MEMORY_LIMITS.excerptChars. */
   excerpt: string
+  /** The whole cleaned excerpt, set only when the cap cut it (records drafts read the best ones in full). */
+  full?: string
 }
 
 export type MemorySearch =
@@ -367,13 +369,16 @@ export function parseReflectText(text: string): Array<MemoryResult & { rawExcerp
     const when = decodeEntities(body.match(/<t>([^<]*)<\/t>/)?.[1] ?? '')
     const raw = body.match(/<excerpt><!\[CDATA\[([\s\S]*?)\]\]><\/excerpt>/)?.[1] ?? decodeEntities(body.match(/<excerpt>([\s\S]*?)<\/excerpt>/)?.[1] ?? '')
     if (!Number.isFinite(score)) continue
+    const clean = stripMetadata(raw)
+    const excerpt = capExcerpt(clean)
     out.push({
       projectPath,
       project: projectName(projectPath),
       date: when.match(/\d{4}-\d{2}-\d{2}/)?.[0] ?? null,
       score,
       rawExcerpt: raw,
-      excerpt: capExcerpt(stripMetadata(raw)),
+      excerpt,
+      ...(excerpt !== clean ? { full: clean } : {}),
     })
   }
   return out

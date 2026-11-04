@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
+import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, recordsDraftLabel, takesExample, useDraftStepLine, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
+import type { RecordsDraft } from '#shared/types/question-chat'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
@@ -36,6 +37,8 @@ const key = computed(() => chatThreadKey(props.question?.id))
 const messages = computed(() => chat.threads.value[key.value] ?? [])
 const busy = computed(() => !!chat.sending.value[key.value])
 const draftingRecords = computed(() => !!chat.drafting.value[key.value])
+/** "Searching your GitHub (12 seconds)" while a draft from records runs. */
+const draftStepLine = useDraftStepLine(key)
 /** This question can take a draft from his records. */
 const recordsDraftable = computed(() => draftsFromRecords(props.question))
 /** The first reply in this conversation that had memory excerpts in its prompt; it alone carries the note. */
@@ -123,8 +126,10 @@ const confirmingDraft = ref<string | null>(null)
  * On a pending skill or experience question a draft example means a yes: "Use this draft" picks the
  * level Claude suggested (Some experience when it said so, else Yes) and fills the example box in one tap.
  */
-function draftLevel(m: { suggestedAnswer?: string | null }): string | null {
+function draftLevel(m: { suggestedAnswer?: string | null; records?: RecordsDraft | null }): string | null {
   if (!exampleQuestion.value || props.question?.status !== 'pending') return null
+  // A draft from his records carries its own level; none (nothing found) picks none.
+  if (m.records) return m.records.level
   const s = m.suggestedAnswer ?? ''
   return (EXAMPLE_LEVELS as readonly string[]).includes(s) ? s : 'Yes'
 }
@@ -278,7 +283,7 @@ defineExpose({ focus: () => input.value?.focus() })
           <QuestionsChatGithub v-if="m.role === 'assistant' && m.github" :search="m.github" />
 
           <div v-if="m.role === 'assistant' && m.draft" class="question-chat__draft">
-            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ m.records ? RECORDS_DRAFT_LABEL : exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
+            <div class="question-chat__draft-label text-caption text-medium-emphasis">{{ m.records ? recordsDraftLabel(m.records) : exampleQuestion ? 'Draft example' : 'Draft answer' }}</div>
             <QuestionsRecordsSources v-if="m.records" :draft="m.records" />
             <div v-else class="question-chat__draft-text">{{ m.draft }}</div>
             <div v-if="canUseDraft && confirmingDraft === m.id" class="question-chat__confirm" role="alert">
@@ -324,7 +329,7 @@ defineExpose({ focus: () => input.value?.focus() })
 
       <div v-if="busy" class="question-chat__msg question-chat__msg--assistant question-chat__thinking">
         <v-progress-circular indeterminate size="16" width="2" color="primary" />
-        <span class="text-body-2 text-medium-emphasis">{{ draftingRecords ? 'Searching your knowledge base, GitHub, and past sessions, then drafting' : 'Claude is thinking' }}</span>
+        <span class="text-body-2 text-medium-emphasis" role="status">{{ draftingRecords ? draftStepLine : 'Claude is thinking' }}</span>
       </div>
     </div>
 
