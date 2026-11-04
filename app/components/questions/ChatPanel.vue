@@ -384,17 +384,14 @@ defineExpose({ focus: () => input.value?.focus() })
   min-height: 0;
   height: 100%;
   background: rgb(var(--v-theme-surface));
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
 
   &--dialog {
     border-radius: 0;
-    border: 0;
 
     @media (min-width: 600px) {
-      border-radius: 12px;
-      border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+      border-radius: 16px;
     }
   }
 

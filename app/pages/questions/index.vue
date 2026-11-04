@@ -2,7 +2,8 @@
 import { useDisplay } from 'vuetify'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, saveChatQuestionId, savedChatQuestionId, type DraftMeta } from '~/components/questions/chat-store'
+import { EXAMPLE_LEVELS, chatThreadKey, saveChatQuestionId, savedChatQuestionId, useQuestionChat, type DraftMeta } from '~/components/questions/chat-store'
+import { countText } from '#shared/utils/pay-format'
 
 definePageMeta({ layout: 'default' })
 
@@ -18,9 +19,69 @@ const showSkipped = ref(false)
 const showAppSkipped = ref(false)
 
 const pending = computed(() => all.value.filter(q => q.status === 'pending'))
-const waitingOnYou = computed(() => pending.value.filter(q => q.waitingApplicationIds.length > 0 || q.blocking))
+/** First on the page: the questions that hold an approval until they are answered. */
+const waitingOnYou = computed(() => pending.value.filter(q => q.blocking))
+const blockingCount = computed(() => waitingOnYou.value.length)
+/** Waited on by an application but not holding it up: they lead the rest, most waited on first. */
+const waitingSoft = computed(() => pending.value.filter(q => !q.blocking && q.waitingApplicationIds.length > 0)
+  .sort((a, b) => b.waitingApplicationIds.length - a.waitingApplicationIds.length))
 const quick = computed(() => pending.value.filter(q => !q.legacy && !(q.waitingApplicationIds.length > 0 || q.blocking)))
 const legacy = computed(() => pending.value.filter(q => q.legacy && !(q.waitingApplicationIds.length > 0 || q.blocking)))
+
+// ── One page at a time ──
+// 232 open questions used to render as one 129-screen page. Now: what applications wait on, then a
+// page of ten, then the rest grouped by what they ask about with their counts, ten at a time.
+const PAGE = 10
+const NEXT_UP = 10
+const limits = ref<Record<string, number>>({})
+function shown<T>(key: string, list: T[]): T[] {
+  return list.slice(0, limits.value[key] ?? PAGE)
+}
+function showMore(key: string) {
+  limits.value = { ...limits.value, [key]: (limits.value[key] ?? PAGE) + PAGE }
+}
+
+/** Not waited on by any application, in the order the pipeline asks them: the queue after the blocking ones. */
+const rest = computed(() => [...waitingSoft.value, ...quick.value, ...legacy.value])
+const nextUp = computed(() => rest.value.slice(0, NEXT_UP))
+
+type GroupKey = 'skill' | 'experience' | 'about' | 'legacy'
+const GROUP_TITLE: Record<GroupKey, string> = {
+  skill: 'Skills',
+  experience: 'Experience',
+  about: 'About you',
+  legacy: 'From earlier resume tailoring',
+}
+/** The section a question's answer is filed under (the same rule as the card's label). */
+function groupOf(q: QuestionListItem): GroupKey {
+  if (q.legacy) return 'legacy'
+  const section = (q.knowledgeKey ?? '').split(':')[0]
+  if (q.kind === 'knows' || q.kind === 'has_done') {
+    if (section === 'skill') return 'skill'
+    if (section === 'experience') return 'experience'
+    return q.kind === 'knows' ? 'skill' : 'experience'
+  }
+  return 'about'
+}
+const groups = computed(() => {
+  const later = rest.value.slice(NEXT_UP)
+  return (Object.keys(GROUP_TITLE) as GroupKey[])
+    .map(key => ({ key, title: GROUP_TITLE[key], items: later.filter(q => groupOf(q) === key) }))
+    .filter(g => g.items.length)
+})
+const openGroups = ref<string[]>([])
+function toggleGroup(key: string) {
+  openGroups.value = openGroups.value.includes(key) ? openGroups.value.filter(k => k !== key) : [...openGroups.value, key]
+}
+
+// Find any open question by its words or subject.
+const find = ref('')
+const found = computed(() => {
+  const t = find.value.trim().toLowerCase()
+  if (!t) return []
+  return pending.value.filter(q => `${q.question} ${q.subject ?? ''}`.toLowerCase().includes(t))
+})
+watch(find, () => { limits.value = { ...limits.value, found: PAGE } })
 const answered = computed(() => all.value.filter(q => q.status === 'answered').sort((a, b) => (b.answeredAt ?? '').localeCompare(a.answeredAt ?? '')))
 // Questions the app skipped (a duplicate, a subject the knowledge base covers, not a skill) carry
 // its note and are listed apart, so Skipped by you holds only Devin's own skips.
@@ -58,6 +119,9 @@ const boxTexts = ref<Record<number, string>>({})
 /** The chat's "Answer: Yes" on a skill or experience question, keyed by question id: the card picks it and opens the example box. */
 const picks = ref<Record<number, { level: string; nonce: number }>>({})
 const chatQuestion = computed(() => all.value.find(q => q.id === chatQuestionId.value) ?? null)
+// With no question picked and no general conversation, the rail is only as tall as its prompt.
+const chatStore = useQuestionChat()
+const chatInUse = computed(() => chatQuestionId.value != null || (chatStore.threads.value[chatThreadKey(null)]?.length ?? 0) > 0)
 
 function isWide() {
   return import.meta.client && window.matchMedia(WIDE_QUERY).matches
@@ -80,6 +144,36 @@ function askGeneral() {
   else chatOpen.value = true
 }
 
+/**
+ * Puts a question's card on the page before the chat hands it a draft or a pick: the card watches
+ * for them only while it is mounted, and with paging it may sit in a closed group or a later page.
+ */
+function reveal(id: number) {
+  const q = all.value.find(x => x.id === id)
+  if (!q) return
+  const pageFor = (i: number) => Math.ceil((i + 1) / PAGE) * PAGE
+  if (q.status === 'pending') {
+    if (find.value.trim() && found.value.some(x => x.id === id)) {
+      const i = found.value.findIndex(x => x.id === id)
+      limits.value = { ...limits.value, found: Math.max(limits.value.found ?? PAGE, pageFor(i)) }
+      return
+    }
+    find.value = ''
+    for (const g of groups.value) {
+      const i = g.items.findIndex(x => x.id === id)
+      if (i < 0) continue
+      if (!openGroups.value.includes(g.key)) openGroups.value = [...openGroups.value, g.key]
+      limits.value = { ...limits.value, [g.key]: Math.max(limits.value[g.key] ?? PAGE, pageFor(i)) }
+    }
+    return
+  }
+  if (q.status === 'answered') {
+    showAnswered.value = true
+    const i = answeredShown.value.findIndex(x => x.id === id)
+    if (i >= 0) limits.value = { ...limits.value, answered: Math.max(limits.value.answered ?? PAGE, pageFor(i)) }
+  }
+}
+
 function scrollToCard(id: number) {
   nextTick(() => {
     document.getElementById(`question-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -91,9 +185,12 @@ function answerFromChat(value: string) {
   if (!q) return
   // Yes or Some experience on a skill or experience question waits for the example box on the card.
   if (q.takesExample && !q.legacy && isExampleLevel(value) && q.status === 'pending') {
-    picks.value = { ...picks.value, [q.id]: { level: value, nonce: Date.now() } }
+    reveal(q.id)
     chatOpen.value = false
-    scrollToCard(q.id)
+    nextTick(() => {
+      picks.value = { ...picks.value, [q.id]: { level: value, nonce: Date.now() } }
+      scrollToCard(q.id)
+    })
     return
   }
   answer(q, value)
@@ -102,13 +199,16 @@ function answerFromChat(value: string) {
 function useDraft(text: string, level: string | null = null, meta?: DraftMeta) {
   const q = chatQuestion.value
   if (!q) return
-  prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now(), level, records: meta?.records ?? null, memoryNote: meta?.memoryNote ?? null } }
   chatOpen.value = false
   if (q.status === 'answered') {
     showAnswered.value = true
     if (onlyMissing.value && !missingExample.value.some(x => x.id === q.id)) onlyMissing.value = false
   }
-  scrollToCard(q.id)
+  reveal(q.id)
+  nextTick(() => {
+    prefills.value = { ...prefills.value, [q.id]: { text, nonce: Date.now(), level, records: meta?.records ?? null, memoryNote: meta?.memoryNote ?? null } }
+    scrollToCard(q.id)
+  })
   const what = meta?.records ? 'draft from your records' : 'draft'
   snackbar.info(q.takesExample && !q.legacy
     ? `${level ? `${level} is picked and the` : 'The'} ${what} is in the example box. Edit it, then press Save.`
@@ -216,30 +316,24 @@ onMounted(async () => {
 <template>
   <div class="fade-in questions-page">
     <div class="questions-page__main">
-      <div class="d-flex flex-wrap align-start justify-space-between ga-4 mb-8">
-        <div class="page-header mb-0">
+      <div class="page-header page-header--split">
+        <div>
           <h1 class="text-h4 page-header__title">Questions</h1>
-          <p class="text-body-2 page-header__subtitle">
-            What the pipeline needs to know about you. Every answer goes into your knowledge base, a No included,
-            so nothing is ever claimed on an application that you have not confirmed.
+          <p v-if="!loading" class="page-header__subtitle">
+            {{ countText(pending.length) }} open<template v-if="blockingCount">, <span class="questions-page__blocking">{{ countText(blockingCount) }} {{ blockingCount === 1 ? 'blocks' : 'block' }} an approval</span></template>
           </p>
         </div>
-        <div class="d-flex flex-wrap align-center ga-2">
-          <v-chip v-if="pending.length" variant="tonal" color="warning" class="questions-page__count">
-            {{ pending.length }} to answer
-          </v-chip>
-          <v-btn
-            variant="tonal"
-            prepend-icon="mdi-chat-question-outline"
-            class="questions-page__ask"
-            @click="askGeneral"
-          >
-            Ask Claude
-          </v-btn>
-        </div>
+        <v-btn
+          variant="outlined"
+          prepend-icon="mdi-chat-question-outline"
+          class="questions-page__ask"
+          @click="askGeneral"
+        >
+          Ask Claude
+        </v-btn>
       </div>
 
-      <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-6" />
+      <v-progress-linear v-if="loading" indeterminate color="primary" height="2" class="mb-6" />
 
       <v-alert v-if="loadError" type="error" variant="tonal" class="mb-6">
         {{ loadError }}
@@ -249,15 +343,29 @@ onMounted(async () => {
       </v-alert>
 
       <template v-if="!loading && !loadError">
-        <!-- Applications are waiting -->
-        <section v-if="waitingOnYou.length" class="mb-8">
-          <div class="section-label questions-page__label">Waiting on you</div>
-          <p class="text-body-2 text-medium-emphasis questions-page__section-note">
-            Applications in your review queue use these answers. The ones marked as blocking keep Approve locked until you answer.
-          </p>
-          <div class="d-flex flex-column ga-3">
+        <!-- The promise, read where answers are given. -->
+        <p v-if="pending.length" class="questions-page__promise">
+          Every answer is saved to your knowledge base, a No included. Nothing is claimed on an application that you have not confirmed.
+        </p>
+
+        <v-text-field
+          v-if="pending.length > PAGE"
+          v-model="find"
+          class="questions-page__find"
+          placeholder="Find an open question"
+          aria-label="Find an open question"
+          prepend-inner-icon="mdi-magnify"
+          clearable
+          hide-details
+        />
+
+        <!-- Found: every open question whose words match, ten at a time. -->
+        <section v-if="find.trim()" class="questions-page__section" aria-labelledby="q-found">
+          <h2 id="q-found" class="questions-page__h">Found <span class="questions-page__n">{{ countText(found.length) }}</span></h2>
+          <p v-if="!found.length" class="questions-page__empty">No open question has those words.</p>
+          <div class="questions-page__cards">
             <KnowledgeQuestionCard
-              v-for="q in waitingOnYou"
+              v-for="q in shown('found', found)"
               :key="q.id"
               :id="`question-${q.id}`"
               :question="q"
@@ -272,57 +380,98 @@ onMounted(async () => {
               @box-text="t => (boxTexts[q.id] = t)"
             />
           </div>
+          <v-btn v-if="found.length > shown('found', found).length" variant="outlined" class="questions-page__more" @click="showMore('found')">
+            Show {{ Math.min(PAGE, found.length - shown('found', found).length) }} more of {{ countText(found.length - shown('found', found).length) }}
+          </v-btn>
         </section>
 
-        <!-- One-tap and short answers -->
-        <section v-if="quick.length" class="mb-8">
-          <div class="section-label questions-page__label">Quick answers</div>
-          <p class="text-body-2 text-medium-emphasis questions-page__section-note">
-            No application is waiting on these. They come from skills that keep showing up in open jobs; each answer makes future matches and resumes more accurate.
-          </p>
-          <div class="d-flex flex-column ga-3">
-            <KnowledgeQuestionCard
-              v-for="q in quick"
-              :key="q.id"
-              :id="`question-${q.id}`"
-              :question="q"
-              mode="pending"
-              :saving="saving[q.id]"
-              :asking="chatQuestionId === q.id"
-              :prefill="prefills[q.id]"
-              :pick="picks[q.id]"
-              @answer="(v, ex) => answer(q, v, ex)"
-              @skip="skip(q)"
-              @ask="askAbout(q)"
-              @box-text="t => (boxTexts[q.id] = t)"
-            />
-          </div>
-        </section>
+        <template v-else>
+          <!-- Applications are waiting: the ones that block an approval first. -->
+          <section v-if="waitingOnYou.length" class="questions-page__section" aria-labelledby="q-waiting">
+            <h2 id="q-waiting" class="questions-page__h">Blocking an approval <span class="questions-page__n questions-page__blocking">{{ countText(waitingOnYou.length) }}</span></h2>
+            <div class="questions-page__cards">
+              <KnowledgeQuestionCard
+                v-for="q in waitingOnYou"
+                :key="q.id"
+                :id="`question-${q.id}`"
+                :question="q"
+                mode="pending"
+                :saving="saving[q.id]"
+                :asking="chatQuestionId === q.id"
+                :prefill="prefills[q.id]"
+                :pick="picks[q.id]"
+                @answer="(v, ex) => answer(q, v, ex)"
+                @skip="skip(q)"
+                @ask="askAbout(q)"
+                @box-text="t => (boxTexts[q.id] = t)"
+              />
+            </div>
+          </section>
 
-        <!-- Open-ended questions from the original resume tailoring flow -->
-        <section v-if="legacy.length" class="mb-8">
-          <div class="section-label">From earlier resume tailoring ({{ legacy.length }})</div>
-          <p class="text-body-2 text-medium-emphasis mb-4 questions-page__note">
-            Open-ended questions the old tailoring step asked. Answer any you like in your own words. Your words are stored as written.
-          </p>
-          <div class="d-flex flex-column ga-3">
-            <KnowledgeQuestionCard
-              v-for="q in legacy"
-              :key="q.id"
-              :id="`question-${q.id}`"
-              :question="q"
-              mode="pending"
-              :saving="saving[q.id]"
-              :asking="chatQuestionId === q.id"
-              :prefill="prefills[q.id]"
-              :pick="picks[q.id]"
-              @answer="(v, ex) => answer(q, v, ex)"
-              @skip="skip(q)"
-              @ask="askAbout(q)"
-              @box-text="t => (boxTexts[q.id] = t)"
-            />
-          </div>
-        </section>
+          <!-- The next ten no application waits on. -->
+          <section v-if="nextUp.length" class="questions-page__section" aria-labelledby="q-next">
+            <h2 id="q-next" class="questions-page__h">Next up <span class="questions-page__n">{{ countText(nextUp.length) }} of {{ countText(rest.length) }}</span></h2>
+            <div class="questions-page__cards">
+              <KnowledgeQuestionCard
+                v-for="q in nextUp"
+                :key="q.id"
+                :id="`question-${q.id}`"
+                :question="q"
+                mode="pending"
+                :saving="saving[q.id]"
+                :asking="chatQuestionId === q.id"
+                :prefill="prefills[q.id]"
+                :pick="picks[q.id]"
+                @answer="(v, ex) => answer(q, v, ex)"
+                @skip="skip(q)"
+                @ask="askAbout(q)"
+                @box-text="t => (boxTexts[q.id] = t)"
+              />
+            </div>
+          </section>
+
+          <!-- The rest, grouped by what they ask about, with their counts. -->
+          <section v-if="groups.length" class="questions-page__section" aria-labelledby="q-rest">
+            <h2 id="q-rest" class="questions-page__h">The rest, by subject</h2>
+            <div class="questions-page__groups">
+              <div v-for="g in groups" :key="g.key" class="questions-page__group">
+                <button
+                  type="button"
+                  class="questions-page__group-head"
+                  :aria-expanded="openGroups.includes(g.key)"
+                  :aria-controls="`q-group-${g.key}`"
+                  @click="toggleGroup(g.key)"
+                >
+                  <v-icon :icon="openGroups.includes(g.key) ? 'mdi-chevron-down' : 'mdi-chevron-right'" size="18" />
+                  <span class="questions-page__group-title">{{ g.title }}</span>
+                  <span class="questions-page__n">{{ countText(g.items.length) }}</span>
+                </button>
+                <div v-show="openGroups.includes(g.key)" :id="`q-group-${g.key}`" class="questions-page__group-body">
+                  <div class="questions-page__cards">
+                    <KnowledgeQuestionCard
+                      v-for="q in (openGroups.includes(g.key) ? shown(g.key, g.items) : [])"
+                      :key="q.id"
+                      :id="`question-${q.id}`"
+                      :question="q"
+                      mode="pending"
+                      :saving="saving[q.id]"
+                      :asking="chatQuestionId === q.id"
+                      :prefill="prefills[q.id]"
+                      :pick="picks[q.id]"
+                      @answer="(v, ex) => answer(q, v, ex)"
+                      @skip="skip(q)"
+                      @ask="askAbout(q)"
+                      @box-text="t => (boxTexts[q.id] = t)"
+                    />
+                  </div>
+                  <v-btn v-if="g.items.length > shown(g.key, g.items).length" variant="outlined" class="questions-page__more" @click="showMore(g.key)">
+                    Show {{ Math.min(PAGE, g.items.length - shown(g.key, g.items).length) }} more of {{ countText(g.items.length - shown(g.key, g.items).length) }}
+                  </v-btn>
+                </div>
+              </div>
+            </div>
+          </section>
+        </template>
 
         <!-- Nothing pending -->
         <v-card v-if="pending.length === 0" variant="outlined" class="text-center pa-10 mb-8">
@@ -343,16 +492,15 @@ onMounted(async () => {
             aria-controls="questions-answered"
             @click="showAnswered = !showAnswered"
           >
-            Answered ({{ answered.length }})
+            Answered <span class="questions-page__n">{{ countText(answered.length) }}</span>
           </v-btn>
           <div v-if="missingExample.length" class="questions-page__missing">
             <v-icon icon="mdi-text-box-plus-outline" size="18" class="questions-page__missing-icon" />
             <span class="text-body-2">
-              {{ missingExample.length === 1 ? '1 yes answer has no example yet' : `${missingExample.length} yes answers have no example yet` }}
+              {{ missingExample.length === 1 ? '1 yes answer has no example yet' : `${countText(missingExample.length)} yes answers have no example yet` }}
             </span>
             <v-btn
               variant="text"
-              color="primary"
               class="questions-page__missing-btn"
               :aria-pressed="onlyMissing"
               @click="toggleOnlyMissing"
@@ -365,7 +513,7 @@ onMounted(async () => {
             <div v-show="showAnswered" id="questions-answered">
               <div class="d-flex flex-column ga-3">
                 <KnowledgeQuestionCard
-                  v-for="q in answeredShown"
+                  v-for="q in (showAnswered ? shown('answered', answeredShown) : [])"
                   :key="q.id"
                   :id="`question-${q.id}`"
                   :question="q"
@@ -381,6 +529,9 @@ onMounted(async () => {
                   @box-text="t => (boxTexts[q.id] = t)"
                 />
               </div>
+              <v-btn v-if="answeredShown.length > shown('answered', answeredShown).length" variant="outlined" class="questions-page__more" @click="showMore('answered')">
+                Show {{ Math.min(PAGE, answeredShown.length - shown('answered', answeredShown).length) }} more of {{ countText(answeredShown.length - shown('answered', answeredShown).length) }}
+              </v-btn>
             </div>
           </v-expand-transition>
         </section>
@@ -395,14 +546,14 @@ onMounted(async () => {
             aria-controls="questions-skipped"
             @click="showSkipped = !showSkipped"
           >
-            Skipped by you ({{ skipped.length }})
+            Skipped by you <span class="questions-page__n">{{ countText(skipped.length) }}</span>
           </v-btn>
           <v-expand-transition>
             <!-- v-show sits on a plain wrapper: .d-flex is display: flex !important and would beat it. -->
             <div v-show="showSkipped" id="questions-skipped">
               <div class="d-flex flex-column ga-3">
                 <KnowledgeQuestionCard
-                  v-for="q in skipped"
+                  v-for="q in (showSkipped ? shown('skipped', skipped) : [])"
                   :key="q.id"
                   :id="`question-${q.id}`"
                   :question="q"
@@ -413,6 +564,9 @@ onMounted(async () => {
                   @box-text="t => (boxTexts[q.id] = t)"
                 />
               </div>
+              <v-btn v-if="skipped.length > shown('skipped', skipped).length" variant="outlined" class="questions-page__more" @click="showMore('skipped')">
+                Show {{ Math.min(PAGE, skipped.length - shown('skipped', skipped).length) }} more of {{ countText(skipped.length - shown('skipped', skipped).length) }}
+              </v-btn>
             </div>
           </v-expand-transition>
         </section>
@@ -427,7 +581,7 @@ onMounted(async () => {
             aria-controls="questions-app-skipped"
             @click="showAppSkipped = !showAppSkipped"
           >
-            Skipped by the app ({{ appSkipped.length }})
+            Skipped by the app <span class="questions-page__n">{{ countText(appSkipped.length) }}</span>
           </v-btn>
           <v-expand-transition>
             <div v-show="showAppSkipped" id="questions-app-skipped">
@@ -436,7 +590,7 @@ onMounted(async () => {
               </p>
               <div class="d-flex flex-column ga-3">
                 <KnowledgeQuestionCard
-                  v-for="q in appSkipped"
+                  v-for="q in (showAppSkipped ? shown('appSkipped', appSkipped) : [])"
                   :key="q.id"
                   :id="`question-${q.id}`"
                   :question="q"
@@ -447,6 +601,9 @@ onMounted(async () => {
                   @box-text="t => (boxTexts[q.id] = t)"
                 />
               </div>
+              <v-btn v-if="appSkipped.length > shown('appSkipped', appSkipped).length" variant="outlined" class="questions-page__more" @click="showMore('appSkipped')">
+                Show {{ Math.min(PAGE, appSkipped.length - shown('appSkipped', appSkipped).length) }} more of {{ countText(appSkipped.length - shown('appSkipped', appSkipped).length) }}
+              </v-btn>
             </div>
           </v-expand-transition>
         </section>
@@ -454,7 +611,7 @@ onMounted(async () => {
     </div>
 
     <!-- Wide screens: the chat beside the list -->
-    <aside class="questions-page__chat">
+    <aside class="questions-page__chat" :class="{ 'questions-page__chat--compact': !chatInUse }">
       <QuestionsChatPanel
         ref="chatPanel"
         variant="panel"
@@ -517,6 +674,13 @@ onMounted(async () => {
       height: calc(100vh - 56px);
       height: calc(100dvh - 56px);
     }
+
+    // Nothing asked yet: the rail is as tall as its prompt and its box, not a 650px empty column.
+    &--compact {
+      @media (min-width: 1280px) {
+        height: auto;
+      }
+    }
   }
 
   // The chat is always on screen at 1280 and wider, so the button that opens it is not needed there.
@@ -530,13 +694,84 @@ onMounted(async () => {
     }
   }
 
-  &__label {
-    margin-bottom: 4px;
+  &__blocking {
+    color: rgb(var(--v-theme-warning));
   }
 
-  &__section-note {
-    margin-bottom: 16px;
-    line-height: 1.5;
+  &__promise {
+    margin: -8px 0 16px;
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__find {
+    max-width: 420px;
+    margin-bottom: 24px;
+  }
+
+  &__section {
+    margin-bottom: 32px;
+  }
+
+  &__h {
+    margin: 0 0 12px;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  // A count beside its label, in the secondary gray.
+  &__n {
+    margin-left: 6px;
+    font-weight: 400;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  &__empty {
+    font-size: 0.875rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__more {
+    margin-top: 12px;
+  }
+
+  &__groups {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  // A group row: a 44px button with its count; open, its cards follow ten at a time.
+  &__group-head {
+    width: 100%;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface));
+    color: inherit;
+    text-align: left;
+    font-size: 0.875rem;
+
+    &:hover {
+      background: rgb(var(--v-theme-surface-bright));
+    }
+  }
+
+  &__group-title {
+    font-weight: 500;
+  }
+
+  &__group-body {
+    padding: 12px 0 16px;
   }
 
   &__note {
@@ -561,7 +796,7 @@ onMounted(async () => {
   }
 
   &__missing-icon {
-    color: rgb(var(--v-theme-primary));
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__missing-btn {

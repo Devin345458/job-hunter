@@ -202,7 +202,7 @@ const chatBoxText = computed(() => {
   <div ref="root" class="qs">
     <article v-for="q in questions" :key="q.id" class="qs__item" :class="{ 'qs__item--blocking': q.blocking }" :data-question-id="q.id">
       <div class="qs__top">
-        <span v-if="q.blocking" class="qs__flag">Blocks approve</span>
+        <span v-if="q.blocking" class="qs__flag">Blocks approval</span>
         <span v-else class="qs__flag qs__flag--soft">Optional</span>
         <v-btn
           variant="text"
@@ -429,8 +429,7 @@ const chatBoxText = computed(() => {
   &__flag {
     font-size: 0.75rem;
     font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    letter-spacing: 0;
     color: rgb(var(--v-theme-warning));
 
     &--soft {

@@ -331,20 +331,13 @@ watch(() => props.pick?.nonce, () => {
 </script>
 
 <template>
-  <v-card variant="outlined" class="question-card" :class="{ 'question-card--waiting': mode === 'pending' && waiting > 0 }">
+  <v-card variant="outlined" class="question-card" :class="{ 'question-card--blocking': mode === 'pending' && question.blocking }">
     <v-card-text class="pa-4 pa-sm-5">
-      <div class="d-flex flex-wrap align-center ga-2 mb-2">
-        <v-chip size="small" variant="tonal" color="secondary" label>{{ kindLabel }}</v-chip>
-        <v-chip
-          v-if="mode === 'pending' && waiting > 0"
-          size="small"
-          variant="tonal"
-          color="warning"
-          prepend-icon="mdi-timer-sand"
-          label
-        >
-          {{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}
-        </v-chip>
+      <!-- What it is about, in gray text: no pill above the heading. Amber only on one that blocks an approval. -->
+      <div class="question-card__top">
+        <span class="question-card__kind">{{ kindLabel }}</span>
+        <span v-if="mode === 'pending' && question.blocking" class="question-card__blocks">Blocks an approval</span>
+        <span v-else-if="mode === 'pending' && waiting > 0" class="question-card__kind">{{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}</span>
         <NuxtLink
           v-if="question.job && !(mode === 'pending' && waiters.length)"
           :to="`/jobs/${question.job.id}`"
@@ -643,10 +636,30 @@ watch(() => props.pick?.nonce, () => {
 
 <style scoped lang="scss">
 .question-card {
-  transition: border-color 0.15s ease;
+  transition: background-color 0.15s ease;
 
-  &--waiting {
-    border-color: rgba(var(--v-theme-warning), 0.45);
+  // The one that blocks an approval keeps a quiet amber edge; every other card is the plain surface.
+  &.question-card--blocking {
+    border-left: 3px solid rgb(var(--v-theme-warning));
+  }
+
+  &__top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    margin-bottom: 6px;
+  }
+
+  &__kind {
+    font-size: 0.8125rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__blocks {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: rgb(var(--v-theme-warning));
   }
 
   &__question {
