@@ -247,13 +247,15 @@ function openQuestionsFor(app: AppRow, job: JobRow, loaded: QuestionRow[]): Ques
  * Review items for applications in the given statuses, best score first. A Decide card (to_decide)
  * shows only while its job still scores at the threshold and is open: a rescore that drops it
  * under, or a closed posting, takes it out of the queue without touching the row.
+ * ids limits it to those applications (the cards an answered question was on, read again).
  */
-export function listReviewItems(statuses: ApplicationStatus[]): ReviewItem[] {
+export function listReviewItems(statuses: ApplicationStatus[], ids?: number[]): ReviewItem[] {
   const db = useDb()
+  if (ids && ids.length === 0) return []
   const rows = db.select({ app: applications, job: jobs })
     .from(applications)
     .innerJoin(jobs, eq(applications.jobId, jobs.id))
-    .where(inArray(applications.status, statuses))
+    .where(ids ? and(inArray(applications.status, statuses), inArray(applications.id, ids)) : inArray(applications.status, statuses))
     .all()
     .filter(r => r.app.status !== 'to_decide' || decideCardVisible(r.job))
   if (rows.length === 0) return []

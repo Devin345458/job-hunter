@@ -32,8 +32,8 @@ const emit = defineEmits<{
   answer: [questionId: number, answer: string]
   skip: [questionId: number]
   prepare: []
-  /** The skill panel saved an answer or the score changed: re-read this application. */
-  refresh: []
+  /** The skill panel saved an answer or the score changed: re-read this application, and every card showing the question it answered. */
+  refresh: [questionId?: number | null]
 }>()
 
 // ── The skill panel: a Missing chip or a requirement that is not Have, tapped in Skills fit ──
@@ -486,7 +486,7 @@ const letterPreview = computed(() => {
       :target="claimTarget"
       :job="{ title: item.job.title, company: item.job.company }"
       :preparing="preparing"
-      @changed="emit('refresh')"
+      @changed="qid => emit('refresh', qid)"
       @prepare="emit('prepare')"
     />
 

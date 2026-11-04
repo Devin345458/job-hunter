@@ -6,6 +6,7 @@ import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, properName, timeAgo } from 
 import { plainError } from '#shared/utils/plain-text'
 import { approveSentence } from '~/components/applications/approve-text'
 import { SENT_STATUSES, formatDay, outcomeLabel } from '#shared/utils/outcomes'
+import { useAnsweredQuestions } from '~/composables/review/answered'
 
 // One application's full record: where it stands, what the pipeline prepared (resume, cover
 // letter, the filled employer form with its screenshot), the evidence check behind every line,
@@ -22,8 +23,8 @@ const app = ref<Detail | null>(null)
 const state = ref<'loading' | 'ready' | 'missing' | 'error'>('loading')
 const loadError = ref<string | null>(null)
 const busy = ref<null | 'prepare' | 'refill' | 'refresh' | 'notes'>(null)
-const savingQuestionId = ref<number | null>(null)
 const notes = ref('')
+const answered = useAnsweredQuestions()
 
 const WORKING = ['preparing', 'approved', 'publishing', 'submitting']
 const REPREPARE = ['preparing', 'needs_input', 'proposed', 'needs_manual', 'submit_failed', 'draft', 'ready']
@@ -73,7 +74,9 @@ async function load(quiet = false) {
     return
   }
   try {
+    const startedAt = Date.now()
     const data = await $fetch<Detail>(`/api/applications/${id.value}`)
+    if (data.review) data.review = { ...data.review, openQuestions: answered.visible(data.review.openQuestions, startedAt) }
     const firstLoad = !app.value
     app.value = data
     if (firstLoad || busy.value !== 'notes') notes.value = data.notes ?? ''
@@ -116,18 +119,25 @@ async function run(kind: 'prepare' | 'refill' | 'refresh') {
   }
 }
 
+/**
+ * The question leaves Questions for you as soon as it is sent. The save re-derives every
+ * application waiting on it before it returns; the page is read again after that, so the question
+ * comes back only when a field truly needs a different answer. A failed save puts it back.
+ */
 async function answer(questionId: number, value: string | null, skip = false) {
-  savingQuestionId.value = questionId
+  const current = app.value?.review
+  if (!current) return
+  answered.start(questionId)
+  app.value = { ...app.value!, review: { ...current, openQuestions: answered.visible(current.openQuestions, Date.now()) } }
   try {
     await $fetch(`/api/questions/${questionId}`, { method: 'PATCH', body: skip ? { status: 'skipped' } : { status: 'answered', answer: value } })
-    await load(true)
+    answered.finish(questionId)
   }
   catch (e: any) {
+    answered.fail(questionId)
     snackbar.notify(e?.data?.statusMessage || e?.message || 'Could not save the answer', 'error', { timeout: -1 })
   }
-  finally {
-    savingQuestionId.value = null
-  }
+  await load(true)
 }
 
 async function saveNotes() {
@@ -306,7 +316,7 @@ const submissionSummary = computed(() => {
         >
           <ReviewQuestions
             :questions="review.openQuestions"
-            :saving-id="savingQuestionId"
+            :saving-id="null"
             @answer="(qid: number, value: string) => answer(qid, value)"
             @skip="(qid: number) => answer(qid, null, true)"
           />

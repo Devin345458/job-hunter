@@ -605,6 +605,9 @@ export function openBlockingQuestionIds(answers: FormAnswer[], snapshot?: FormSn
     .map(q => q.id)
 }
 
+/** The refresh running (or waiting) per application id. */
+const refreshRuns = new Map<number, Promise<unknown>>()
+
 /**
  * Called after Devin answers a question. Re-derives the stored answers from the stored snapshot
  * (no browser): every answer waiting on an answered question takes Devin's answer, and the
@@ -612,6 +615,22 @@ export function openBlockingQuestionIds(answers: FormAnswer[], snapshot?: FormSn
  * Returns the number of answers that changed and the resulting status.
  */
 export async function refreshStoredAnswers(applicationId: number): Promise<{ updated: number; status: string; blockingQuestionIds: number[] }> {
+  // One refresh per application at a time. Two answers saved close together each refresh the
+  // applications that share their questions, and a refresh waits on Claude between reading the
+  // stored answers and writing them back. Run side by side, the later write dropped the other's
+  // filled field, so an answered question came back on the card as one its answer "did not fill".
+  const before = refreshRuns.get(applicationId) ?? Promise.resolve()
+  const run = before.catch(() => {}).then(() => refreshStoredAnswersNow(applicationId))
+  refreshRuns.set(applicationId, run)
+  try {
+    return await run
+  }
+  finally {
+    if (refreshRuns.get(applicationId) === run) refreshRuns.delete(applicationId)
+  }
+}
+
+async function refreshStoredAnswersNow(applicationId: number): Promise<{ updated: number; status: string; blockingQuestionIds: number[] }> {
   const db = useDb()
   const app = db.select().from(applications).where(eq(applications.id, applicationId)).get()
   if (!app) throw new Error(`Application ${applicationId} not found`)

@@ -131,22 +131,18 @@ async function confirmReject(code: RejectReasonCode, text: string | null, skills
   }
 }
 
-const savingQuestionId = ref<number | null>(null)
+/**
+ * The question leaves every card that shows it as soon as it is sent (useReviewQueue), so there is
+ * no spinner to hold; a failed save puts it back and says why.
+ */
 async function answer(questionId: number, value: string | null, skip = false) {
   if (!item.value) return
-  savingQuestionId.value = questionId
   try {
-    const pending = queue.answerQuestion(item.value.applicationId, questionId, value, skip)
-    await new Promise(r => setTimeout(r, 350))
-    savingQuestionId.value = null
-    await pending
+    await queue.answerQuestion(item.value.applicationId, questionId, value, skip)
     health.refresh()
   }
   catch (e: any) {
     snackbar.notify(e?.message || 'Could not save the answer', 'error', { timeout: -1 })
-  }
-  finally {
-    savingQuestionId.value = null
   }
 }
 </script>
@@ -186,7 +182,7 @@ async function answer(questionId: number, value: string | null, skip = false) {
         :approving="approving"
         :applying="applying"
         :refreshing="queue.refreshing.value.has(item.applicationId)"
-        :saving-question-id="savingQuestionId"
+        :saving-question-id="null"
         :preparing="preparing"
         @approve="approve"
         @apply="apply"
@@ -194,7 +190,7 @@ async function answer(questionId: number, value: string | null, skip = false) {
         @answer="(qid, a) => answer(qid, a)"
         @skip="qid => answer(qid, null, true)"
         @prepare="prepareAgain"
-        @refresh="queue.fetchOne(item.applicationId)"
+        @refresh="qid => item && queue.answeredElsewhere(item.applicationId, qid)"
       />
       <ReviewRejectDialog
         v-model="rejectOpen"
