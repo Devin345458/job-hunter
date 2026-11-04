@@ -207,8 +207,8 @@ export function useReviewQueue() {
 
   /**
    * Reads these cards again in one request. A card the queue no longer returns (its status left
-   * the queue, or a rescore took a Decide card under the threshold) is read on its own, so the open
-   * card stays and a removed one goes.
+   * the queue, or a rescore took a Decide card under the threshold) is read on its own instead:
+   * it keeps its place until the next full load, and one that no longer exists (404) leaves.
    */
   async function reread(ids: number[]) {
     const want = [...new Set(ids)]

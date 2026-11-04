@@ -372,10 +372,11 @@ const letterPreview = computed(() => {
       <div v-if="formQs.length" class="rc__block rc__block--after">
         <h2 class="rc__h rc__h--plain">The form asks</h2>
         <p class="rc__help">Answer now or after you apply. Your answers are saved to your profile and fill every form that asks.</p>
+        <!-- The progress line shows once, under the last question section on the card. -->
         <ReviewQuestions
           :questions="formQs"
           :saving-id="savingQuestionId"
-          :refreshing="refreshing"
+          :refreshing="refreshing && !skillQs.length"
           @answer="(id, a) => emit('answer', id, a)"
           @skip="id => emit('skip', id)"
         />
