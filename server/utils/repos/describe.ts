@@ -5,7 +5,7 @@ import { buildRecordNames, fallbackDescription, nameWords as words, PART_SUFFIX,
 import { AiBudgetExceeded, aiStructured, fallbackModel } from '../ai'
 import { scrubDashes } from '../apply/text'
 import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
-import { savedIdentities } from './settings'
+import { APP_REPO, APP_REPO_DESCRIPTION, isAppRepo, savedIdentities } from './settings'
 
 // A short generic description of each repo ("car wash management software", "a telehealth
 // application", "an algorithmic trading engine I built on my own"), so answer text describes the
@@ -37,13 +37,17 @@ function nowText() {
 
 export function loadRepoDescriptions(): Record<string, RepoDescription> {
   const row = useDb().select().from(appSettings).where(eq(appSettings.key, KEY)).get()
+  let map: Record<string, RepoDescription> = {}
   try {
     const v = JSON.parse(row?.valueJson ?? '{}')
-    return v && typeof v === 'object' && !Array.isArray(v) ? v : {}
+    if (v && typeof v === 'object' && !Array.isArray(v)) map = v
   }
-  catch {
-    return {}
-  }
+  catch {}
+  // This app's own repo always reads as the system he designed and directed agents to build,
+  // unless he wrote his own wording. It is never generated: the check would reject "Claude Code".
+  const app = Object.keys(map).find(k => isAppRepo(k)) ?? APP_REPO
+  if (map[app]?.by !== 'devin' || !map[app]?.text) map[app] = { ...(map[app] ?? {}), text: APP_REPO_DESCRIPTION, by: 'generated', at: map[app]?.at ?? nowText() }
+  return map
 }
 
 function saveRepoDescriptions(map: Record<string, RepoDescription>) {
@@ -162,7 +166,7 @@ export async function describeRepos(opts: { fullNames?: string[]; force?: boolea
   const map = loadRepoDescriptions()
   const logins = new Set((savedIdentities()?.logins ?? []).map(l => l.toLowerCase()))
   const rows = db.select().from(repoSources).where(opts.fullNames?.length ? inArray(repoSources.fullName, opts.fullNames) : eq(repoSources.included, true)).all()
-  const due = rows.filter(r => map[r.fullName]?.by !== 'devin' && (opts.force || !map[r.fullName]?.text))
+  const due = rows.filter(r => !isAppRepo(r.fullName) && map[r.fullName]?.by !== 'devin' && (opts.force || !map[r.fullName]?.text))
   const result = { written: 0, kept: rows.length - due.length, failed: 0 }
   if (!due.length) return result
   // Whole repo and owner names ("timbermart", "washwerk"), which a lowercase word may not be. Their

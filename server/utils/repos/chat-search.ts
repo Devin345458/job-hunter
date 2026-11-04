@@ -3,7 +3,7 @@ import { repoCommits, repoSources } from '../../db/schema'
 import type { GithubChatSearch, GithubFinding } from '#shared/types/repos'
 import { CodeSearchLimited, GithubApiError, isSsoError, isSsoSkip, readTokens, searchCode, tokenAccounts, tokenAt } from './github'
 import { anchorPattern, cleanTerms, messageBody, pathMatches, searchEvidence, withSignatures, type TermSet } from './search'
-import { currentIdentities, isAppRepo, savedIdentities, storedFind, type RepoRow } from './settings'
+import { APP_REPO, APP_REPO_DESCRIPTION, APP_REPO_FRAMING, currentIdentities, isAppRepo, savedIdentities, storedFind, type RepoRow } from './settings'
 
 // The question chat's GitHub search (server/utils/question-chat.ts), in order:
 // 1. Devin's indexed commits: messages and changed file paths. No diffs, so a chat turn takes
@@ -68,8 +68,9 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   const signatureText = opts.signatureText ?? (opts.subject?.trim() || context)
   const terms = withSignatures(cleanTerms(rawTerms, 20), signatureText)
   const db = useDb()
-  // This app's own repo names every skill as data, so it is never searched (isAppRepo).
-  const included = db.select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
+  // This app's own repo names every skill as data: searchEvidence reads its commits only for a
+  // subject that names one of its topics, and code search never covers it.
+  const included = db.select().from(repoSources).where(eq(repoSources.included, true)).all()
   const find = storedFind()
   const found = find?.at ? find.byRepo : null
   const indexed = included.filter(r => r.indexedAt)
@@ -83,13 +84,15 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
       codeSearched: [],
       notIndexed: included.length - indexed.length,
       codeSkipped: 0,
-      offWithCommits: found ? Object.entries(found).filter(([name, n]) => n > 0 && !isAppRepo(name) && !included.some(r => r.fullName === name)).length : 0,
+      offWithCommits: found ? Object.entries(found).filter(([name, n]) => n > 0 && !included.some(r => r.fullName === name)).length : 0,
       codeNote: null,
     },
   }
 
   // 1 and 2: his indexed commits (messages and paths) and the repo facts.
   const evidence = await searchEvidence(terms, log, { diffs: false, anchors: { subject: opts.subject ?? null, text: context, signatureText } })
+  // This app's repo was looked at only when the subject named one of its topics.
+  result.coverage.indexed = indexed.map(r => r.fullName).filter(n => !isAppRepo(n) || !!evidence.appRepo)
   // Strongest first, taken in turn from each repo so one busy repo does not fill the list.
   const byRepo = new Map<string, typeof evidence.hits>()
   for (const h of evidence.hits) byRepo.set(h.repo, [...(byRepo.get(h.repo) ?? []), h])
@@ -109,7 +112,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
       ? `files: ${h.paths.slice(0, 3).join(', ')}${h.paths.length > 3 ? ` and ${h.paths.length - 3} more` : ''}`
       : messageMatch(messageBody(messages.get(h.sha) ?? h.subject), textTerms),
   }))
-  result.pathSummaries = pathSummaries(indexed.map(r => r.fullName), evidence.anchors.paths)
+  result.pathSummaries = pathSummaries(indexed.map(r => r.fullName).filter(n => !isAppRepo(n)), evidence.anchors.paths)
   const dependencies: GithubFinding[] = evidence.dependencies.slice(0, CHAT_SEARCH_LIMITS.dependencies).map(d => ({
     kind: 'dependency',
     repo: d.repo,
@@ -139,7 +142,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   }
   catch {}
   const eligible = included
-    .filter(r => r.tokenIndex != null && !isSsoSkip(r.skipReason))
+    .filter(r => r.tokenIndex != null && !isSsoSkip(r.skipReason) && !isAppRepo(r.fullName))
     .filter(r => repoCommitCount(r, found) > 0 || personal.has(r.owner.toLowerCase()))
     .sort((a, b) => repoCommitCount(b, found) - repoCommitCount(a, found) || (b.pushedAt ?? '').localeCompare(a.pushedAt ?? ''))
   if (!words.length) {
@@ -291,6 +294,7 @@ export function githubPromptSection(s: GithubChatSearch): string {
   if (commits.length) {
     lines.push('\nHis own commits (authored by Devin, checked against his emails and logins):')
     commits.forEach((f, i) => lines.push(`[C${i + 1}] ${f.repo} | ${f.date} | ${f.title} | matched: ${f.detail}`))
+    if (commits.some(f => isAppRepo(f.repo))) lines.push(`${APP_REPO} is ${APP_REPO_DESCRIPTION.replace(/\bI\b/g, 'he')}. ${APP_REPO_FRAMING}`)
   }
   for (const p of s.pathSummaries) lines.push(`${p.repo}: ${p.commits} of his commits change ${p.files.join(', ')}, from ${p.first} to ${p.last}`)
   if (files.length) {

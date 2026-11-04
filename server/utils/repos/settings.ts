@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, like, lt, or, sql } from 'drizzle-orm'
 import { appSettings, pipelineRuns, repoCommits, repoFacts, repoSources, repoSuggestions } from '../../db/schema'
-import type { RepoFindView, RepoIdentities, RepoOwnerGroup, RepoSettingsView, RepoTokenView, RepoView } from '#shared/types/repos'
+import type { AppRepoTopic, AppRepoView, RepoFindView, RepoIdentities, RepoOwnerGroup, RepoSettingsView, RepoTokenView, RepoView } from '#shared/types/repos'
 import { loadKnowledge, profileValue } from '../knowledge'
 import { isSsoSkip, tokenAccounts, readTokens, type TokenAccount } from './github'
 import { removeRepoCache } from './git'
@@ -13,25 +13,97 @@ import { loadRepoDescriptions, noteGithubDescriptions, type RepoDescription } fr
 // off until he turns it on.
 
 // ── This app's own repo ──
-// job-hunter names every skill as data (prompts, examples, skill lists), so its commits and files
-// match every search. It is never switched on, never indexed, and never searched.
+// job-hunter names every skill as data (prompts, seed data, test fixtures, eval sets, signature
+// lists, job postings in tests), so plain keyword matching made every subject look like a Yes. It is
+// off by default and never in a bulk turn-on. Switched on, it counts only for a curated list of
+// topics (appRepoTopics, Settings beside the repo): a commit from it is a hit only for a subject
+// that names one of them (appRepoScope in search.ts), its diffs and files are never read, and code
+// search never covers it. Claude Code agents Devin directed wrote most of its code, so answer text
+// says he designed it and directed agents to build it (APP_REPO_FRAMING).
 
 export const APP_REPO = 'Devin345458/job-hunter'
-export const APP_REPO_NOTE = 'This app\'s own repo names every skill as data, so it never counts as evidence.'
+export const APP_REPO_NOTE = 'This app\'s own repo names every skill as data, so it counts only for the topics below. Claude Code agents you directed wrote most of its commits, so answers say you designed it and directed agents to build it.'
+/** What answer text calls it (repo_descriptions), unless Devin writes his own. */
+export const APP_REPO_DESCRIPTION = 'a personal AI job-search system I designed and built by directing Claude Code agents'
+/** How its commits were made, as a fact the records carry. */
+export const APP_REPO_FACT = 'Devin designed this system and directed Claude Code agents, which wrote most of its code.'
+/** The honest framing every prompt that shows its commits carries. */
+export const APP_REPO_HOW_TO_SAY = 'Say he designed it and directed agents to build it, never that he wrote or coded it by hand.'
+export const APP_REPO_FRAMING = `${APP_REPO_FACT} ${APP_REPO_HOW_TO_SAY}`
 
 export function isAppRepo(fullName: string | null | undefined): boolean {
   return String(fullName ?? '').toLowerCase() === APP_REPO.toLowerCase()
 }
 
-/** Switches this app's repo off and forgets anything indexed from it (a copy that had it on). */
-export function excludeAppRepo() {
+const APP_TOPICS_KEY = 'app_repo_topics'
+
+/** The starting topics: the AI and agent work counts up to Yes, the frameworks and tools up to Some experience. */
+export const DEFAULT_APP_REPO_TOPICS: AppRepoTopic[] = [
+  { name: 'LLM integration', cap: 'yes' },
+  { name: 'AI agents and agentic workflows', cap: 'yes' },
+  { name: 'Claude and the Anthropic API', cap: 'yes' },
+  { name: 'Claude Agent SDK', cap: 'yes' },
+  { name: 'prompt engineering and prompt caching', cap: 'yes' },
+  { name: 'structured outputs', cap: 'yes' },
+  { name: 'AI evaluation', cap: 'yes' },
+  { name: 'retrieval and evidence search', cap: 'yes' },
+  { name: 'browser automation with Playwright', cap: 'yes' },
+  { name: 'job queues and background workers', cap: 'yes' },
+  { name: 'Nuxt', cap: 'some' },
+  { name: 'Vue', cap: 'some' },
+  { name: 'Vuetify', cap: 'some' },
+  { name: 'TypeScript', cap: 'some' },
+  { name: 'SQLite and Drizzle', cap: 'some' },
+  { name: 'GitHub API', cap: 'some' },
+  { name: 'Docker', cap: 'some' },
+  { name: 'Coolify deploys', cap: 'some' },
+]
+
+export function cleanAppRepoTopics(input: unknown): AppRepoTopic[] {
+  const list = Array.isArray(input) ? input : []
+  const out = new Map<string, AppRepoTopic>()
+  for (const raw of list) {
+    const name = String((raw as any)?.name ?? raw ?? '').replace(/[\u2013\u2014]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+    if (name.length < 2 || out.has(name.toLowerCase())) continue
+    out.set(name.toLowerCase(), { name, cap: (raw as any)?.cap === 'yes' ? 'yes' : 'some' })
+    if (out.size >= 40) break
+  }
+  return [...out.values()]
+}
+
+/** The topics in force: what Devin saved, else the starting list. */
+export function appRepoTopics(): AppRepoTopic[] {
+  return appRepoTopicsSaved() ?? DEFAULT_APP_REPO_TOPICS
+}
+
+function appRepoTopicsSaved(): AppRepoTopic[] | null {
+  const row = useDb().select().from(appSettings).where(eq(appSettings.key, APP_TOPICS_KEY)).get()
+  if (!row) return null
+  try {
+    return cleanAppRepoTopics(JSON.parse(row.valueJson)?.topics)
+  }
+  catch {
+    return null
+  }
+}
+
+/** Saves his list. null puts the starting list back. */
+export function saveAppRepoTopics(input: unknown | null): AppRepoTopic[] {
   const db = useDb()
-  const row = db.select().from(repoSources).where(sql`lower(${repoSources.fullName}) = ${APP_REPO.toLowerCase()}`).get()
-  if (!row) return
-  const indexed = db.select({ id: repoCommits.id }).from(repoCommits).where(eq(repoCommits.repo, row.fullName)).limit(1).get()
-  if (!row.included && !row.indexedAt && !indexed) return
-  db.update(repoSources).set({ included: false, updatedAt: nowSqlText() }).where(eq(repoSources.fullName, row.fullName)).run()
-  forgetRepoData(row.fullName)
+  if (input === null) {
+    db.delete(appSettings).where(eq(appSettings.key, APP_TOPICS_KEY)).run()
+    return DEFAULT_APP_REPO_TOPICS
+  }
+  const topics = cleanAppRepoTopics(input)
+  const valueJson = JSON.stringify({ topics })
+  db.insert(appSettings).values({ key: APP_TOPICS_KEY, valueJson, updatedAt: nowSqlText() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSqlText() } }).run()
+  return topics
+}
+
+export function appRepoView(): AppRepoView {
+  const saved = appRepoTopicsSaved()
+  return { fullName: APP_REPO, topics: saved ?? DEFAULT_APP_REPO_TOPICS, defaults: DEFAULT_APP_REPO_TOPICS, edited: !!saved }
 }
 
 const IDENTITIES_KEY = 'repo_identities'
@@ -261,7 +333,6 @@ export async function refreshRepoList(accounts?: TokenAccount[]): Promise<{ acco
         .onConflictDoUpdate({ target: repoSources.fullName, set: values }).run()
     }
   }
-  excludeAppRepo()
   // Input for the generic descriptions answer text uses instead of repo names (describe.ts).
   noteGithubDescriptions(githubDescriptions)
   // Only forget repos when every token answered. A failed token must not wipe its repos. Repos the
@@ -296,7 +367,6 @@ export function setRepoIncluded(fullName: string, included: boolean): RepoRow {
   const db = useDb()
   const row = db.select().from(repoSources).where(eq(repoSources.fullName, fullName)).get()
   if (!row) throw createError({ statusCode: 404, statusMessage: 'That repo is not in the list. Refresh the list and try again.' })
-  if (included && isAppRepo(fullName)) throw createError({ statusCode: 400, statusMessage: APP_REPO_NOTE })
   db.update(repoSources).set({ included, updatedAt: nowSqlText() }).where(eq(repoSources.fullName, fullName)).run()
   if (!included) forgetRepoData(fullName)
   return db.select().from(repoSources).where(eq(repoSources.fullName, fullName)).get()!
@@ -337,7 +407,7 @@ export function setReposIncludedBulk(opts: { owner?: string | null; included: bo
 }
 
 export function includedRepos(): RepoRow[] {
-  return useDb().select().from(repoSources).where(eq(repoSources.included, true)).all().filter(r => !isAppRepo(r.fullName))
+  return useDb().select().from(repoSources).where(eq(repoSources.included, true)).all()
 }
 
 function toRepoView(r: RepoRow, found: Record<string, number> | null, descriptions?: Record<string, RepoDescription>): RepoView {
@@ -349,7 +419,8 @@ function toRepoView(r: RepoRow, found: Record<string, number> | null, descriptio
     isFork: r.isFork,
     archived: r.archived,
     sizeMb: r.sizeKb != null ? Math.round((r.sizeKb / 1024) * 10) / 10 : null,
-    included: !!r.included && !isAppRepo(r.fullName),
+    included: !!r.included,
+    appRepo: isAppRepo(r.fullName),
     note: isAppRepo(r.fullName) ? APP_REPO_NOTE : null,
     pushedAt: r.pushedAt,
     htmlUrl: r.htmlUrl,
@@ -366,8 +437,6 @@ function toRepoView(r: RepoRow, found: Record<string, number> | null, descriptio
 export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promise<RepoSettingsView> {
   const db = useDb()
   const descriptions = loadRepoDescriptions()
-  // A copy that had this app's own repo on (before it was excluded) loses it on the next visit.
-  excludeAppRepo()
   const configured = readTokens().length > 0
   let listError: string | null = null
   let accounts: TokenAccount[] = []
@@ -467,5 +536,6 @@ export async function repoSettingsView(opts: { refresh?: boolean } = {}): Promis
     ssoOrgs: [...ssoOrgs.values()].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })),
     lastIndex: lastIndex ? { id: lastIndex.id, status: lastIndex.status, startedAt: lastIndex.startedAt, finishedAt: lastIndex.finishedAt } : null,
     listError,
+    appRepo: appRepoView(),
   }
 }

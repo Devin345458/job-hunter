@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { RepoOwnerGroup, RepoSettingsView, RepoView } from '#shared/types/repos'
+import type { AppRepoTopic, RepoOwnerGroup, RepoSettingsView, RepoView } from '#shared/types/repos'
 
 // Settings > GitHub evidence. The repos the read tokens can see, grouped by owner, each with a
 // switch: his own repos are on by default except forks, every organization's and other person's repo is off,
@@ -110,7 +110,7 @@ async function toggle(g: RepoOwnerGroup, r: RepoView, value: boolean | null) {
       r.commitCount = null
     }
     snackbar.info(next
-      ? `${r.name} is on. Its commits are read at the next index.`
+      ? `${r.name} is on. Its commits are read at the next index${r.appRepo ? ' and count only for its topics' : ''}.`
       : `${r.name} is off. Everything indexed from it was deleted.`)
   }
   catch (e: any) {
@@ -120,6 +120,63 @@ async function toggle(g: RepoOwnerGroup, r: RepoView, value: boolean | null) {
   finally {
     switching.value[r.fullName] = false
   }
+}
+
+// ── Topics this app's own repo counts for ──
+// Its commits name every skill as data, so they count only for a subject that names one of these.
+// "Up to Yes" topics can carry a Yes on their own; the others give Some experience at most.
+const topicText = ref('')
+const topicCap = ref<AppRepoTopic['cap']>('yes')
+const savingTopics = ref(false)
+const CAP_ITEMS = [
+  { title: 'Up to Yes', value: 'yes' },
+  { title: 'Up to Some experience', value: 'some' },
+]
+const topicGroups = computed(() => {
+  const topics = data.value?.appRepo.topics ?? []
+  return [
+    { cap: 'yes' as const, label: 'Up to Yes', other: 'Up to Some experience', topics: topics.filter(t => t.cap === 'yes') },
+    { cap: 'some' as const, label: 'Up to Some experience', other: 'Up to Yes', topics: topics.filter(t => t.cap === 'some') },
+  ]
+})
+
+async function saveTopics(topics: AppRepoTopic[] | null, done: string) {
+  if (!data.value) return
+  savingTopics.value = true
+  try {
+    data.value.appRepo = await $fetch<RepoSettingsView['appRepo']>('/api/repos/app-topics', { method: 'PUT', body: topics ? { topics } : { reset: true } })
+    snackbar.info(done)
+    return true
+  }
+  catch (e: any) {
+    snackbar.notify(`The topics did not save: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
+    return false
+  }
+  finally {
+    savingTopics.value = false
+  }
+}
+
+async function addTopic() {
+  const name = topicText.value.replace(/\s+/g, ' ').trim()
+  if (!name || !data.value) return
+  const topics = data.value.appRepo.topics
+  if (topics.some(t => t.name.toLowerCase() === name.toLowerCase())) {
+    snackbar.info(`${name} is already a topic.`)
+    return
+  }
+  if (await saveTopics([...topics, { name, cap: topicCap.value }], `Added ${name}. The next suggestion run uses it.`)) topicText.value = ''
+}
+
+function removeTopic(name: string) {
+  if (!data.value) return
+  saveTopics(data.value.appRepo.topics.filter(t => t.name !== name), `Removed ${name}.`)
+}
+
+function moveTopic(t: AppRepoTopic) {
+  if (!data.value) return
+  const cap = t.cap === 'yes' ? 'some' : 'yes'
+  saveTopics(data.value.appRepo.topics.map(x => (x.name === t.name ? { ...x, cap } : x)), `${t.name} now counts ${cap === 'yes' ? 'up to Yes' : 'up to Some experience'}.`)
 }
 
 // ── What answers call each repo ──
@@ -566,6 +623,51 @@ onMounted(async () => {
                         </div>
                         <span v-if="r.included && r.indexError" class="ghe__repo-error">{{ r.indexError }}</span>
                         <span v-if="r.note" class="ghe__repo-note">{{ r.note }}</span>
+                        <div v-if="r.appRepo && data.appRepo" class="ghe__topics" role="group" :aria-label="`Topics ${r.name} counts for`">
+                          <div v-for="grp in topicGroups" :key="grp.cap" class="ghe__topic-group">
+                            <span class="ghe__topic-label">{{ grp.label }}</span>
+                            <div class="ghe__topic-chips">
+                              <v-chip
+                                v-for="t in grp.topics"
+                                :key="t.name"
+                                size="small"
+                                variant="tonal"
+                                :color="grp.cap === 'yes' ? 'primary' : undefined"
+                                closable
+                                :disabled="savingTopics"
+                                :close-label="`Remove ${t.name}`"
+                                :aria-label="`${t.name}: move to ${grp.other}`"
+                                class="ghe__topic"
+                                @click="moveTopic(t)"
+                                @click:close="removeTopic(t.name)"
+                              >
+                                {{ t.name }}
+                              </v-chip>
+                              <span v-if="!grp.topics.length" class="ghe__muted">none</span>
+                            </div>
+                          </div>
+                          <p class="ghe__topic-hint">Tap a topic to move it to the other level.<template v-if="data.appRepo.edited"> <button type="button" class="ghe__topic-reset" :disabled="savingTopics" @click="saveTopics(null, 'The starting topics are back.')">Put the starting topics back</button></template></p>
+                          <form class="ghe__topic-add" @submit.prevent="addTopic">
+                            <v-text-field
+                              v-model="topicText"
+                              label="Add a topic"
+                              placeholder="Model Context Protocol"
+                              maxlength="60"
+                              density="compact"
+                              hide-details
+                              class="ghe__topic-field"
+                            />
+                            <v-select
+                              v-model="topicCap"
+                              :items="CAP_ITEMS"
+                              label="Counts"
+                              density="compact"
+                              hide-details
+                              class="ghe__topic-cap"
+                            />
+                            <v-btn type="submit" color="primary" variant="tonal" height="40" :loading="savingTopics" :disabled="!topicText.trim()">Add</v-btn>
+                          </form>
+                        </div>
                         <form v-if="editingDesc === r.fullName" class="ghe__desc-edit" @submit.prevent="saveDescription(r)">
                           <v-text-field
                             v-model="descText"
@@ -595,7 +697,7 @@ onMounted(async () => {
                         density="compact"
                         class="ghe__switch"
                         :loading="switching[r.fullName] ? 'success' : false"
-                        :disabled="!!switching[r.fullName] || !!r.note"
+                        :disabled="!!switching[r.fullName]"
                         :aria-label="`Use ${r.fullName} for GitHub evidence`"
                         @update:model-value="toggle(g, r, $event)"
                       />
@@ -956,9 +1058,73 @@ onMounted(async () => {
     overflow-wrap: anywhere;
   }
 
-  // A 44px tap area around the switch, which Vuetify draws at 40px.
+  &__topics {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  &__topic-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  &__topic-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__topic-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  &__topic {
+    max-width: 100%;
+  }
+
+  &__topic-hint {
+    margin: 0;
+    font-size: 0.75rem;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__topic-reset {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: rgb(var(--v-theme-primary));
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
+  &__topic-add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__topic-field {
+    flex: 1 1 220px;
+    min-width: 0;
+  }
+
+  &__topic-cap {
+    flex: 0 1 220px;
+    min-width: 180px;
+  }
+
+  // A 44px tap area around the switch, which Vuetify draws at 40px. The minimum width keeps a row
+  // with wide content (the app repo's topic chips) from squeezing it out of line.
   &__switch {
     flex: 0 0 auto;
+    min-width: 52px;
 
     :deep(.v-selection-control) {
       min-height: 48px;

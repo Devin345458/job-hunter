@@ -95,7 +95,9 @@ export interface RepoView {
   sizeMb: number | null
   /** Switched on. A repo is on by default only when one of his own logins owns it and it is not a fork. */
   included: boolean
-  /** Set for a repo that can never be switched on (this app's own repo), saying why. */
+  /** This app's own repo: it counts only for the topics in RepoSettingsView.appRepo. */
+  appRepo: boolean
+  /** A plain note shown under the repo (this app's own repo says why it counts only for its topics). */
   note: string | null
   pushedAt: string | null
   htmlUrl: string | null
@@ -112,6 +114,27 @@ export interface RepoView {
   description: string | null
   /** generated, or devin when he wrote or corrected it in Settings. */
   descriptionBy: 'generated' | 'devin' | null
+}
+
+/**
+ * A topic this app's own repo counts for. Its commits are a hit only for a subject that names one
+ * of these topics, since the repo holds every skill name as data (prompts, seed data, fixtures).
+ * cap: the most its commits support on their own: yes for the AI and agent work Devin designed and
+ * directed, some (Some experience) for frameworks the agents wrote in.
+ */
+export interface AppRepoTopic {
+  name: string
+  cap: 'yes' | 'some'
+}
+
+export interface AppRepoView {
+  /** owner/name */
+  fullName: string
+  topics: AppRepoTopic[]
+  /** The starting list, for putting it back. */
+  defaults: AppRepoTopic[]
+  /** False while his saved list is the starting list. */
+  edited: boolean
 }
 
 export interface RepoOwnerGroup {
@@ -195,4 +218,6 @@ export interface RepoSettingsView {
   lastIndex: { id: number; status: string; startedAt: string; finishedAt: string | null } | null
   /** Shown when the list of repos could not be fetched. */
   listError: string | null
+  /** This app's own repo and the topics it counts for. */
+  appRepo: AppRepoView
 }

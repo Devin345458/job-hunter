@@ -5,7 +5,7 @@ import { repoCommits, repoFacts, repoSources } from '../../db/schema'
 import { commitLogins, isSsoError, repoLanguages, ssoMessage, tokenAccounts, tokenAt } from './github'
 import { findMyRepos } from './commit-search'
 import { gitOk, prepareRepoCache, remoteUrl, repoCacheDir, repoCacheRoot, runGit } from './git'
-import { MAX_REPO_KB, currentIdentities, findIsStale, forgetRepoData, refreshRepoList, saveIdentityCandidates, type RepoRow } from './settings'
+import { MAX_REPO_KB, currentIdentities, findIsStale, forgetRepoData, isAppRepo, refreshRepoList, saveIdentityCandidates, type RepoRow } from './settings'
 
 // repos:index. For each repo switched on in Settings it keeps:
 // - a partial clone (commits and trees only) in <dataDir>/repo-cache, updated with fetch later
@@ -310,10 +310,13 @@ export async function indexRepo(row: RepoRow, ids: Identities, log: (m: string) 
     const allCount = Number((await runGit(['rev-list', '--all', '--no-merges', '--count'], { cwd: dir })).stdout.trim()) || null
 
     // The blobs his commits changed, minus what the clone already holds, fetched by id in batches.
+    // This app's own repo keeps commit messages and paths only: its files hold every skill name as
+    // data, so neither its diffs nor its manifests are ever read.
+    const metadataOnly = isAppRepo(row.fullName)
     const wanted: string[] = []
     const seenOid = new Set<string>()
     for (const c of commits) {
-      if (c.files.length >= LARGE_COMMIT_FILES) continue
+      if (metadataOnly || c.files.length >= LARGE_COMMIT_FILES) continue
       for (const f of c.files) {
         if (!isSearchablePath(f.path)) continue
         for (const oid of [f.oldOid, f.newOid]) {
@@ -330,7 +333,7 @@ export async function indexRepo(row: RepoRow, ids: Identities, log: (m: string) 
         const m = /^\d{6} blob ([0-9a-f]{40,64})\t(.+)$/.exec(l)
         return m ? { oid: m[1]!, path: m[2]! } : null
       })
-      .filter((m): m is { oid: string; path: string } => !!m && isManifest(m.path))
+      .filter((m): m is { oid: string; path: string } => !metadataOnly && !!m && isManifest(m.path))
       .sort((a, b) => a.path.split('/').length - b.path.split('/').length || a.path.localeCompare(b.path))
       .slice(0, MAX_MANIFESTS)
     for (const m of manifests) if (!seenOid.has(m.oid)) {

@@ -19,7 +19,8 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { isLegacyQuestion, parseYesNo, takesExample, type QuestionRow } from './questions'
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
-import { cleanTerms, messageBody, type TermSet } from './repos/search'
+import { appRepoScope, cleanTerms, messageBody, type TermSet } from './repos/search'
+import { APP_REPO_FACT, APP_REPO_HOW_TO_SAY, isAppRepo } from './repos/settings'
 import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
 // "Draft from my records": a first-person draft for a skill, experience, or written question,
@@ -163,7 +164,8 @@ function commitRecords(commits: CommitRef[]): EvidenceRecord[] {
     return {
       id: `C${i + 1}`,
       kind: 'commit',
-      text: `${c.repo}\n${c.title}\n${body}`,
+      // This app's own commits carry how they were made, so the draft and its checks frame them honestly.
+      text: `${c.repo}\n${c.title}\n${body}${isAppRepo(c.repo) ? ` (${APP_REPO_FACT})` : ''}`,
       source: { kind: 'commit', label: c.repo, detail: c.title, date: c.date, url: c.url },
     }
   })
@@ -658,7 +660,7 @@ function roleLines(roles: RoleMention[]): string {
 
 function recordLines(records: EvidenceRecord[], kind: RecordSourceKind, described?: Record<string, { text: string }>): string {
   return records.filter(r => r.kind === kind).map((r) => {
-    if (kind === 'commit') return `[${r.id}] ${r.source.label} (describe it as: ${described?.[r.source.label]?.text || 'a client project'}) | ${r.source.date ?? 'date unknown'} | ${r.text.split('\n').slice(2).join(' ')}`
+    if (kind === 'commit') return `[${r.id}] ${r.source.label} (describe it as: ${described?.[r.source.label]?.text || 'a client project'}${isAppRepo(r.source.label) ? `. ${APP_REPO_HOW_TO_SAY}` : ''}) | ${r.source.date ?? 'date unknown'} | ${r.text.split('\n').slice(2).join(' ')}`
     if (kind === 'memory') return `[${r.id}] ${r.source.date ?? 'date unknown'}, ${r.source.detail}\n"""\n${r.text}\n"""`
     return `[${r.id}] """${r.text}"""`
   }).join('\n')
@@ -841,7 +843,11 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
       usedOf('memory') ? nounCount(usedOf('memory'), 'past Claude session', 'past Claude sessions') : null,
       usedOf('said') ? 'what you said here' : null,
     ].filter((p): p is string => !!p)
-    const level: RecordsDraft['level'] = box === 'example' ? (out.level === 'Yes' ? 'Yes' : 'Some experience') : null
+    // This app's repo alone supports a framework topic as Some experience at most (agents he directed wrote it).
+    const appOnly = kept.length > 0 && kept.every(s => s.sources.every(src => (src.kind === 'commit' && isAppRepo(src.label))
+      || (src.kind === 'aggregate' && !!footprint && footprint.directed === footprint.commits)))
+    const capped = appOnly && appRepoScope(subject)?.cap === 'some'
+    const level: RecordsDraft['level'] = box === 'example' ? (out.level === 'Yes' && !capped ? 'Yes' : 'Some experience') : null
     const reply = [
       `Drafted from ${listJoin(parts)}. Each sentence shows its source under the draft; check them, edit, then save.`,
       droppedCount ? `I left out ${nounCount(droppedCount, 'sentence', 'sentences')} that no record backed.` : null,
