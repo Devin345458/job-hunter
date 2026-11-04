@@ -3,7 +3,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { z } from 'zod'
 import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
-import { applications, appSettings, jobs, questions } from '../db/schema'
+import { applications, appSettings, jobs, knowledgeEntries, questions } from '../db/schema'
 import type { FormAnswer, GapAnalysis, Requirement } from '#shared/types/pipeline'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
 import { aiStructured, cachedPrompt, fallbackModel } from './ai'
@@ -52,6 +52,11 @@ export interface AskInput {
   /** True when an application cannot be approved until this is answered. */
   blocking?: boolean
   category?: string
+  /**
+   * The scoring call's codeShowable for this requirement, when it judged one. A skill or experience
+   * question's section (Skills or Experience) is decided from the subject with this as a tiebreak.
+   */
+  codeShowable?: boolean
 }
 
 export function dedupeKeyOf(kind: string, subject: string) {
@@ -90,6 +95,11 @@ export function askQuestion(input: AskInput): QuestionRow {
     const same = sameSkillQuestion(input.subject)
     if (same) return reuse(same)
   }
+  // A skill or experience answer is filed by what the subject is, decided here once for the
+  // question, whatever key the caller suggested: Docker under Skills, fintech under Experience.
+  const skillTarget = input.kind === 'knows' || input.kind === 'has_done'
+    ? subjectTarget(input.subject, input.kind, input.codeShowable ?? codeFlagOf(input.context))
+    : null
   const row = db.insert(questions).values({
     question: input.question,
     context: input.context ?? null,
@@ -98,7 +108,7 @@ export function askQuestion(input: AskInput): QuestionRow {
     subject: input.subject,
     answerType: input.answerType ?? (input.kind === 'has_done' || input.kind === 'knows' ? 'yes_no' : 'text'),
     choicesJson: input.choices ? JSON.stringify(input.choices) : null,
-    knowledgeKey: input.knowledgeKey ?? null,
+    knowledgeKey: skillTarget ? `${skillTarget.category}:${skillTarget.key}` : (input.knowledgeKey ?? null),
     applicationId: input.applicationId ?? null,
     jobId: input.jobId ?? null,
     blocking: input.blocking ?? false,
@@ -197,7 +207,7 @@ const IMPLIED_BY: Record<string, string[]> = {
   json: ['javascript'],
   sql: ['mysql'],
   git: ['github actions'],
-  docker: ['kubernetes'],
+  // Docker is not implied by Kubernetes (2026-11-04): a related skill never answers a question by itself.
   'rest api': ['laravel', 'express', 'node'],
   'rest apis': ['laravel', 'express', 'node'],
 }
@@ -281,18 +291,91 @@ export function knowsQuestionText(subject: string): string {
     : `Have you used ${subject} in a real project?`
 }
 
-/** Where an answer is written: the question's knowledge_key, or one derived from its kind and subject. */
+// ── Skills or Experience: where a skill or experience answer is filed ──
+// Decided by what the subject is, not by how the question was worded: a knows question and a
+// has_done question about Docker are one claim, filed once under Skills ("Docker"); fintech is a
+// domain and goes under Experience ("Has done: Fintech or financial services") either way.
+
+/** Domains, industries, practices, and kinds of work: Experience, whatever the question's kind. */
+const EXPERIENCE_SUBJECT = /\b(fintech|financial|finance|banking|lending|payments?|billing|insurance|insurtech|health ?care|medical|clinical|telehealth|ehr|emr|hipaa|e-?commerce|retail|logistics|supply chain|edtech|ads|advertising|adtech|marketing|growth|monetization|startups?|on-?call|incidents?|customers?|stakeholders?|leadership|leading|mentor(?:ing|ship)?|hiring|interviewing|(?:people|product|project|team) management|regulated|regulatory|compliance|guidelines|government|public sector|nonprofit|domain|industry|sector)\b/i
+
+/** The parts of a subject that names several things: "Figma or Sketch", "FHIR and HL7". */
+function subjectParts(subject: string): string[] {
+  return subject.split(/\s*(?:,|\/|&|\bor\b|\band\b)\s*/i).map(s => s.trim()).filter(Boolean)
+}
+
+/**
+ * True when every part of a subject names a tool, language, framework, or platform: one
+ * capitalized word (Docker, Kotlin), a capital past the first letter, a digit, or a symbol
+ * (GraphQL, iMAX, S3, C#, Next.js, Microsoft Azure), or a known lowercase skill. "Payments and
+ * reconciliation" and "Highly transactional systems" are kinds of work, not tools.
+ */
+function namesTool(subject: string): boolean {
+  const parts = subjectParts(subject)
+  return parts.length > 0 && parts.every((part) => {
+    const core = skillCore(part)
+    const words = core.split(/\s+/)
+    if (!core || words.length > 3) return false
+    if (KNOWN_LOWERCASE_SKILLS.has(core.toLowerCase())) return true
+    if (/[A-Z]/.test(core.slice(1)) || /[\d+#.]/.test(core)) return true
+    return words.length === 1 && /^[A-Z]/.test(core)
+  })
+}
+
+/**
+ * Skills (languages, frameworks, tools, platforms, technical techniques) or Experience (domains,
+ * industries, practices, kinds of work). A domain word wins, then a named tool, then the scoring
+ * call's codeShowable flag, then the question's kind (a daily knows question names a tool).
+ */
+export function subjectSection(subject: string, kind: string | null, codeShowable?: boolean | null): 'skill' | 'experience' {
+  if (EXPERIENCE_SUBJECT.test(subject)) return 'experience'
+  if (namesTool(subject)) return 'skill'
+  if (codeShowable != null) return codeShowable ? 'skill' : 'experience'
+  return kind === 'knows' ? 'skill' : 'experience'
+}
+
+/** The knowledge entry a skill or experience answer goes to: "skill:Docker" or "experience:Has done: Fintech or financial services". */
+export function subjectTarget(subject: string, kind: string | null, codeShowable?: boolean | null): { category: string; key: string } {
+  const s = subject.replace(/\s+/g, ' ').trim()
+  return subjectSection(s, kind, codeShowable) === 'skill'
+    ? { category: 'skill', key: skillCore(s) || s }
+    : { category: 'experience', key: `Has done: ${s}` }
+}
+
+/** The codeShowable flag a gap question's context sentence records, or null when it records none. */
+export function codeFlagOf(context: string | null | undefined): boolean | null {
+  if (!context) return null
+  if (context.includes(GAP_CONTEXT_EXPERIENCE)) return false
+  if (context.includes(GAP_CONTEXT_CODE)) return true
+  return null
+}
+
+/** The entry a skill or experience question's own answer belongs in, from its subject alone. */
+function ownSkillTarget(q: QuestionRow): { category: string; key: string } {
+  const subject = q.kind === 'knows' ? knowsRawSubject(q) : (q.subject?.trim() || truncateWords(q.question))
+  return subjectTarget(subject, q.kind, codeFlagOf(q.context))
+}
+
+function parseKnowledgeKey(knowledgeKey: string | null | undefined): { category: string; key: string } | null {
+  if (!knowledgeKey) return null
+  const i = knowledgeKey.indexOf(':')
+  const category = i > 0 ? knowledgeKey.slice(0, i).trim().toLowerCase() : ''
+  const key = i > 0 ? knowledgeKey.slice(i + 1).trim() : ''
+  return key && (KNOWLEDGE_CATEGORIES as readonly string[]).includes(category) ? { category, key } : null
+}
+
+/**
+ * Where an answer is written: the question's knowledge_key, or one derived from its kind and subject.
+ * A skill or experience question stores its section in knowledge_key when it is asked (askQuestion);
+ * an answer the app carried from another question points at that question's entry.
+ */
 export function knowledgeTargetFor(q: QuestionRow): { category: string; key: string } {
-  if (q.knowledgeKey) {
-    const i = q.knowledgeKey.indexOf(':')
-    const category = i > 0 ? q.knowledgeKey.slice(0, i).trim().toLowerCase() : ''
-    const key = i > 0 ? q.knowledgeKey.slice(i + 1).trim() : ''
-    if (key && (KNOWLEDGE_CATEGORIES as readonly string[]).includes(category)) return { category, key }
-  }
+  const stored = parseKnowledgeKey(q.knowledgeKey)
+  if (stored) return stored
   const subject = q.subject?.trim() || ''
   switch (q.kind) {
-    case 'knows': return { category: 'skill', key: subject || truncateWords(q.question) }
-    case 'has_done': return { category: 'experience', key: `Has done: ${subject || truncateWords(q.question)}` }
+    case 'knows':
+    case 'has_done': return ownSkillTarget(q)
     case 'preference': return { category: 'preference', key: capitalize(subject) || truncateWords(q.question) }
     case 'fact':
     case 'form_field':
@@ -386,6 +469,12 @@ export function exampleFromValue(q: QuestionRow, answer: string | null, value: s
 /** The example saved with an answered Yes or Some experience question, read from its knowledge entry. */
 export function questionExample(q: QuestionRow, entries?: KnowledgeEntry[]): string | null {
   if (q.status !== 'answered' || !q.answer || !takesExample(q)) return null
+  // A carried answer shows the example of the answer it came from: his Docker example belongs to both.
+  const from = inferredFromId(q)
+  if (from != null) {
+    const source = useDb().select().from(questions).where(eq(questions.id, from)).get()
+    return source && inferredFromId(source) == null ? questionExample(source, entries) : null
+  }
   const target = knowledgeTargetFor(q)
   const entry = findKnowledgeEntry(target.category, target.key, entries ?? loadKnowledge(target.category))
   return entry ? exampleFromValue(q, q.answer, entry.value) : null
@@ -408,7 +497,13 @@ function writeKnowledge(target: { category: string; key: string }, value: string
   const existing = findKnowledgeEntry(target.category, target.key)
   const key = existing?.key ?? target.key
   // A Yes on something the resume already lists keeps the resume text and adds the answer under it.
-  if (existing && !negative && existing.source !== 'user_answer' && !isNegativeKnowledge(existing.value)) {
+  // The same holds for an entry another question's Yes wrote: one subject asked two ways ("Docker"
+  // and "Docker containerization") shares one entry, and a second Yes never erases the first
+  // answer's example. A No replaces it: the latest answer about a subject is the claim.
+  // Shared means resume text, or another answer's "(Answer to: ...)" note; a text answer (his own
+  // words, no note) is replaced as before, so a changed LinkedIn URL never stacks under the old one.
+  const shared = !!existing && (existing.source !== 'user_answer' || existing.value.includes('(Answer to: '))
+  if (existing && shared && !negative && !isNegativeKnowledge(existing.value)) {
     const base = previous && previous !== value ? withoutSegment(existing.value, previous) : existing.value
     if (!base.trim()) return upsertKnowledge(target.category, key, value, 'user_answer')
     const merged = base.includes(value) ? base : `${base}\n${value}`
@@ -588,6 +683,8 @@ export function toQuestionListItem(
     repoSuggestion: q.status === 'pending' && takesExample(q) ? repoSuggestion : null,
     skippedBy: q.status === 'skipped' ? (appSkipNote(q) ? 'app' : 'you') : null,
     skipNote: appSkipNote(q),
+    answeredFrom: inferredFromId(q),
+    answeredFromNote: inferredFromId(q) != null ? inferredNoteOf(q.context!) : null,
   }
 }
 
@@ -653,8 +750,14 @@ function questionItem(id: number): QuestionListItem {
  */
 export async function answerQuestion(id: number, rawAnswer: string, example?: string | null): Promise<AnswerOutcome> {
   const db = useDb()
-  const q = db.select().from(questions).where(eq(questions.id, id)).get()
+  let q = db.select().from(questions).where(eq(questions.id, id)).get()
   if (!q) throw createError({ statusCode: 404, statusMessage: 'Question not found' })
+  // An answer the app carried from another question becomes his own: the note goes, and the answer
+  // is written to this question's own entry (for the same subject that is the same entry).
+  if (inferredFromId(q) != null) {
+    const own = ownSkillTarget(q)
+    q = { ...q, status: 'pending', answer: null, context: withoutInferredNote(q.context), knowledgeKey: `${own.category}:${own.key}` }
+  }
   let answer = (rawAnswer ?? '').toString().trim()
   if (q.answerType === 'yes_no' && example === undefined && answer.includes('\n')) {
     const nl = answer.indexOf('\n')
@@ -713,23 +816,38 @@ export async function answerQuestion(id: number, rawAnswer: string, example?: st
   }
   const waiting = waitingApplicationIds(q)
   // Optional fields asked without blocking ("Optional: asked you as question #N") fill in too.
-  const toRefresh = [...new Set([...waiting, ...optionalAskApplicationIds(q.id)])]
+  const toRefresh = new Set([...waiting, ...optionalAskApplicationIds(q.id)])
   db.update(questions).set({
     status: 'answered',
     answer: normalized,
     answeredAt: nowSql(),
     knowledgeKey: `${entry.category}:${entry.key}`,
+    context: q.context,
   }).where(eq(questions.id, id)).run()
 
-  const { refreshed, unavailable } = await refreshWaitingApplications(toRefresh)
+  // The same subject asked the other way (and, for a No on a domain, its narrower questions) takes
+  // this answer too, marked "Answered from your answer to #N" so he can see and undo it.
+  const carried = q.kind === 'knows' || q.kind === 'has_done' ? carryAnswerFrom(id, { overwriteDirect: true }) : []
+  const evidence = `${entry.category}/${entry.key}`
+  for (const c of carried) {
+    for (const appId of waitingApplicationIds(c.row)) toRefresh.add(appId)
+  }
+
+  const { refreshed, unavailable } = await refreshWaitingApplications([...toRefresh])
   // Other open jobs that name this skill get their skills judged again on the next scheduled run.
   if (q.kind === 'knows' || q.kind === 'has_done') {
-    applyAnswerToOpenJobs(q.subject, normalized, `${entry.category}/${entry.key}`)
+    applyAnswerToOpenJobs(q.subject, normalized, evidence)
     queueSkillRescore(q.subject, q.jobId ? [q.jobId] : [])
+    for (const c of carried) {
+      applyAnswerToOpenJobs(c.row.subject, c.answer, evidence)
+      queueSkillRescore(c.row.subject, c.row.jobId ? [c.row.jobId] : [])
+    }
   }
   const affected = affectedJobIds(q, waiting)
-  const rescored = affected === 'open' || affected.length
-    ? (await rescoreJobs(affected, 'rescore')).rescored
+  const carriedJobs = carried.map(c => c.row.jobId).filter((j): j is number => j != null)
+  const rescoreIds = affected === 'open' ? 'open' : [...new Set([...affected, ...carriedJobs])]
+  const rescored = rescoreIds === 'open' || rescoreIds.length
+    ? (await rescoreJobs(rescoreIds, 'rescore')).rescored
     : 0
 
   return {
@@ -738,6 +856,7 @@ export async function answerQuestion(id: number, rawAnswer: string, example?: st
     refreshedApplicationIds: refreshed,
     refreshUnavailable: unavailable,
     rescored,
+    carried: carried.map(c => ({ id: c.row.id, question: c.row.question, answer: c.answer })),
   }
 }
 
@@ -768,17 +887,36 @@ export function skipQuestion(id: number): QuestionListItem {
 /** app_settings key: questions Devin reopened after the app skipped them. The tidy does not skip them again. */
 const REOPENED_KEY = 'questions_reopened'
 
-function reopenedIds(): Set<number> {
-  const row = useDb().select().from(appSettings).where(eq(appSettings.key, REOPENED_KEY)).get()
+/** app_settings key: questions whose carried answer Devin undid. No answer is carried to them again. */
+const INFERENCE_UNDONE_KEY = 'questions_inference_undone'
+
+function idSetting(key: string): Set<number> {
+  const row = useDb().select().from(appSettings).where(eq(appSettings.key, key)).get()
   return new Set(parseJson<number[]>(row?.valueJson, []))
 }
 
-function rememberReopened(id: number) {
-  const ids = reopenedIds()
+function addToIdSetting(key: string, id: number) {
+  const ids = idSetting(key)
   if (ids.has(id)) return
   const valueJson = JSON.stringify([...ids, id].sort((a, b) => a - b))
-  useDb().insert(appSettings).values({ key: REOPENED_KEY, valueJson, updatedAt: nowSql() })
+  useDb().insert(appSettings).values({ key, valueJson, updatedAt: nowSql() })
     .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
+}
+
+function reopenedIds(): Set<number> {
+  return idSetting(REOPENED_KEY)
+}
+
+function rememberReopened(id: number) {
+  addToIdSetting(REOPENED_KEY, id)
+}
+
+function inferenceUndoneIds(): Set<number> {
+  return idSetting(INFERENCE_UNDONE_KEY)
+}
+
+function rememberInferenceUndone(id: number) {
+  addToIdSetting(INFERENCE_UNDONE_KEY, id)
 }
 
 /**
@@ -789,7 +927,16 @@ export function reopenQuestion(id: number): QuestionListItem {
   const db = useDb()
   const q = db.select().from(questions).where(eq(questions.id, id)).get()
   if (!q) throw createError({ statusCode: 404, statusMessage: 'Question not found' })
-  if (q.status !== 'skipped') throw createError({ statusCode: 409, statusMessage: 'Only a skipped question can be reopened' })
+  // Undo an answer the app carried from another question: the question is open again, its own
+  // entry is where his answer will go, and the app never carries an answer to it again. The entry
+  // the carried answer pointed at is left alone: it belongs to the other question.
+  if (inferredFromId(q) != null) {
+    rememberInferenceUndone(id)
+    const own = ownSkillTarget(q)
+    db.update(questions).set({ status: 'pending', answer: null, answeredAt: null, context: withoutInferredNote(q.context), knowledgeKey: `${own.category}:${own.key}` }).where(eq(questions.id, id)).run()
+    return questionItem(id)
+  }
+  if (q.status !== 'skipped') throw createError({ statusCode: 409, statusMessage: 'Only a skipped question, or an answer the app carried from another question, can be reopened' })
   if (appSkipNote(q)) rememberReopened(id)
   db.update(questions).set({ status: 'pending', context: withoutAppNote(q.context) }).where(eq(questions.id, id)).run()
   return questionItem(id)
@@ -814,7 +961,6 @@ export function askKnows(rawSubject: string, opts: AskOptions = {}): QuestionRow
     kind: 'knows',
     subject,
     answerType: 'yes_no',
-    knowledgeKey: `skill:${subject}`,
     applicationId: opts.applicationId,
     jobId: opts.jobId,
     blocking: opts.blocking,
@@ -831,7 +977,6 @@ export function askHasDone(subject: string, question: string, opts: AskOptions =
     kind: 'has_done',
     subject,
     answerType: 'yes_no',
-    knowledgeKey: `experience:Has done: ${subject}`,
     applicationId: opts.applicationId,
     jobId: opts.jobId,
     blocking: opts.blocking,
@@ -982,7 +1127,7 @@ function repointMerged(mergeMap: Map<number, number>): number[] {
  * Questions an application blocks on, and ones Devin reopened, are never skipped; reopened
  * duplicates are still merged. Skipped questions can be reopened.
  */
-export function tidyKnowsQuestions(): { reworded: number; skipped: number; merged: number } {
+export function tidyKnowsQuestions(): { reworded: number; skipped: number; merged: number; answered: number } {
   const db = useDb()
   const rows = db.select().from(questions)
     .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered'])))
@@ -990,6 +1135,7 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
     .sort((a, b) => a.id - b.id)
   const gapIds = gapPlanQuestionIds()
   const reopened = reopenedIds()
+  const undone = inferenceUndoneIds()
   const subjectOf = new Map<number, string>()
   // Answered and blocking questions anchor their subject: they are never merged or skipped.
   const canon: QuestionRow[] = rows.filter(r => r.status === 'answered').concat(rows.filter(r => r.status === 'pending' && r.blocking))
@@ -998,10 +1144,13 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
   const groups = new Map<number, QuestionRow[]>()
   for (const q of rows.filter(r => r.status === 'pending' && !r.blocking)) {
     let subject = (q.subject ?? '').trim() || q.question
+    // An answer on the same subject is carried to it below (carryAllAnswers), so it is neither
+    // skipped as covered nor merged: it reads "Answered from your answer to #N".
+    if (!undone.has(q.id) && canon.some(c => c.status === 'answered' && carries(c, q))) continue
     if (q.kind === 'knows') {
       const verdict = knowsVerdict(q, gapIds)
       if ('reason' in verdict) {
-        if (!reopened.has(q.id)) {
+        if (!reopened.has(q.id) && !undone.has(q.id)) {
           skips.push({ q, reason: verdict.reason })
           continue
         }
@@ -1011,7 +1160,8 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
         subject = verdict.subject
       }
     }
-    const into = canon.find(c => sameSkill(subjectOf.get(c.id)!, subject))
+    // A question whose carried answer he undid stands on its own: it is not merged into the answer.
+    const into = undone.has(q.id) ? undefined : canon.find(c => sameSkill(subjectOf.get(c.id)!, subject))
     if (into) {
       groups.set(into.id, [...(groups.get(into.id) ?? []), q])
       continue
@@ -1036,8 +1186,10 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
       ? knowsQuestionText(subject)
       : c.question
     if (text !== c.question || subject !== c.subject) {
-      db.update(questions).set({ question: text, subject, dedupeKey: dedupeKeyOf('knows', subject), knowledgeKey: `skill:${subject}` }).where(eq(questions.id, c.id)).run()
-      Object.assign(c, { question: text, subject })
+      const target = subjectTarget(subject, 'knows', codeFlagOf(c.context))
+      const knowledgeKey = `${target.category}:${target.key}`
+      db.update(questions).set({ question: text, subject, dedupeKey: dedupeKeyOf('knows', subject), knowledgeKey }).where(eq(questions.id, c.id)).run()
+      Object.assign(c, { question: text, subject, knowledgeKey })
       reworded++
     }
   }
@@ -1052,7 +1204,8 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
   }
   for (const s of skips) appSkip(s.q, s.reason)
   repointMerged(mergeMap)
-  return { reworded, skipped: skips.length, merged: mergeMap.size }
+  const answered = carryAllAnswers().length
+  return { reworded, skipped: skips.length, merged: mergeMap.size, answered }
 }
 
 /** app_settings key: set once the skips made before reasons were recorded have been labeled. */
@@ -1297,7 +1450,7 @@ function mergeInto(dup: QuestionRow, into: QuestionRow) {
 // "practical PowerShell" and "PowerShell scripting" the same as "PowerShell".
 
 const SKILL_LEAD = /^(?:(?:proficient|proficiency|fluent|fluency|expert(?:[\s-]level)?|expertise|practical|strong|solid|deep|extensive|advanced|hands-on|working|production|use|using|judgment|familiarity|comfortable)(?:\s+(?:in|with|using|of|at))?\s+)+/i
-const SKILL_TRAIL = /\s+(?:scripting|deployment|deployments|framework|full[\s-]?stack|version control|and|or|in|with|of|for|to)$/i
+const SKILL_TRAIL = /\s+(?:scripting|deployment|deployments|framework|full[\s-]?stack|version control|containerization|containers|and|or|in|with|of|for|to)$/i
 /** Words that tell little apart on their own: "AI-powered" shares only "powered" with "AEO and AI-powered discovery". */
 const WEAK_TOKENS = new Set(['ai', 'ml', 'llm', 'llms', 'data', 'web', 'cloud', 'api', 'apis', 'tools', 'tool'])
 
@@ -1338,6 +1491,242 @@ function sameSkillQuestion(subject: string): QuestionRow | null {
     .filter(q => !!q.subject && sameSkill(subject, q.subject))
     .sort((a, b) => Number(b.status === 'answered') - Number(a.status === 'answered') || a.id - b.id)
   return rows[0] ?? null
+}
+
+// ── One subject, one claim: an answer carried to the same subject asked another way ──
+// "Have you used Docker in a real project?" (knows) and "Have you worked with docker
+// containerization in a real job or project?" (has_done) ask the same thing. A Yes, Some
+// experience, or No on one answers the other. A No on a domain also answers a narrower question in
+// that domain when the subject clearly matches (fintech covers "Fintech or lending knowledge",
+// never payments). Interest questions are his to answer. A related skill never answers a question
+// (Kubernetes does not answer Docker). Each carried answer starts its context with "Answered from
+// your answer to #N", and Undo (reopenQuestion) puts the question back and keeps it out of this.
+
+const INFERRED_NOTE = /^Answered from your answer to #(\d+) \(".*?"\)\./
+
+/** The question a carried answer came from, or null for an answer Devin gave himself. */
+export function inferredFromId(q: Pick<QuestionRow, 'status' | 'context'>): number | null {
+  if (q.status !== 'answered' || !q.context) return null
+  const m = q.context.match(INFERRED_NOTE)
+  return m ? Number(m[1]) : null
+}
+
+/** The "Answered from your answer to #N (...)." note at the start of a context, or null. */
+function inferredNoteOf(context: string): string | null {
+  return context.match(INFERRED_NOTE)?.[0] ?? null
+}
+
+/** A context without the carried-answer note. */
+export function withoutInferredNote(context: string | null): string | null {
+  if (!context) return context
+  const note = inferredNoteOf(context)
+  return note ? (context.slice(note.length).trim() || null) : context
+}
+
+const INTEREST = /\b(?:interest(?:ed)? in|passion(?:ate)? (?:for|about)|excited (?:about|by)|curious about)\b/i
+
+/** "Interest in fintech and payments" asks what he wants, not what he has done. */
+function isInterestQuestion(q: QuestionRow): boolean {
+  return INTEREST.test(`${q.subject ?? ''} ${q.question} ${withoutInferredNote(q.context) ?? ''}`)
+}
+
+function claimSubject(q: QuestionRow): string {
+  return q.kind === 'knows' ? knowsRawSubject(q) : (q.subject?.trim() || q.question)
+}
+
+/**
+ * The same subject: the same skill once qualifiers are dropped ("Docker containerization" is
+ * Docker, "Python3" is Python), or the same words. A subject naming several things ("Fintech or
+ * financial services") is the same only as itself: a Yes on "Python or Go" says nothing about Go.
+ */
+function sameClaimSubject(a: string, b: string): boolean {
+  const ca = ruleTerm(skillCore(a))
+  if (ca && ca === ruleTerm(skillCore(b))) return true
+  const list = /,|\/|&|\s(?:or|and)\s/i
+  return !list.test(a) && !list.test(b) && sameSkill(a, b)
+}
+
+/**
+ * Narrower questions a No on a domain answers. Payments is deliberately not here: he has built
+ * payment features while never working in fintech.
+ */
+const DOMAIN_COVERS: Record<string, string[]> = {
+  'fintech': ['financial technology', 'financial services', 'lending', 'consumer lending', 'consumer finance', 'regulated consumer finance', 'banking', 'neobanking'],
+  'financial services': ['lending', 'consumer lending', 'consumer finance', 'regulated consumer finance', 'banking'],
+  'financial technology': ['fintech', 'lending', 'consumer lending', 'consumer finance', 'regulated consumer finance', 'banking', 'neobanking'],
+}
+
+function domainParts(subject: string): string[] {
+  return subjectParts(subject.toLowerCase())
+    .map(p => p.replace(/\b(?:knowledge|experience|background|domain|industry|sector|space|products?)\b/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+}
+
+/**
+ * A No on `source` answers `target` when the target names one of the source's own parts (fintech)
+ * and every other part it names is a narrower area of the source (lending): "Fintech or lending
+ * knowledge" after a No on "Fintech or financial services". "Financial systems or payments" and
+ * "Fintech and payments" name something else, so they stay open.
+ */
+function domainNoCovers(source: string, target: string): boolean {
+  const src = domainParts(source)
+  const covered = new Set(src.flatMap(s => [s, ...(DOMAIN_COVERS[s] ?? [])]))
+  const parts = domainParts(target)
+  return parts.length > 0 && parts.some(p => src.includes(p)) && parts.every(p => covered.has(p))
+}
+
+/** An answer Devin gave himself to a yes or no skill or experience question, other than an interest question. */
+function isCarrySource(q: QuestionRow): boolean {
+  return q.status === 'answered' && q.answerType === 'yes_no' && (q.kind === 'knows' || q.kind === 'has_done')
+    && !!q.answer && inferredFromId(q) == null && !isInterestQuestion(q)
+}
+
+/** How `source`'s answer reaches `target`: the same subject, a No on a domain covering it, or not at all. */
+function carryRule(source: QuestionRow, target: QuestionRow): 'same' | 'domain' | null {
+  if (source.id === target.id || target.answerType !== 'yes_no' || (target.kind !== 'knows' && target.kind !== 'has_done')) return null
+  if (isInterestQuestion(target)) return null
+  const a = claimSubject(source)
+  const b = claimSubject(target)
+  if (sameClaimSubject(a, b)) return 'same'
+  if (parseYesNo(source.answer ?? '') === 'no'
+    && subjectSection(a, source.kind, codeFlagOf(source.context)) === 'experience'
+    && subjectSection(b, target.kind, codeFlagOf(target.context)) === 'experience'
+    && domainNoCovers(a, b)) return 'domain'
+  return null
+}
+
+/** True when `source`'s answer would be carried to `target`. */
+function carries(source: QuestionRow, target: QuestionRow): boolean {
+  return isCarrySource(source) && carryRule(source, target) != null
+}
+
+export interface CarriedAnswer {
+  /** The question that took the answer, as it is now. */
+  row: QuestionRow
+  answer: string
+  from: number
+  rule: 'same' | 'domain'
+}
+
+/**
+ * Carries Devin's answer on `sourceId` to every question it answers: open ones, ones the app
+ * skipped (not merged ones, which point at their question already), and ones carrying an older
+ * answer. `overwriteDirect` (a fresh answer) also changes a question on the same subject he
+ * answered differently before: the latest answer about a subject is the claim. A question whose
+ * carried answer he undid is never touched. Writes no knowledge: the carried answer points at the
+ * entry the source's answer wrote.
+ */
+export function carryAnswerFrom(sourceId: number, opts: { overwriteDirect?: boolean } = {}): CarriedAnswer[] {
+  const db = useDb()
+  const source = db.select().from(questions).where(eq(questions.id, sourceId)).get()
+  if (!source || !isCarrySource(source)) return []
+  const undone = inferenceUndoneIds()
+  const rows = db.select().from(questions)
+    .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered', 'skipped'])))
+    .all()
+  const answeredAt = new Map(rows.map(r => [r.id, r.answeredAt ?? '']))
+  const out: CarriedAnswer[] = []
+  for (const t of rows) {
+    if (t.id === source.id || undone.has(t.id)) continue
+    const rule = carryRule(source, t)
+    if (!rule) continue
+    const answer = rule === 'domain' ? YES_NO_LABELS.no : source.answer!
+    const from = inferredFromId(t)
+    if (t.status === 'skipped') {
+      if (!appSkipNote(t) || mergedIntoId(t) != null) continue
+    }
+    else if (t.status === 'answered') {
+      if (from == null && !(opts.overwriteDirect && rule === 'same' && t.answer !== answer)) continue
+      if (from === source.id && t.answer === answer) continue
+      // An answer carried from a newer answer stays.
+      if (from != null && from !== source.id && (answeredAt.get(from) ?? '') > (source.answeredAt ?? '')) continue
+    }
+    const note = `Answered from your answer to #${source.id} ("${source.question}").`
+    const rest = withoutInferredNote(withoutAppNote(t.context))
+    const context = rest ? `${note} ${rest}` : note
+    db.update(questions).set({ status: 'answered', answer, answeredAt: nowSql(), knowledgeKey: source.knowledgeKey, context }).where(eq(questions.id, t.id)).run()
+    out.push({ row: { ...t, status: 'answered', answer, knowledgeKey: source.knowledgeKey, context }, answer, from: source.id, rule })
+  }
+  return out
+}
+
+/** Every answer Devin gave carried to the questions it answers, oldest answer first so the latest wins. Idempotent. */
+export function carryAllAnswers(): CarriedAnswer[] {
+  const sources = useDb().select().from(questions)
+    .where(and(eq(questions.status, 'answered'), inArray(questions.kind, ['knows', 'has_done'])))
+    .all()
+    .filter(isCarrySource)
+    .sort((a, b) => (a.answeredAt ?? '').localeCompare(b.answeredAt ?? '') || a.id - b.id)
+  return sources.flatMap(s => carryAnswerFrom(s.id))
+}
+
+/** app_settings key: set once the answers filed by question kind have been re-filed by subject. */
+const SECTION_REPAIR_KEY = 'subject_section_repair'
+
+export interface SectionRepairResult {
+  ran: boolean
+  /** Knowledge entries his answers wrote, moved to their section and key with the value unchanged. */
+  entries: Array<{ id: number; from: string; to: string }>
+  /** Entries left where they were, and why. */
+  kept: Array<{ questionId: number; key: string; reason: string }>
+  /** Skill and experience questions whose section or key changed (status and answer unchanged). */
+  questions: Array<{ id: number; from: string | null; to: string }>
+  /** Questions answered from another answer. */
+  answered: Array<{ id: number; from: number; answer: string; rule: 'same' | 'domain' }>
+}
+
+/**
+ * Runs once (an app_settings marker), at the start of the first learn:daily after the deploy.
+ * Before this, a skill or experience answer was filed by the question's kind or by whichever code
+ * path asked it, so his No on fintech sat under Skills and his Yes on Docker under Experience.
+ * Additive: no row is deleted, no answer changes, and his text stays word for word.
+ * - Each knowledge entry an answer of his wrote (source user_answer, never a resume row) moves to
+ *   the section and key its subject gets now, unless an entry is already there.
+ * - Every skill and experience question gets the section and key its subject gets now.
+ * - His answers are carried to the same subject asked the other way, and a No on a domain to its
+ *   narrower questions, each marked "Answered from your answer to #N".
+ * Nothing is rescored or refreshed here; learn:daily applies answered questions to open jobs after it.
+ */
+export function refileSubjectSectionsOnce(log: (m: string) => void = () => {}): SectionRepairResult {
+  const db = useDb()
+  const result: SectionRepairResult = { ran: false, entries: [], kept: [], questions: [], answered: [] }
+  if (db.select().from(appSettings).where(eq(appSettings.key, SECTION_REPAIR_KEY)).get()) return result
+  result.ran = true
+  const rows = db.select().from(questions).where(inArray(questions.kind, ['knows', 'has_done'])).all().sort((a, b) => a.id - b.id)
+  const sameKey = (a: { category: string; key: string }, b: { category: string; key: string }) => a.category === b.category && a.key.trim().toLowerCase() === b.key.trim().toLowerCase()
+  for (const q of rows) {
+    if (inferredFromId(q) != null) continue
+    const to = ownSkillTarget(q)
+    const toKey = `${to.category}:${to.key}`
+    const from = parseKnowledgeKey(q.knowledgeKey)
+    if (from && sameKey(from, to)) continue
+    if (q.status === 'answered' && from) {
+      const written = db.select().from(knowledgeEntries)
+        .where(and(eq(knowledgeEntries.category, from.category), eq(knowledgeEntries.key, from.key), eq(knowledgeEntries.source, 'user_answer')))
+        .all()
+      if (!written.length) {
+        result.kept.push({ questionId: q.id, key: q.knowledgeKey!, reason: 'the entry is not one his answer wrote' })
+        continue
+      }
+      const there = findKnowledgeEntry(to.category, to.key)
+      if (there) {
+        result.kept.push({ questionId: q.id, key: q.knowledgeKey!, reason: `${there.category}:${there.key} already has an entry` })
+        continue
+      }
+      for (const e of written) {
+        db.update(knowledgeEntries).set({ category: to.category, key: to.key }).where(eq(knowledgeEntries.id, e.id)).run()
+        result.entries.push({ id: e.id, from: `${from.category}:${from.key}`, to: toKey })
+      }
+    }
+    db.update(questions).set({ knowledgeKey: toKey }).where(eq(questions.id, q.id)).run()
+    result.questions.push({ id: q.id, from: q.knowledgeKey, to: toKey })
+  }
+  result.answered = carryAllAnswers().map(c => ({ id: c.row.id, from: c.from, answer: c.answer, rule: c.rule }))
+  const valueJson = JSON.stringify({ entries: result.entries, kept: result.kept, questions: result.questions.length, answered: result.answered })
+  db.insert(appSettings).values({ key: SECTION_REPAIR_KEY, valueJson, updatedAt: nowSql() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
+  log(`subject sections: moved ${result.entries.map(e => `entry ${e.id} ${e.from} to ${e.to}`).join(', ') || 'no entries'}; ${result.questions.length} questions re-filed; answered ${result.answered.map(a => `#${a.id} ${a.answer} from #${a.from}`).join(', ') || 'none'}${result.kept.length ? `; kept ${result.kept.map(k => `#${k.questionId} (${k.reason})`).join(', ')}` : ''}`)
+  return result
 }
 
 /**

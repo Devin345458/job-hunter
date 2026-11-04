@@ -75,6 +75,12 @@ const showInput = computed(() => props.mode === 'pending' || editing.value)
 const busy = computed(() => !!props.saving)
 
 const kindLabel = computed(() => {
+  // A skill or experience question is labeled by the section its answer is filed under (decided by
+  // the subject when it was asked: Docker is a Skill, fintech is Experience), not by its wording.
+  const section = (props.question.knowledgeKey ?? '').split(':')[0]
+  if ((props.question.kind === 'knows' || props.question.kind === 'has_done') && (section === 'skill' || section === 'experience')) {
+    return section === 'skill' ? 'Skill' : 'Experience'
+  }
   switch (props.question.kind) {
     case 'knows': return 'Skill'
     case 'has_done': return 'Experience'
@@ -354,6 +360,10 @@ watch(() => props.pick?.nonce, () => {
       <p v-if="mode === 'skipped' && question.skipNote" class="question-card__context question-card__skip-note text-body-2 text-medium-emphasis mt-1">
         {{ question.skipNote }}
       </p>
+      <!-- Carried from another of his answers on the same subject (or a No on a domain that covers it). Undo opens it again. -->
+      <p v-if="mode === 'answered' && question.answeredFromNote && !editing" class="question-card__context question-card__carried-note text-body-2 text-medium-emphasis mt-1">
+        <v-icon icon="mdi-link-variant" size="16" class="mr-1" />{{ question.answeredFromNote }}
+      </p>
 
       <div v-if="mode === 'pending' && waiters.length" class="question-card__waiters">
         <span class="question-card__waiters-label text-caption text-medium-emphasis">Waiting on this</span>
@@ -615,6 +625,7 @@ watch(() => props.pick?.nonce, () => {
         Ask me again
       </v-btn>
       <template v-if="mode === 'answered'">
+        <v-btn v-if="!editing && question.answeredFrom" variant="text" size="small" prepend-icon="mdi-undo" :disabled="busy" @click="emit('reopen')">Undo</v-btn>
         <v-btn v-if="!editing" variant="text" size="small" prepend-icon="mdi-pencil-outline" @click="startEdit">Change answer</v-btn>
         <v-btn v-else variant="text" size="small" :disabled="busy" @click="cancelEdit">Cancel</v-btn>
       </template>

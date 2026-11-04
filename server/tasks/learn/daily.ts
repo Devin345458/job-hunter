@@ -10,6 +10,10 @@ export default defineTask({
   },
   async run({ payload }) {
     const outcome = await withRun('learn:daily', triggerOf(payload), async (log) => {
+      // Once after the deploy: files his skill and experience answers by what the subject is
+      // (Docker under Skills, fintech under Experience) and carries each answer to the same
+      // subject asked the other way.
+      const sections = refileSubjectSectionsOnce(log)
       // Once after the deploy: labels the skips made before reasons were recorded, and gives every
       // subject one open or answered question again.
       const repair = repairQuestionSkipsOnce(log)
@@ -18,6 +22,7 @@ export default defineTask({
       const learned = await runDailyLearning(log)
       return {
         ...learned,
+        ...(sections.ran ? { sectionEntriesMoved: sections.entries.length, sectionQuestionsRefiled: sections.questions.length, sectionAnswersCarried: sections.answered.length } : {}),
         ...(repair.ran ? { skipRepairLabeled: repair.labeled.length, skipRepairMerged: repair.merged.length, skipRepairReopened: repair.reopened.length } : {}),
         misreadFieldsReleased: released.length,
         factQuestionsMerged: tidy.merged.length,

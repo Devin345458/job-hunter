@@ -121,7 +121,10 @@ export function sameSubject(a: string, b: string): boolean {
 function matching(subject: string, rows: QuestionRow[], status: string): QuestionRow[] {
   const keys = new Set([dedupeKeyOf('has_done', subject), dedupeKeyOf('knows', subject)])
   const exact = rows.filter(r => r.status === status && keys.has(r.dedupeKey ?? ''))
-  return exact.length ? exact : rows.filter(r => r.status === status && !!r.subject && sameSubject(subject, r.subject))
+  // The same skill once qualifiers are dropped counts too: a "Docker" requirement reads the answer
+  // to "Docker containerization" (skillCore), whichever kind the question was asked as.
+  const core = ruleTerm(skillCore(subject))
+  return exact.length ? exact : rows.filter(r => r.status === status && !!r.subject && (sameSubject(subject, r.subject) || (!!core && ruleTerm(skillCore(r.subject)) === core)))
 }
 
 /** The must-have share from final statuses: have 1, partial a half, anything else 0. Null with no countable must-have. */
@@ -368,7 +371,7 @@ export function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: number; 
       kind: i.ask.kind,
       subject: i.subject,
       answerType: 'yes_no',
-      knowledgeKey: `skill:${i.subject}`,
+      codeShowable: i.ask.codeShowable,
       applicationId: ctx.applicationId,
       jobId: ctx.job.id,
       blocking: false,

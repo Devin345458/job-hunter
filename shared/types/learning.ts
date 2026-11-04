@@ -141,6 +141,13 @@ export interface QuestionListItem {
   skippedBy?: 'app' | 'you' | null
   /** The app's note on a question it skipped ("Skipped by the app: ...", "Merged into question #N ..."). */
   skipNote?: string | null
+  /**
+   * For an answer the app carried from another of his answers (the same subject asked the other
+   * way, or a No on a domain covering it): that question's id. Null for an answer he gave himself.
+   */
+  answeredFrom?: number | null
+  /** The note on a carried answer: 'Answered from your answer to #N ("<question>").' */
+  answeredFromNote?: string | null
 }
 
 export interface AnswerOutcome {
@@ -151,4 +158,6 @@ export interface AnswerOutcome {
   /** True when applications were waiting but refreshApplicationAnswers() is not on this build. */
   refreshUnavailable: boolean
   rescored: number
+  /** Other questions this answer also answered (the same subject asked another way, or a narrower domain after a No). */
+  carried?: Array<{ id: number; question: string; answer: string }>
 }
