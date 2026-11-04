@@ -41,6 +41,8 @@ export interface ChatMessage {
   github?: GithubChatSearch | null
   /** A draft from Devin's records ("Draft from my records"): every sentence with the records it rests on. */
   records?: RecordsDraft | null
+  /** Devin pressed "Use this draft" on it. */
+  used?: boolean
 }
 
 /** What "Use this draft" hands the card along with the text and level: the records behind a draft from his records. */
@@ -218,6 +220,15 @@ export function useQuestionChat() {
     }
   }
 
+  /** "Use this draft" was pressed on this message: the chat offers a new draft from his records again. */
+  function markDraftUsed(questionId: number | null, messageId: string) {
+    const key = chatThreadKey(questionId)
+    const thread = threads.value[key] ?? []
+    if (!thread.some(m => m.id === messageId && !m.used)) return
+    threads.value = { ...threads.value, [key]: thread.map(m => m.id === messageId ? { ...m, used: true } : m) }
+    persist()
+  }
+
   function clear(questionId: number | null) {
     const next = { ...threads.value }
     delete next[chatThreadKey(questionId)]
@@ -225,7 +236,7 @@ export function useQuestionChat() {
     persist()
   }
 
-  return { threads, sending, drafting, restore, send, draftFromRecords, clear }
+  return { threads, sending, drafting, restore, send, draftFromRecords, markDraftUsed, clear }
 }
 
 /** A yes or no question about a skill or past work: Yes and Some experience open the example box. */
