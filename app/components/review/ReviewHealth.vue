@@ -140,11 +140,11 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
             </div>
             <ul v-if="problems.length" class="hl__problems">
               <li v-for="p in problems.slice(0, 4)" :key="p">{{ p }}</li>
-              <li v-if="problems.length > 4">and {{ problems.length - 4 }} more in Settings</li>
+              <li v-if="problems.length > 4">and {{ problems.length - 4 }} more in Settings > Pipeline</li>
             </ul>
             <div v-if="runError" class="hl__error-line">{{ runError }}</div>
           </div>
-          <NuxtLink to="/settings#pipeline" class="hl__link">Runs</NuxtLink>
+          <NuxtLink to="/settings/pipeline#runs" class="hl__link">Runs</NuxtLink>
         </div>
 
         <div v-if="queueLine" class="hl__row" role="status" aria-live="polite">
@@ -153,7 +153,7 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
             <div class="hl__strong">{{ queueLine.title }}</div>
             <div v-if="queueLine.sub" class="hl__muted">{{ queueLine.sub }}</div>
           </div>
-          <NuxtLink to="/settings#pipeline" class="hl__link">Queue</NuxtLink>
+          <NuxtLink to="/settings/pipeline#queue" class="hl__link">Queue</NuxtLink>
         </div>
 
         <div class="hl__row">

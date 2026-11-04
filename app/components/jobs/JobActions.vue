@@ -61,7 +61,7 @@ const emit = defineEmits<{
       >
         <div class="text-caption">{{ resumeError }}</div>
         <div class="text-caption text-medium-emphasis mt-1">
-          This usually means the AI response couldn't be parsed. Try again, or check Settings > API Keys that your Claude subscription token is set.
+          This usually means the AI response couldn't be parsed. Try again, or check Settings > API keys that your Claude subscription token is set.
         </div>
       </v-alert>
     </v-card-text>

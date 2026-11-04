@@ -37,11 +37,35 @@ function isActiveRoute(item: NavItem) {
   return route.path.startsWith(item.to)
 }
 
-const activePageTitle = computed(() => navItems.find(isActiveRoute)?.title || 'Job Hunter')
+// Settings is a group of sub pages (app/utils/settingsPages.ts): the drawer lists them under it,
+// and the app bar and tab title name the sub page ("Claude usage · Settings · Job Hunter").
+const settingsPage = computed(() => settingsPageFor(route.path))
+const inSettings = computed(() => route.path === '/settings' || route.path.startsWith('/settings/'))
+
+const activePageTitle = computed(() => settingsPage.value?.title || navItems.find(isActiveRoute)?.title || 'Job Hunter')
 
 // Every page gets a tab title: the section name here, which a page's own useHead replaces
 // (a page's head entry is registered after the layout's, so it wins).
-useHead({ title: () => (activePageTitle.value === 'Job Hunter' ? 'Job Hunter' : `${activePageTitle.value} · Job Hunter`) })
+useHead({
+  title: () => {
+    if (settingsPage.value) return `${settingsPage.value.title} · Settings · Job Hunter`
+    return activePageTitle.value === 'Job Hunter' ? 'Job Hunter' : `${activePageTitle.value} · Job Hunter`
+  },
+})
+
+// The group opens when a Settings route is entered and closes when one is left; a click on its
+// header opens or closes it in between. A ref, so that click is not overridden until the route
+// crosses into or out of Settings.
+const openedGroups = ref<string[]>(inSettings.value ? ['settings'] : [])
+watch(inSettings, (now) => {
+  openedGroups.value = now ? ['settings'] : openedGroups.value.filter(g => g !== 'settings')
+})
+
+/** Claude calls are stopped (Anthropic's pause or this app's limit): Claude usage says so in the nav. */
+const claudePaused = computed(() => {
+  const sub = health.runs.value?.subscription
+  return !!(sub?.pause || sub?.stop)
+})
 
 // First paint guess from the request, so a phone does not render the desktop drawer and then
 // jump. The media query below corrects it once the page is interactive.
@@ -107,7 +131,16 @@ function badgeFor(item: NavItem): number {
       flat
       height="56"
     >
-      <v-app-bar-nav-icon aria-label="Open navigation" @click="drawer = !drawer" />
+      <!-- A Settings sub page goes back to the Settings list; every other page opens the drawer. -->
+      <v-btn
+        v-if="settingsPage"
+        icon="mdi-arrow-left"
+        variant="text"
+        to="/settings"
+        aria-label="Back to Settings"
+        class="shell__back"
+      />
+      <v-app-bar-nav-icon v-else aria-label="Open navigation" @click="drawer = !drawer" />
       <v-app-bar-title class="shell__bar-title">
         {{ activePageTitle }}
       </v-app-bar-title>
@@ -132,25 +165,64 @@ function badgeFor(item: NavItem): number {
         </div>
       </div>
 
-      <v-list nav density="compact" class="shell__nav" aria-label="Main">
-        <v-list-item
-          v-for="item in navItems"
-          :key="item.to"
-          :to="item.to"
-          :active="isActiveRoute(item)"
-          rounded="lg"
-          color="primary"
-          min-height="44"
-          class="shell__nav-item"
-        >
-          <template #prepend>
-            <v-icon :icon="item.icon" size="20" />
-          </template>
-          <v-list-item-title>{{ item.title }}</v-list-item-title>
-          <template v-if="badgeFor(item) > 0" #append>
-            <span class="shell__count tabular" :aria-label="`${badgeFor(item)} waiting`">{{ badgeFor(item) }}</span>
-          </template>
-        </v-list-item>
+      <v-list v-model:opened="openedGroups" nav density="compact" class="shell__nav" aria-label="Main">
+        <template v-for="item in navItems" :key="item.to">
+          <!-- Settings: an expandable group of its sub pages. The header only opens and closes it. -->
+          <v-list-group v-if="item.to === '/settings'" value="settings" class="shell__group">
+            <template #activator="{ props: groupProps, isOpen }">
+              <v-list-item
+                v-bind="groupProps"
+                :active="false"
+                :aria-expanded="isOpen"
+                rounded="lg"
+                min-height="44"
+                class="shell__nav-item"
+                :class="{ 'shell__nav-item--within': inSettings && !isOpen }"
+              >
+                <template #prepend>
+                  <v-icon :icon="item.icon" size="20" />
+                </template>
+                <v-list-item-title>{{ item.title }}</v-list-item-title>
+                <template #append>
+                  <span v-if="!isOpen && claudePaused" class="shell__attn" role="img" aria-label="Claude usage is paused" />
+                  <v-icon :icon="isOpen ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" class="shell__chev" />
+                </template>
+              </v-list-item>
+            </template>
+            <v-list-item
+              v-for="p in SETTINGS_PAGES"
+              :key="p.slug"
+              :to="settingsPath(p.slug)"
+              :active="settingsPage?.slug === p.slug"
+              rounded="lg"
+              color="primary"
+              :min-height="isDesktop ? 32 : 44"
+              class="shell__sub-item"
+            >
+              <v-list-item-title>{{ p.title }}</v-list-item-title>
+              <template v-if="p.slug === 'claude-usage' && claudePaused" #append>
+                <span class="shell__tag shell__tag--warning">Paused</span>
+              </template>
+            </v-list-item>
+          </v-list-group>
+          <v-list-item
+            v-else
+            :to="item.to"
+            :active="isActiveRoute(item)"
+            rounded="lg"
+            color="primary"
+            min-height="44"
+            class="shell__nav-item"
+          >
+            <template #prepend>
+              <v-icon :icon="item.icon" size="20" />
+            </template>
+            <v-list-item-title>{{ item.title }}</v-list-item-title>
+            <template v-if="badgeFor(item) > 0" #append>
+              <span class="shell__count tabular" :aria-label="`${badgeFor(item)} waiting`">{{ badgeFor(item) }}</span>
+            </template>
+          </v-list-item>
+        </template>
       </v-list>
 
       <template #append>
@@ -195,12 +267,15 @@ function badgeFor(item: NavItem): number {
         class="shell__bottom"
         :active="!isDesktop"
       >
+        <!-- base-color: Vuetify colors a link button only on its own exact path, so Settings sub pages
+             and /review/12 left their button gray while it was the active one. -->
         <v-btn
           v-for="item in navItems.filter(i => i.inBottomNav)"
           :key="item.to"
           :to="item.to"
           :value="item.to"
           :active="isActiveRoute(item)"
+          :base-color="isActiveRoute(item) ? 'primary' : undefined"
           :aria-label="item.title"
         >
           <!-- Not floating: a floating badge sat above the icon and straddled the nav's top edge. -->
@@ -285,6 +360,74 @@ function badgeFor(item: NavItem): number {
 
     :deep(.v-list-item__spacer) {
       width: 0;
+    }
+  }
+
+  // While a Settings page is open and the group is folded, its header keeps a quiet mark.
+  &__nav-item--within {
+    color: rgb(var(--v-theme-primary));
+  }
+
+  &__chev {
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  // Sub pages: text only, lined up under the group title (8px row padding plus the 32px icon slot).
+  // The vertical rule on the left ties them to Settings without a second icon column.
+  &__group :deep(.v-list-group__items) {
+    position: relative;
+    margin: 0 0 4px;
+
+    &::before {
+      content: '';
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      left: 17px;
+      width: 1px;
+      background: rgba(var(--v-border-color), var(--v-border-opacity));
+    }
+  }
+
+  &__group :deep(.v-list-group__items .v-list-item.shell__sub-item) {
+    padding-inline-start: 40px !important;
+    margin-bottom: 0;
+  }
+
+  &__sub-item {
+    :deep(.v-list-item-title) {
+      font-size: 0.8125rem;
+      font-weight: 500;
+    }
+
+    :deep(.v-list-item__spacer) {
+      width: 0;
+    }
+
+    &:not(.v-list-item--active) :deep(.v-list-item-title) {
+      color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    }
+  }
+
+  &__attn {
+    width: 8px;
+    height: 8px;
+    margin-right: 6px;
+    border-radius: 2px;
+    background: rgb(var(--v-theme-warning));
+  }
+
+  // Status tag from the design system: 12px/600, 2px 8px, 6px corners, color at 12% fill.
+  &__tag {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 1px 6px;
+    border-radius: 6px;
+
+    &--warning {
+      color: rgb(var(--v-theme-warning));
+      background: rgba(var(--v-theme-warning), 0.12);
     }
   }
 

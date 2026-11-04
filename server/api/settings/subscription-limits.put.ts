@@ -5,7 +5,7 @@ import { cleanLimit, saveSubscriptionLimits } from '~~/server/utils/subscription
 // rolling 7 days (server/utils/subscription-budget.ts). Stored in app_settings, so they apply to
 // the next Claude call without a redeploy. Work the old limits put back in the queue is released
 // to run now; anything the new limits still stop is put back again at its first Claude call.
-// Returns the subscription view Settings > Pipeline shows.
+// Returns the subscription view Settings > Claude usage shows.
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ dailyUsd?: unknown; weekUsd?: unknown }>(event)
   let limits: { dailyUsd: number; weekUsd: number }

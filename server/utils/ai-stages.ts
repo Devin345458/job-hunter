@@ -8,7 +8,7 @@ import type { AiStageCost, AiStageCosts, AiStageKey } from '#shared/types/pipeli
 // figure says how many of its calls ran on the subscription, so Settings marks those columns
 // "est.". Every Claude call is logged in
 // ai_calls with a purpose; each purpose belongs to one stage. Spending before Devin decides runs
-// for every job; spending after Apply runs only for the applications he chose. Settings > Pipeline
+// for every job; spending after Apply runs only for the applications he chose. Settings > Claude usage
 // shows today and the last 7 days. A purpose this map does not know counts under Other.
 
 interface StageDef {

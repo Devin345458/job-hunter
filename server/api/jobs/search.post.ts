@@ -12,7 +12,7 @@ const WAIT_MS = 60_000
 export default defineEventHandler(async (event) => {
   const active = useDb().select({ id: searchConfigs.id }).from(searchConfigs).where(eq(searchConfigs.isActive, true)).all()
   if (!active.length) {
-    throw createError({ statusCode: 400, statusMessage: 'No search configuration is switched on. Turn one on in Settings, Search Configurations.' })
+    throw createError({ statusCode: 400, statusMessage: 'No search configuration is switched on. Turn one on in Settings > Job search.' })
   }
 
   const { item: queued } = enqueue('jobs:search', {}, { trigger: 'manual', existing: () => {

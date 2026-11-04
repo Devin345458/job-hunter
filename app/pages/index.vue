@@ -287,7 +287,7 @@ const leftParts = computed(() => [
         Jobs scoring 70 or more land here once a run has read their employer form. The pipeline runs {{ PIPELINE_SCHEDULE_TEXT }}, or start it from Settings.
       </p>
       <div class="rv__state-actions">
-        <v-btn color="primary" height="44" to="/settings#pipeline" prepend-icon="mdi-play-outline">Pipeline settings</v-btn>
+        <v-btn color="primary" height="44" to="/settings/pipeline" prepend-icon="mdi-play-outline">Pipeline settings</v-btn>
       </div>
       <ReviewHealth class="rv__state-health" />
     </div>

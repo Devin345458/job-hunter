@@ -476,7 +476,7 @@ describe('this app\'s subscription limit', () => {
     assert.ok(err instanceof m.AiAppLimitReached)
     assert.ok(err instanceof m.AiBudgetExceeded, 'callers stop their run as at the budget')
     assert.equal(err.kind, 'app_daily')
-    assert.match(err.message, /^This app's daily Claude limit is reached \(est\. \$15\.50 of \$15\.00 today\)\. Claude calls resume at midnight\. Raise the limit in Settings > Pipeline/)
+    assert.match(err.message, /^This app's daily Claude limit is reached \(est\. \$15\.50 of \$15\.00 today\)\. Claude calls resume at midnight\. Raise the limit in Settings > Claude usage/)
     assert.equal(err.until, m.nextMidnight())
     assert.ok(Date.parse(err.until) > Date.now() && Date.parse(err.until) <= Date.now() + 25 * 3600_000)
     assert.equal(calls.length, 0, 'no Claude Code process started')
@@ -486,7 +486,7 @@ describe('this app\'s subscription limit', () => {
     // The chat says it in its own words, with no API key advice.
     const chat = m.stopFor(err)
     assert.equal(chat.stop, 'budget')
-    assert.match(chat.message, /daily Claude limit is reached .* paused until midnight\. Raise the limit in Settings > Pipeline/)
+    assert.match(chat.message, /daily Claude limit is reached .* paused until midnight\. Raise the limit in Settings > Claude usage/)
     assert.doesNotMatch(chat.message, /NUXT_DAILY_AI_BUDGET_USD/)
   })
 
@@ -520,7 +520,7 @@ describe('this app\'s subscription limit', () => {
     const err = await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' }).catch((e: unknown) => e)
     assert.ok(err instanceof m.AiAppLimitReached)
     assert.equal(err.kind, 'app_week')
-    assert.match(err.message, /^This app's 7-day Claude limit is reached \(est\. \$120\.00 of \$105\.00 in the last 7 days\)\. Claude calls resume at (\w{3} )?\d{1,2}:\d{2} [AP]M\. Raise the limit in Settings > Pipeline/)
+    assert.match(err.message, /^This app's 7-day Claude limit is reached \(est\. \$120\.00 of \$105\.00 in the last 7 days\)\. Claude calls resume at (\w{3} )?\d{1,2}:\d{2} [AP]M\. Raise the limit in Settings > Claude usage/)
     // Dropping the call made 6 days ago leaves $60, under $105: that happens in one day.
     assert.ok(isoNear(err.until, Date.now() + 86_400_000), `until ${err.until}`)
     assert.equal(calls.length, 0)

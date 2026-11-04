@@ -1,644 +1,268 @@
 <script setup lang="ts">
-import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
-import { properName } from '#shared/utils/names'
+import type { MemoryStatus } from '#shared/types/memory'
+import { outcomeOf } from '~/composables/review/format'
 
-// Chip close buttons are 18px targets, so the phone removes a source through the menu instead.
-const isDesktop = useState<boolean>('shell-is-desktop')
+// /settings: the list of Settings sub pages, each with what is on it and, where it costs nothing
+// extra, its status. A phone reaches it from the bottom bar's Settings; every sub page's back arrow
+// returns here. On desktop the sidebar group already is this list, so the page moves on to the
+// first sub page instead. Old links to the single Settings page (/settings#pipeline,
+// #github-evidence, #job-sources, #memory) open their sub page. The hash never reaches the server,
+// so both checks run in the browser.
 definePageMeta({ layout: 'default' })
 
-const snackbar = useSnackbar()
+const route = useRoute()
+const isDesktop = useState<boolean>('shell-is-desktop')
+const health = usePipelineHealth()
+const leaving = ref(false)
 
-interface SearchConfig {
-  id: number
-  name: string
-  keywords: string
-  excludedKeywords: string | null
-  locations: string | null
-  remoteOnly: boolean | null
-  salaryMin: number | null
-  salaryCurrency: string | null
-  jobSources: string | null
-  isActive: boolean | null
-  createdAt: string
-}
+// The page mounts before the layout corrects its first guess from the user agent, so ask the
+// browser itself here (the same 960px line the layout uses).
+const desktopNow = () => (import.meta.client ? window.matchMedia('(min-width: 960px)').matches : isDesktop.value)
 
-const configs = ref<SearchConfig[]>([])
-const loading = ref(false)
-const saving = ref(false)
-const showConfigForm = ref(false)
-const editingConfigId = ref<number | null>(null)
-
-const configForm = ref({
-  name: '',
-  keywords: '',
-  excludedKeywords: '',
-  locations: '',
-  salaryMin: null as number | null,
-  remoteOnly: false,
-  jobSources: [] as string[],
-})
-
-const isEditing = computed(() => editingConfigId.value !== null)
-const formTitle = computed(() => isEditing.value ? 'Edit Search Config' : 'New Search Config')
-
-const sourceOptions = [
-  { title: 'JSearch (RapidAPI)', value: 'jsearch', description: 'Comprehensive aggregator. Needs an API key.' },
-  { title: 'Adzuna', value: 'adzuna', description: 'Global job search. Needs an API key.' },
-  { title: 'Remotive', value: 'remotive', description: 'Remote jobs. No API key needed.' },
-  { title: 'RemoteOK', value: 'remoteok', description: 'Remote tech jobs. No API key needed.' },
-  { title: 'Himalayas', value: 'himalayas', description: 'Remote jobs. No API key needed.' },
-  { title: 'Jobicy', value: 'jobicy', description: 'Remote jobs. No API key needed.' },
-  { title: 'Arbeitnow', value: 'arbeitnow', description: 'European and remote jobs. No API key needed.' },
-  { title: 'Hacker News', value: 'hackernews', description: 'Monthly "Who is hiring?" posts and YC job posts. No API key needed.' },
-  { title: 'We Work Remotely', value: 'weworkremotely', description: 'Remote programming and DevOps jobs. No API key needed.' },
-  { title: 'Working Nomads', value: 'workingnomads', description: 'Remote jobs. No API key needed.' },
-  { title: 'Workable Jobs', value: 'workablejobs', description: 'Every Workable employer, searched by keyword. No API key needed.' },
-]
-
-/** The environment variables the API Keys card lists, with what each one is for. */
-const API_KEYS = [
-  { names: ['NUXT_CLAUDE_CODE_OAUTH_TOKEN'], text: 'Your personal Claude subscription token (from claude setup-token). Every AI step runs on it through the Claude Agent SDK. Required for the core features.' },
-  { names: ['NUXT_ANTHROPIC_API_KEY'], text: 'Anthropic Console API key, billed per use. Optional: used only without the subscription token, or for a step NUXT_AI_STEP_BACKENDS sends to the API.' },
-  { names: ['NUXT_JSEARCH_API_KEY'], text: 'RapidAPI key for the JSearch source. Optional: other sources work without keys.' },
-  { names: ['NUXT_ADZUNA_APP_ID', 'NUXT_ADZUNA_API_KEY'], text: 'Adzuna credentials. Optional: free keys at adzuna.com.' },
-  { names: ['NUXT_GITHUB_TOKEN'], text: 'Publishes demo repos and the resume site when you approve an application. Optional: without it nothing is published.' },
-  { names: ['NUXT_GITHUB_READ_TOKENS'], text: 'Read-only GitHub tokens for GitHub evidence (Contents, Metadata, Pull requests read), comma separated, one per owner. Optional: without them GitHub evidence reads with NUXT_GITHUB_TOKEN. NUXT_GITHUB_READ_TOKEN (one token) is the older single-token form.' },
-]
-
-/** Which of those variables the server has, from GET /api/settings/keys. Booleans only, never a value. */
-const keysSet = ref<Record<string, boolean> | null>(null)
-
-async function fetchKeyStatus() {
-  try {
-    keysSet.value = (await $fetch<{ set: Record<string, boolean> }>('/api/settings/keys')).set
-  }
-  catch {
-    keysSet.value = null
-  }
-}
-
-function parseJsonArray(val: string | null): string[] {
-  if (!val) return []
-  try {
-    return JSON.parse(val)
-  }
-  catch {
-    return []
-  }
-}
-
-async function fetchConfigs() {
-  loading.value = true
-  try {
-    const data = await $fetch<SearchConfig[]>('/api/search-configs')
-    configs.value = data
-  }
-  catch {
-    configs.value = []
-  }
-  finally {
-    loading.value = false
-  }
-}
-
-async function toggleConfig(config: SearchConfig) {
-  try {
-    await $fetch('/api/search-configs', {
-      method: 'POST',
-      body: {
-        id: config.id,
-        name: config.name,
-        keywords: config.keywords,
-        excludedKeywords: config.excludedKeywords,
-        locations: config.locations,
-        remoteOnly: !config.isActive,
-        salaryMin: config.salaryMin,
-        salaryCurrency: config.salaryCurrency,
-        jobSources: config.jobSources,
-        isActive: !config.isActive,
-      },
-    })
-    config.isActive = !config.isActive
-    snackbar.success(config.isActive ? 'Config enabled' : 'Config disabled')
-  }
-  catch (e) {
-    console.error('Failed to toggle config:', e)
-    snackbar.error('Failed to update config')
-  }
-}
-
-function resetForm() {
-  editingConfigId.value = null
-  configForm.value = {
-    name: '',
-    keywords: '',
-    excludedKeywords: '',
-    locations: '',
-    salaryMin: null,
-    remoteOnly: false,
-    jobSources: [],
-  }
-}
-
-function editConfig(config: SearchConfig) {
-  editingConfigId.value = config.id
-  configForm.value = {
-    name: config.name,
-    keywords: parseJsonArray(config.keywords).join(', '),
-    excludedKeywords: parseJsonArray(config.excludedKeywords).join(', '),
-    locations: parseJsonArray(config.locations).join(', '),
-    salaryMin: config.salaryMin,
-    remoteOnly: config.remoteOnly ?? false,
-    jobSources: parseJsonArray(config.jobSources),
-  }
-  showConfigForm.value = true
-}
-
-async function deleteConfig(config: SearchConfig) {
-  try {
-    await $fetch('/api/search-configs', {
-      method: 'POST',
-      body: {
-        id: config.id,
-        name: config.name,
-        keywords: config.keywords,
-        isActive: false,
-      },
-    })
-    configs.value = configs.value.filter(c => c.id !== config.id)
-    snackbar.success('Config removed')
-  }
-  catch (e) {
-    console.error('Failed to delete config:', e)
-    snackbar.error('Failed to remove config')
-  }
-}
-
-async function saveConfig() {
-  if (!configForm.value.name || !configForm.value.keywords) return
-
-  saving.value = true
-  try {
-    const body: Record<string, unknown> = {
-      name: configForm.value.name,
-      keywords: configForm.value.keywords.split(',').map(k => k.trim()).filter(Boolean),
-      excludedKeywords: configForm.value.excludedKeywords
-        ? configForm.value.excludedKeywords.split(',').map(k => k.trim()).filter(Boolean)
-        : [],
-      locations: configForm.value.locations
-        ? configForm.value.locations.split(',').map(l => l.trim()).filter(Boolean)
-        : [],
-      salaryMin: configForm.value.salaryMin,
-      remoteOnly: configForm.value.remoteOnly,
-      jobSources: configForm.value.jobSources.length ? configForm.value.jobSources : ['jsearch', 'adzuna', 'remotive'],
-      isActive: true,
-    }
-
-    if (editingConfigId.value) {
-      body.id = editingConfigId.value
-    }
-
-    const saved = await $fetch<SearchConfig>('/api/search-configs', {
-      method: 'POST',
-      body,
-    })
-
-    if (editingConfigId.value) {
-      const idx = configs.value.findIndex(c => c.id === editingConfigId.value)
-      if (idx !== -1) configs.value[idx] = saved
-    }
-    else {
-      configs.value.push(saved)
-    }
-
-    showConfigForm.value = false
-    resetForm()
-    snackbar.success(editingConfigId.value ? 'Config updated' : 'Config created')
-  }
-  catch (e) {
-    console.error('Failed to save config:', e)
-    snackbar.error('Failed to save config. Please check your inputs.')
-  }
-  finally {
-    saving.value = false
-  }
+function moveOn() {
+  const legacy = settingsPathForHash(route.hash)
+  const target = legacy ?? (desktopNow() ? settingsPath(SETTINGS_PAGES[0]!.slug) : null)
+  if (!target) return
+  leaving.value = true
+  return navigateTo(target, { replace: true })
 }
 
 onMounted(() => {
-  fetchConfigs()
-  fetchKeyStatus()
+  void moveOn()
+})
+watch(isDesktop, (desktop) => {
+  if (desktop) void moveOn()
+})
+
+// ── Statuses: only what is already loaded (the shell's pipeline health) or a stored row ──
+type Tone = 'warning' | 'error' | 'info' | 'success' | 'neutral'
+interface Status { text: string; tone: Tone }
+
+const usd = (n: number) => `$${n.toFixed(2)}`
+
+const pipelineStatus = computed<Status | null>(() => {
+  const r = health.runs.value
+  if (!r) return null
+  const q = r.queue
+  if (q?.runs.length) return { text: 'Full run under way', tone: 'info' }
+  if (q?.running.length) return { text: 'Running', tone: 'info' }
+  if (q?.waiting.length) return { text: `${q.waiting.length} waiting`, tone: 'neutral' }
+  const last = r.lastDaily
+  if (!last) return null
+  const o = outcomeOf(last)
+  if (o === 'failed') return { text: 'Last full run failed', tone: 'error' }
+  if (o === 'partial') return { text: 'Last full run partly failed', tone: 'warning' }
+  return null
+})
+
+const usageStatus = computed<Status | null>(() => {
+  const r = health.runs.value
+  if (!r) return null
+  const sub = r.subscription
+  if (sub?.pause || sub?.stop) return { text: 'Paused', tone: 'warning' }
+  if (sub?.on && sub.limits && sub.spent) return { text: `est. ${usd(sub.spent.today.estUsd)} of ${usd(sub.limits.dailyUsd)} today`, tone: 'neutral' }
+  return { text: `${usd(r.aiSpentToday)} of ${usd(r.aiBudget)} today`, tone: 'neutral' }
+})
+
+const activeSearches = ref<number | null>(null)
+const memory = ref<MemoryStatus | null>(null)
+const keysSet = ref<Record<string, boolean> | null>(null)
+
+/** The variables the API keys page lists (the older single read token is left out). */
+const LISTED_KEYS = ['NUXT_CLAUDE_CODE_OAUTH_TOKEN', 'NUXT_ANTHROPIC_API_KEY', 'NUXT_JSEARCH_API_KEY', 'NUXT_ADZUNA_APP_ID', 'NUXT_ADZUNA_API_KEY', 'NUXT_GITHUB_TOKEN', 'NUXT_GITHUB_READ_TOKENS']
+
+const MEMORY: Record<MemoryStatus['state'], Status> = {
+  off: { text: 'Off', tone: 'neutral' },
+  reachable: { text: 'Reachable', tone: 'success' },
+  busy: { text: 'Busy or asleep', tone: 'neutral' },
+  unreachable: { text: 'Not reachable', tone: 'warning' },
+  unknown: { text: 'Not checked yet', tone: 'neutral' },
+}
+
+const statuses = computed<Record<string, Status | null>>(() => ({
+  'pipeline': pipelineStatus.value,
+  'claude-usage': usageStatus.value,
+  'job-search': activeSearches.value == null
+    ? null
+    : activeSearches.value
+      ? { text: `${activeSearches.value} active ${activeSearches.value === 1 ? 'search' : 'searches'}`, tone: 'neutral' }
+      : { text: 'No active search', tone: 'warning' },
+  // No status: the repo list behind it reads GitHub when it is older than a day, too much for a list.
+  'github-evidence': null,
+  'memory': memory.value ? MEMORY[memory.value.state] : null,
+  'api-keys': keysSet.value
+    ? (!keysSet.value.NUXT_CLAUDE_CODE_OAUTH_TOKEN && !keysSet.value.NUXT_ANTHROPIC_API_KEY)
+        ? { text: 'No Claude token or key', tone: 'warning' }
+        : { text: `${LISTED_KEYS.filter(k => keysSet.value![k]).length} of ${LISTED_KEYS.length} set`, tone: 'neutral' }
+    : null,
+}))
+
+onMounted(async () => {
+  if (leaving.value) return
+  // Each one is a stored row; a failure only leaves its status out.
+  await Promise.allSettled([
+    $fetch<Array<{ isActive: boolean | null }>>('/api/search-configs').then((rows) => { activeSearches.value = rows.filter(r => r.isActive).length }),
+    $fetch<MemoryStatus>('/api/memory/status').then((m) => { memory.value = m }),
+    $fetch<{ set: Record<string, boolean> }>('/api/settings/keys').then((k) => { keysSet.value = k.set }),
+  ])
 })
 </script>
 
 <template>
   <div class="fade-in">
-    <!-- Page Header -->
-    <div class="page-header mb-8">
-      <h1 class="text-h4 page-header__title">Settings</h1>
-      <p class="text-body-2 page-header__subtitle">
-        Run the pipeline by hand, choose the GitHub repos that can answer skill questions, set what it searches for, and check which API keys it needs. Active searches run {{ PIPELINE_SCHEDULE_TEXT }}.
-      </p>
-    </div>
+    <!-- Desktop moves on to the first sub page; rendering the list there would only flash. -->
+    <template v-if="!isDesktop && !leaving">
+      <div class="page-header settings-hub__header">
+        <h1 class="text-h4 page-header__title">Settings</h1>
+        <p class="text-body-2 page-header__subtitle">Pick what to change or check.</p>
+      </div>
 
-    <!-- Pipeline -->
-    <v-card id="pipeline" variant="outlined" class="mb-6 settings__pipeline">
-      <v-card-item>
-        <template #prepend>
-          <v-avatar color="primary" variant="tonal" size="36" rounded="lg">
-            <v-icon icon="mdi-pipe" size="20" />
-          </v-avatar>
-        </template>
-        <v-card-title class="text-subtitle-1 font-weight-medium">
-          Pipeline
-        </v-card-title>
-        <v-card-subtitle>
-          Runs {{ PIPELINE_SCHEDULE_TEXT }}. Start the whole run or any one step here.
-        </v-card-subtitle>
-      </v-card-item>
-      <v-card-text>
-        <ReviewPipelinePanel />
-      </v-card-text>
-    </v-card>
-
-    <!-- GitHub evidence: answers to skill questions from his own commits -->
-    <SettingsGithubEvidence id="github-evidence" class="mb-6" />
-
-    <!-- Memory: Devin's past Claude sessions as leads for questions -->
-    <v-card id="memory" variant="outlined" class="mb-6">
-      <v-card-item>
-        <template #prepend>
-          <v-avatar color="secondary" variant="tonal" size="36" rounded="lg">
-            <v-icon icon="mdi-history" size="20" />
-          </v-avatar>
-        </template>
-        <v-card-title class="text-subtitle-1 font-weight-medium">
-          Memory
-        </v-card-title>
-        <v-card-subtitle>
-          Your past Claude sessions on your laptop, searched for leads on open questions.
-        </v-card-subtitle>
-      </v-card-item>
-      <v-card-text>
-        <SettingsMemoryStatus />
-      </v-card-text>
-    </v-card>
-
-    <!-- Job sources: last pull per source, and Pull everything again -->
-    <SettingsJobSources id="job-sources" class="mb-6" />
-
-    <!-- Search Configurations -->
-    <v-card variant="outlined" class="mb-6">
-      <v-card-item class="settings__configs-head">
-        <template #prepend>
-          <v-avatar color="accent" variant="tonal" size="36">
-            <v-icon icon="mdi-tune-variant" size="20" />
-          </v-avatar>
-        </template>
-        <v-card-title class="text-subtitle-1 font-weight-medium">
-          Search Configurations
-        </v-card-title>
-        <v-card-subtitle>
-          Define what jobs to search for. Each active config runs on its own in every scheduled search, {{ PIPELINE_SCHEDULE_TEXT }}.
-        </v-card-subtitle>
-        <template #append>
-          <v-btn
-            color="primary"
-            variant="tonal"
-            prepend-icon="mdi-plus"
-            size="small"
-            @click="resetForm(); showConfigForm = !showConfigForm"
-          >
-            Add Config
-          </v-btn>
-        </template>
-      </v-card-item>
-
-      <v-card-text>
-        <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
-
-        <!-- Config Form (Create / Edit) -->
-        <v-expand-transition>
-          <v-card v-show="showConfigForm" variant="tonal" color="primary" class="mb-4">
-            <v-card-item>
-              <v-card-title class="text-subtitle-2 font-weight-bold">{{ formTitle }}</v-card-title>
-            </v-card-item>
-            <v-card-text>
-              <v-row>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="configForm.name"
-                    label="Config name"
-                    placeholder="e.g., Senior Frontend Roles"
-                    hint="A descriptive name to identify this search"
-                    persistent-hint
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="configForm.keywords"
-                    label="Keywords (comma-separated)"
-                    placeholder="e.g., senior developer, staff engineer, tech lead"
-                    hint="Job titles or skills to search for"
-                    persistent-hint
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="configForm.excludedKeywords"
-                    label="Excluded keywords (comma-separated)"
-                    placeholder="e.g., junior, intern, .NET"
-                    hint="Filter out jobs containing these terms"
-                    persistent-hint
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-text-field
-                    v-model="configForm.locations"
-                    label="Locations (comma-separated)"
-                    placeholder="e.g., Remote, United States, New York"
-                    hint="Leave empty for worldwide results"
-                    persistent-hint
-                  />
-                </v-col>
-                <v-col cols="12" sm="3">
-                  <v-text-field
-                    v-model.number="configForm.salaryMin"
-                    label="Minimum salary"
-                    type="number"
-                    prefix="$"
-                    hint="Annual minimum"
-                    persistent-hint
-                  />
-                </v-col>
-                <v-col cols="12" sm="3" class="d-flex align-center">
-                  <v-switch
-                    v-model="configForm.remoteOnly"
-                    label="Remote only"
-                    color="primary"
-                    hide-details
-                  />
-                </v-col>
-                <v-col cols="12" sm="6">
-                  <v-select
-                    v-model="configForm.jobSources"
-                    :items="sourceOptions"
-                    label="Job sources"
-                    multiple
-                    chips
-                    :closable-chips="isDesktop"
-                    hint="If none selected, defaults to JSearch, Adzuna, and Remotive"
-                    persistent-hint
-                  />
-                </v-col>
-                <v-col cols="12" class="d-flex justify-end ga-2">
-                  <v-btn variant="text" @click="showConfigForm = false; resetForm()">Cancel</v-btn>
-                  <v-btn
-                    color="primary"
-                    :loading="saving"
-                    :disabled="!configForm.name || !configForm.keywords"
-                    @click="saveConfig"
-                  >
-                    {{ isEditing ? 'Update Config' : 'Save Config' }}
-                  </v-btn>
-                </v-col>
-              </v-row>
-            </v-card-text>
-          </v-card>
-        </v-expand-transition>
-
-        <!-- Existing Configs -->
-        <template v-if="configs.length">
-          <v-card v-for="config in configs" :key="config.id" variant="outlined" class="mb-3">
-            <v-card-item>
-              <template #prepend>
-                <v-switch
-                  :model-value="config.isActive ?? false"
-                  color="success"
-                  hide-details
-                  density="compact"
-                  :aria-label="`Include ${config.name} in the scheduled searches`"
-                  @update:model-value="toggleConfig(config)"
-                />
-              </template>
-              <v-card-title class="text-subtitle-2 font-weight-medium">{{ config.name }}</v-card-title>
-              <v-card-subtitle class="text-caption">
-                Keywords: {{ parseJsonArray(config.keywords).join(', ') }}
-              </v-card-subtitle>
-              <template #append>
-                <v-btn
-                  icon="mdi-pencil-outline"
-                  variant="text"
-                  size="small"
-                  :aria-label="`Edit ${config.name}`"
-                  @click="editConfig(config)"
-                />
-                <v-btn
-                  icon="mdi-delete-outline"
-                  variant="text"
-                  color="error"
-                  size="small"
-                  :aria-label="`Delete ${config.name}`"
-                  @click="deleteConfig(config)"
-                />
-              </template>
-            </v-card-item>
-            <v-card-text class="pt-0">
-              <div class="d-flex flex-wrap ga-2 settings__config-chips">
-                <v-chip
-                  v-if="config.excludedKeywords"
-                  size="x-small"
-                  variant="outlined"
-                  prepend-icon="mdi-minus-circle-outline"
-                  color="error"
-                >
-                  Exclude: {{ parseJsonArray(config.excludedKeywords).join(', ') }}
-                </v-chip>
-                <v-chip
-                  v-if="config.locations"
-                  size="x-small"
-                  variant="outlined"
-                  prepend-icon="mdi-map-marker-outline"
-                >
-                  {{ parseJsonArray(config.locations).join(', ') }}
-                </v-chip>
-                <v-chip
-                  v-if="config.salaryMin"
-                  size="x-small"
-                  variant="outlined"
-                  prepend-icon="mdi-currency-usd"
-                >
-                  ${{ config.salaryMin.toLocaleString() }}+
-                </v-chip>
-                <v-chip
-                  v-if="config.remoteOnly"
-                  size="x-small"
-                  variant="outlined"
-                  prepend-icon="mdi-earth"
-                  color="accent"
-                >
-                  Remote only
-                </v-chip>
-                <v-chip
-                  v-for="source in parseJsonArray(config.jobSources)"
-                  :key="source"
-                  size="x-small"
-                  variant="tonal"
-                  color="secondary"
-                >
-                  {{ properName(source) }}
-                </v-chip>
-              </div>
-            </v-card-text>
-          </v-card>
-        </template>
-
-        <div v-else-if="!loading" class="text-center pa-8">
-          <v-icon icon="mdi-tune-variant" size="48" class="mb-3" style="opacity: 0.25;" />
-          <p class="text-body-2 text-medium-emphasis mb-1">No search configurations yet</p>
-          <p class="text-caption text-medium-emphasis">
-            Create a search config to define what types of jobs you're looking for. Click "Add Config" above to get started.
-          </p>
-        </div>
-      </v-card-text>
-    </v-card>
-
-    <!-- API Keys Info -->
-    <v-card variant="outlined">
-      <v-card-item>
-        <template #prepend>
-          <v-avatar color="warning" variant="tonal" size="36">
-            <v-icon icon="mdi-key-outline" size="20" />
-          </v-avatar>
-        </template>
-        <v-card-title class="text-subtitle-1 font-weight-medium">
-          API Keys
-        </v-card-title>
-        <v-card-subtitle>
-          API keys are set as environment variables on the server. They are never exposed in the browser.
-        </v-card-subtitle>
-      </v-card-item>
-      <v-card-text>
-        <v-alert type="info" variant="tonal" class="mb-0">
-          <div class="text-body-2 font-weight-medium mb-2">
-            Environment variables, and whether each is set on this server:
-          </div>
-          <!-- A stacked list, not a table: at 390 the alert's icon column left the description
-               column one word wide and cut it off on the right. -->
-          <dl class="settings__keys">
-            <div v-for="k in API_KEYS" :key="k.names.join()" class="settings__key">
-              <dt class="settings__key-names">
-                <span v-for="n in k.names" :key="n" class="settings__key-name">
-                  <code>{{ n }}</code>
+      <nav aria-label="Settings pages">
+        <ul class="settings-hub">
+          <li v-for="p in SETTINGS_PAGES" :key="p.slug">
+            <NuxtLink :to="settingsPath(p.slug)" class="settings-hub__row">
+              <v-icon :icon="p.icon" size="20" class="settings-hub__icon" />
+              <span class="settings-hub__text">
+                <span class="settings-hub__title-line">
+                  <span class="settings-hub__title">{{ p.title }}</span>
                   <span
-                    v-if="keysSet"
-                    class="settings__key-status"
-                    :class="keysSet[n] ? 'settings__key-status--set' : 'settings__key-status--unset'"
-                  >{{ keysSet[n] ? 'Set' : 'Not set' }}</span>
+                    v-if="statuses[p.slug]"
+                    class="settings-hub__status"
+                    :class="`settings-hub__status--${statuses[p.slug]!.tone}`"
+                  >{{ statuses[p.slug]!.text }}</span>
                 </span>
-              </dt>
-              <dd class="settings__key-text">{{ k.text }}</dd>
-            </div>
-          </dl>
-          <div class="text-caption text-medium-emphasis mt-3">
-            Set these in your <code>.env</code> file or Coolify environment settings. Free sources (Remotive, RemoteOK, Himalayas, Jobicy, Arbeitnow, Hacker News, We Work Remotely, Working Nomads, Workable Jobs, and the employer boards) work without any API keys.
-          </div>
-        </v-alert>
-      </v-card-text>
-    </v-card>
+                <span class="settings-hub__blurb">{{ p.blurb }}</span>
+              </span>
+              <v-icon icon="mdi-chevron-right" size="20" class="settings-hub__chev" />
+            </NuxtLink>
+          </li>
+        </ul>
+      </nav>
+    </template>
+    <v-progress-linear v-else indeterminate color="primary" class="settings-hub__moving" aria-label="Opening Settings" />
   </div>
 </template>
 
 <style scoped lang="scss">
-// Card subtitles here are full sentences; let them wrap instead of cutting off on a phone.
-.v-card :deep(.v-card-subtitle),
-.v-card :deep(.v-card-title) {
-  white-space: normal;
-  line-height: 1.45;
-}
-
-.settings__pipeline {
-  scroll-margin-top: 72px;
-}
-
-// A long exclude list or location list wraps inside its chip instead of being cut off at 390.
-.settings__config-chips :deep(.v-chip) {
-  max-width: 100%;
-  height: auto;
-  min-height: 20px;
-  padding-top: 2px;
-  padding-bottom: 2px;
-  white-space: normal;
-}
-
-.settings__keys {
+.settings-hub {
+  list-style: none;
   margin: 0;
-}
+  padding: 0;
+  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  overflow: hidden;
 
-.settings__key {
-  padding: 8px 0;
-  border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-
-  &:first-child {
-    border-top: 0;
-    padding-top: 0;
-  }
-}
-
-.settings__key-names {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  font-size: 0.75rem;
-  font-weight: 700;
-
-  code {
-    overflow-wrap: anywhere;
-  }
-}
-
-.settings__key-name {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 2px 6px;
-  min-width: 0;
-}
-
-.settings__key-status {
-  font-weight: 600;
-  font-size: 0.6875rem;
-  padding: 1px 6px;
-  border-radius: 6px;
-
-  &--set {
-    color: rgb(var(--v-theme-success));
-    background: rgba(var(--v-theme-success), 0.14);
+  li + li {
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 
-  &--unset {
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-    background: rgba(var(--v-theme-on-surface), 0.08);
+  &__header {
+    margin-bottom: 20px;
   }
-}
 
-.settings__key-text {
-  margin: 2px 0 0;
-  font-size: 0.75rem;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-}
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 72px;
+    padding: 12px 12px 12px 16px;
+    color: inherit;
+    text-decoration: none;
+    transition: background-color 150ms cubic-bezier(0.23, 1, 0.32, 1);
 
-// Phone: Add Config drops under the section title so the title and subtitle get the full width.
-@media (max-width: 599.98px) {
-  .settings__configs-head {
-    grid-template-areas:
-      'prepend content'
-      '. append';
-
-    :deep(.v-card-item__append) {
-      justify-self: start;
-      padding-inline-start: 0;
-      padding-top: 12px;
+    &:hover {
+      background: rgba(var(--v-theme-on-surface), var(--v-hover-opacity));
     }
+
+    &:active {
+      background: rgba(var(--v-theme-on-surface), var(--v-activated-opacity));
+    }
+
+    &:focus-visible {
+      outline-offset: -2px;
+    }
+  }
+
+  &__icon {
+    flex: none;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  }
+
+  &__text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  &__title-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+  }
+
+  &__title {
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+
+  &__blurb {
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    text-wrap: pretty;
+  }
+
+  // Status tag from the design system: 12px/600, 2px 8px, 6px corners, color at 12% fill.
+  &__status {
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    padding: 1px 8px;
+    border-radius: 6px;
+
+    &--neutral {
+      color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+      background: rgba(var(--v-theme-on-surface), 0.08);
+    }
+
+    &--warning {
+      color: rgb(var(--v-theme-warning));
+      background: rgba(var(--v-theme-warning), 0.12);
+    }
+
+    &--error {
+      color: rgb(var(--v-theme-error));
+      background: rgba(var(--v-theme-error), 0.12);
+    }
+
+    &--info {
+      color: rgb(var(--v-theme-info));
+      background: rgba(var(--v-theme-info), 0.12);
+    }
+
+    &--success {
+      color: rgb(var(--v-theme-success));
+      background: rgba(var(--v-theme-success), 0.12);
+    }
+  }
+
+  &__chev {
+    flex: none;
+    color: rgba(var(--v-theme-on-surface), var(--v-disabled-opacity));
+  }
+
+  &__moving {
+    max-width: 240px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-hub__row {
+    transition: none;
   }
 }
 </style>

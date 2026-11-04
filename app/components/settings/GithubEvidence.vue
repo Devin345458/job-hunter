@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import type { AppRepoTopic, RepoOwnerGroup, RepoSettingsView, RepoView } from '#shared/types/repos'
 
-// Settings > GitHub evidence. The repos the read tokens can see, grouped by owner, each with a
+// Settings > GitHub evidence (its own page since 2026-11-04). The repos the read tokens can see, grouped by owner, each with a
 // switch: his own repos are on by default except forks, every organization's and other person's repo is off,
 // and switching one of those on shows the client code warning. Below that, the commit identities
 // that count as his. GET /api/repos never returns a token.
 
 const snackbar = useSnackbar()
+const route = useRoute()
+const router = useRouter()
+// Two tabs: Repos (find, index, switches) and Identities and tokens. The tab is in the URL
+// (?tab=identities), so a link can open it; both stay mounted, so a half-typed identity list
+// survives a tab switch. This app's repo keeps its topics in its own row, beside its switch.
+const tab = computed<'repos' | 'identities'>({
+  get: () => (route.query.tab === 'identities' ? 'identities' : 'repos'),
+  set: (v) => { void router.replace({ query: { ...route.query, tab: v === 'repos' ? undefined : v } }) },
+})
 const data = ref<RepoSettingsView | null>(null)
 const loading = ref(true)
 const refreshing = ref(false)
@@ -423,17 +432,11 @@ onMounted(async () => {
 
 <template>
   <v-card variant="outlined" class="ghe">
-    <v-card-item>
-      <template #prepend>
-        <v-avatar color="success" variant="tonal" size="36" rounded="lg">
-          <v-icon icon="mdi-github" size="20" />
-        </v-avatar>
-      </template>
-      <v-card-title class="text-subtitle-1 font-weight-medium">GitHub evidence</v-card-title>
-      <v-card-subtitle>
-        Suggests answers to skill and experience questions from commits you authored, with links. Code in a repo you can read is not code you wrote, so only your own commits count, and finding nothing never means No.
-      </v-card-subtitle>
-    </v-card-item>
+    <!-- The page header carries the title and what GitHub evidence does; the tabs are this card's header. -->
+    <v-tabs v-model="tab" color="primary" height="48" class="ghe__tabs" aria-label="GitHub evidence sections">
+      <v-tab value="repos" class="ghe__tab">Repos</v-tab>
+      <v-tab value="identities" class="ghe__tab">Identities and tokens</v-tab>
+    </v-tabs>
 
     <v-card-text>
       <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
@@ -451,335 +454,342 @@ onMounted(async () => {
           Until then, GitHub hides their repos and commits from it.
         </v-alert>
 
-        <!-- Tokens -->
-        <section v-if="data.tokens.length" class="ghe__block" aria-labelledby="ghe-tokens">
-          <h3 id="ghe-tokens" class="ghe__heading">Tokens</h3>
-          <ul class="ghe__tokens">
-            <li v-for="t in data.tokens" :key="t.position" class="ghe__token">
-              <div class="ghe__token-name">
-                Token {{ t.position }}<span class="ghe__muted">, from {{ t.source }}</span>
+        <v-tabs-window v-model="tab" class="ghe__windows">
+          <v-tabs-window-item value="repos" :transition="false" :reverse-transition="false">
+            <!-- Find repos with my commits -->
+            <section v-if="data.configured" class="ghe__block ghe__status" aria-labelledby="ghe-find" aria-live="polite">
+              <div class="ghe__status-text">
+                <h3 id="ghe-find" class="ghe__heading">Repos with your commits</h3>
+                <template v-if="data.find.running && data.find.progress">
+                  Searching GitHub: {{ plural(data.find.progress.commits, 'commit', 'commits') }} in {{ plural(data.find.progress.repos, 'repo', 'repos') }} so far.
+                  <template v-if="data.find.progress.waitingSeconds">Waiting {{ data.find.progress.waitingSeconds }} seconds for GitHub's limit of 30 searches a minute.</template>
+                </template>
+                <template v-else-if="data.find.at">
+                  {{ plural(data.find.commits, 'commit', 'commits') }} of yours in {{ plural(data.find.repos, 'repo', 'repos') }} across {{ plural(data.find.owners, 'owner', 'owners') }}, found {{ when(data.find.at) }} in {{ duration(data.find.seconds) }}. The daily run searches again once a day.
+                </template>
+                <template v-else>
+                  Searches GitHub for every commit by your logins and emails, across every owner your tokens can read, and counts them per repo. Takes a few minutes.
+                </template>
+                <div v-for="n in data.find.notes" :key="n" class="ghe__muted">{{ n }}</div>
+                <div v-if="data.find.error && !data.find.running" class="ghe__token-error">The last search failed: {{ data.find.error }}</div>
               </div>
-              <div v-if="t.error" class="ghe__token-error">{{ t.error }}</div>
-              <div v-else class="ghe__token-text">
-                Signed in as {{ t.login }}. Reads {{ ownersText(t.owners) }}.
-                <template v-if="t.ssoOrgs.length"> GitHub left out {{ t.ssoOrgs.join(', ') }} until the token is authorized for SSO there.</template>
+              <div class="ghe__status-actions">
+                <v-btn color="primary" variant="tonal" height="44" prepend-icon="mdi-source-commit" :loading="finding || data.find.running" @click="findRepos">
+                  Find repos with my commits
+                </v-btn>
               </div>
-            </li>
-          </ul>
-        </section>
+              <div v-if="data.find.at && !data.find.running" class="ghe__bulk-all">
+                <v-btn
+                  v-if="data.find.turnOn.repos"
+                  color="success"
+                  variant="flat"
+                  height="44"
+                  prepend-icon="mdi-toggle-switch"
+                  :loading="bulkBusy === 'on:all'"
+                  :disabled="!!bulkBusy"
+                  @click="turnOnWithCommits()"
+                >
+                  Turn on every repo with your commits ({{ plural(data.find.turnOn.repos, 'repo', 'repos') }} across {{ plural(data.find.turnOn.owners, 'owner', 'owners') }})
+                </v-btn>
+                <span v-else-if="data.find.repos" class="ghe__muted">Every repo with your commits is on, except forks.</span>
+              </div>
+            </section>
 
-        <!-- Find repos with my commits -->
-        <section v-if="data.configured" class="ghe__block ghe__status" aria-labelledby="ghe-find" aria-live="polite">
-          <div class="ghe__status-text">
-            <h3 id="ghe-find" class="ghe__heading">Repos with your commits</h3>
-            <template v-if="data.find.running && data.find.progress">
-              Searching GitHub: {{ plural(data.find.progress.commits, 'commit', 'commits') }} in {{ plural(data.find.progress.repos, 'repo', 'repos') }} so far.
-              <template v-if="data.find.progress.waitingSeconds">Waiting {{ data.find.progress.waitingSeconds }} seconds for GitHub's limit of 30 searches a minute.</template>
-            </template>
-            <template v-else-if="data.find.at">
-              {{ plural(data.find.commits, 'commit', 'commits') }} of yours in {{ plural(data.find.repos, 'repo', 'repos') }} across {{ plural(data.find.owners, 'owner', 'owners') }}, found {{ when(data.find.at) }} in {{ duration(data.find.seconds) }}. The daily run searches again once a day.
-            </template>
-            <template v-else>
-              Searches GitHub for every commit by your logins and emails, across every owner your tokens can read, and counts them per repo. Takes a few minutes.
-            </template>
-            <div v-for="n in data.find.notes" :key="n" class="ghe__muted">{{ n }}</div>
-            <div v-if="data.find.error && !data.find.running" class="ghe__token-error">The last search failed: {{ data.find.error }}</div>
-          </div>
-          <div class="ghe__status-actions">
-            <v-btn color="primary" variant="tonal" height="44" prepend-icon="mdi-source-commit" :loading="finding || data.find.running" @click="findRepos">
-              Find repos with my commits
-            </v-btn>
-          </div>
-          <div v-if="data.find.at && !data.find.running" class="ghe__bulk-all">
-            <v-btn
-              v-if="data.find.turnOn.repos"
-              color="success"
-              variant="flat"
-              height="44"
-              prepend-icon="mdi-toggle-switch"
-              :loading="bulkBusy === 'on:all'"
-              :disabled="!!bulkBusy"
-              @click="turnOnWithCommits()"
-            >
-              Turn on every repo with your commits ({{ plural(data.find.turnOn.repos, 'repo', 'repos') }} across {{ plural(data.find.turnOn.owners, 'owner', 'owners') }})
-            </v-btn>
-            <span v-else-if="data.find.repos" class="ghe__muted">Every repo with your commits is on, except forks.</span>
-          </div>
-        </section>
+            <!-- Index status -->
+            <section v-if="data.configured" class="ghe__block ghe__status" aria-live="polite">
+              <div class="ghe__status-text">
+                <template v-if="data.index.included">
+                  {{ data.index.indexed.toLocaleString('en-US') }} of {{ plural(data.index.included, 'repo', 'repos') }} indexed<template v-if="data.indexedCommits">, {{ plural(data.indexedCommits, 'commit', 'commits') }} of yours searchable</template>.
+                  {{ indexWaiting }}
+                  <template v-if="data.index.oversized">{{ plural(data.index.oversized, 'repo is', 'repos are') }} over 500 MB and never cloned.</template>
+                  <template v-if="data.index.sso">{{ plural(data.index.sso, 'repo waits', 'repos wait') }} for SSO authorization.</template>
+                </template>
+                <template v-else>No repo is switched on yet, so nothing is indexed.</template>
+                <template v-if="data.lastIndex">
+                  Last index {{ when(data.lastIndex.startedAt) }}, {{ data.lastIndex.status }}.
+                </template>
+                The daily run indexes first and suggests answers last.
+              </div>
+              <div class="ghe__status-actions">
+                <v-btn color="primary" variant="tonal" height="44" prepend-icon="mdi-database-sync-outline" :loading="indexing" :disabled="!included.length" @click="indexNow">
+                  Index now
+                </v-btn>
+                <v-btn variant="text" height="44" prepend-icon="mdi-refresh" :loading="refreshing" @click="load(true)">
+                  Refresh repo list
+                </v-btn>
+              </div>
+            </section>
 
-        <!-- Index status -->
-        <section v-if="data.configured" class="ghe__block ghe__status" aria-live="polite">
-          <div class="ghe__status-text">
-            <template v-if="data.index.included">
-              {{ data.index.indexed.toLocaleString('en-US') }} of {{ plural(data.index.included, 'repo', 'repos') }} indexed<template v-if="data.indexedCommits">, {{ plural(data.indexedCommits, 'commit', 'commits') }} of yours searchable</template>.
-              {{ indexWaiting }}
-              <template v-if="data.index.oversized">{{ plural(data.index.oversized, 'repo is', 'repos are') }} over 500 MB and never cloned.</template>
-              <template v-if="data.index.sso">{{ plural(data.index.sso, 'repo waits', 'repos wait') }} for SSO authorization.</template>
-            </template>
-            <template v-else>No repo is switched on yet, so nothing is indexed.</template>
-            <template v-if="data.lastIndex">
-              Last index {{ when(data.lastIndex.startedAt) }}, {{ data.lastIndex.status }}.
-            </template>
-            The daily run indexes first and suggests answers last.
-          </div>
-          <div class="ghe__status-actions">
-            <v-btn color="primary" variant="tonal" height="44" prepend-icon="mdi-database-sync-outline" :loading="indexing" :disabled="!included.length" @click="indexNow">
-              Index now
-            </v-btn>
-            <v-btn variant="text" height="44" prepend-icon="mdi-refresh" :loading="refreshing" @click="load(true)">
-              Refresh repo list
-            </v-btn>
-          </div>
-        </section>
-
-        <!-- Repos by owner -->
-        <section v-if="data.groups.length" class="ghe__block" aria-labelledby="ghe-repos">
-          <h3 id="ghe-repos" class="ghe__heading">Repos</h3>
-          <p class="ghe__hint">
-            Your own repos are on by default. Forks and organization and client repos stay off until you turn them on. Turning on in bulk skips forks and repos without your commits. Turning a repo off deletes everything indexed from it.
-          </p>
-          <div class="ghe__narrow">
-            <p v-if="!data.find.at" class="ghe__hint mb-0">Find repos with my commits to narrow this list.</p>
-            <template v-else>
-              <p class="ghe__hint mb-0">
-                <template v-if="narrowed">Showing repos with your commits, most first, and any you switched on. {{ plural(hiddenCount, 'repo is', 'repos are') }} hidden.</template>
-                <template v-else>Showing every repo your tokens can read.</template>
+            <!-- Repos by owner -->
+            <section v-if="data.groups.length" class="ghe__block" aria-labelledby="ghe-repos">
+              <h3 id="ghe-repos" class="ghe__heading">Repos by owner</h3>
+              <p class="ghe__hint">
+                Your own repos are on by default. Forks and organization and client repos stay off until you turn them on. Turning on in bulk skips forks and repos without your commits. Turning a repo off deletes everything indexed from it.
               </p>
-              <v-switch v-model="showAll" color="primary" hide-details inset density="compact" label="Show all repos" class="ghe__narrow-switch" />
-            </template>
-          </div>
-          <div class="ghe__describe">
-            <p class="ghe__hint mb-0">
-              Answers, letters, and resumes never name a client, repo, or organization. They describe the project instead, in the words under each switched-on repo. Correct any that are wrong.
-            </p>
-            <v-btn variant="tonal" height="40" class="ghe__describe-btn" prepend-icon="mdi-text-box-edit-outline" :loading="describing" @click="writeDescriptions">
-              Write missing descriptions
-            </v-btn>
-          </div>
-          <v-expansion-panels v-model="openPanels" multiple variant="accordion" class="ghe__owners">
-            <v-expansion-panel v-for="g in shownGroups" :key="g.owner" :value="g.owner" class="ghe__owner">
-              <v-expansion-panel-title class="ghe__owner-title">
-                <div class="ghe__owner-head">
-                  <span class="ghe__owner-name">{{ g.owner }}</span>
-                  <span class="ghe__owner-meta">
-                    {{ g.personal ? 'Yours, on by default except forks' : g.ownerType === 'Organization' ? 'Organization, off by default' : 'Someone else\'s, off by default' }}.
-                    {{ onCount(g) }} of {{ g.repos.length }} on.
-                    <template v-if="g.withCommits != null">{{ g.withCommits ? `${plural(g.withCommits, 'has', 'have')} your commits.` : 'None have your commits.' }}</template>
-                    <template v-if="g.sso"> Needs SSO authorization.</template>
-                  </span>
-                </div>
-              </v-expansion-panel-title>
-              <v-expansion-panel-text>
-                <div v-if="(g.withCommitsOff ?? 0) > 0 || onCount(g) > 0" class="ghe__bulk">
-                  <v-btn
-                    v-if="(g.withCommitsOff ?? 0) > 0"
-                    color="success"
-                    variant="tonal"
-                    height="44"
-                    prepend-icon="mdi-toggle-switch"
-                    :loading="bulkBusy === `on:${g.owner}`"
-                    :disabled="!!bulkBusy"
-                    @click="turnOnWithCommits(g)"
-                  >
-                    Turn on the {{ plural(g.withCommitsOff ?? 0, 'repo', 'repos') }} with your commits
-                  </v-btn>
-                  <v-btn
-                    v-if="onCount(g) > 0"
-                    variant="text"
-                    height="44"
-                    prepend-icon="mdi-toggle-switch-off-outline"
-                    :loading="bulkBusy === `off:${g.owner}`"
-                    :disabled="!!bulkBusy"
-                    @click="turnAllOff(g)"
-                  >
-                    Turn all off
-                  </v-btn>
-                </div>
-                <v-alert v-if="!g.personal && onCount(g) > 0" type="warning" density="compact" class="ghe__warning" role="note">
-                  {{ CLIENT_WARNING }}
-                </v-alert>
-                <v-text-field
-                  v-if="listedRepos(g).length > 12"
-                  v-model="filters[g.owner]"
-                  :label="`Find a repo in ${g.owner}`"
-                  prepend-inner-icon="mdi-magnify"
-                  clearable
-                  hide-details
-                  density="compact"
-                  class="ghe__filter"
-                />
-                <ul class="ghe__repos">
-                  <li v-for="r in visibleRepos(g)" :key="r.fullName" class="ghe__repo">
-                    <div class="ghe__repo-row">
-                      <div class="ghe__repo-text">
-                        <!-- Name and details are one link, so the tap area is the full 44px row height. -->
-                        <a v-if="r.htmlUrl" :href="r.htmlUrl" target="_blank" rel="noopener noreferrer" class="ghe__repo-link" :aria-label="`${r.name} on GitHub (opens a new tab)`">
-                          <span class="ghe__repo-name">{{ r.name }}<span v-if="r.isFork" class="ghe__fork">Fork</span></span>
-                          <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
-                        </a>
-                        <div v-else class="ghe__repo-link">
-                          <span class="ghe__repo-name">{{ r.name }}<span v-if="r.isFork" class="ghe__fork">Fork</span></span>
-                          <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
-                        </div>
-                        <span v-if="r.included && r.indexError" class="ghe__repo-error">{{ r.indexError }}</span>
-                        <span v-if="r.note" class="ghe__repo-note">{{ r.note }}</span>
-                        <div v-if="r.appRepo && data.appRepo" class="ghe__topics" role="group" :aria-label="`Topics ${r.name} counts for`">
-                          <div v-for="grp in topicGroups" :key="grp.cap" class="ghe__topic-group">
-                            <span class="ghe__topic-label">{{ grp.label }}</span>
-                            <div class="ghe__topic-chips">
-                              <v-chip
-                                v-for="t in grp.topics"
-                                :key="t.name"
-                                size="small"
-                                variant="tonal"
-                                :color="grp.cap === 'yes' ? 'primary' : undefined"
-                                closable
-                                :disabled="savingTopics"
-                                :close-label="`Remove ${t.name}`"
-                                :aria-label="`${t.name}: move to ${grp.other}`"
-                                class="ghe__topic"
-                                @click="moveTopic(t)"
-                                @click:close="removeTopic(t.name)"
-                              >
-                                {{ t.name }}
-                              </v-chip>
-                              <span v-if="!grp.topics.length" class="ghe__muted">none</span>
+              <div class="ghe__narrow">
+                <p v-if="!data.find.at" class="ghe__hint mb-0">Find repos with my commits to narrow this list.</p>
+                <template v-else>
+                  <p class="ghe__hint mb-0">
+                    <template v-if="narrowed">Showing repos with your commits, most first, and any you switched on. {{ plural(hiddenCount, 'repo is', 'repos are') }} hidden.</template>
+                    <template v-else>Showing every repo your tokens can read.</template>
+                  </p>
+                  <v-switch v-model="showAll" color="primary" hide-details inset density="compact" label="Show all repos" class="ghe__narrow-switch" />
+                </template>
+              </div>
+              <div class="ghe__describe">
+                <p class="ghe__hint mb-0">
+                  Answers, letters, and resumes never name a client, repo, or organization. They describe the project instead, in the words under each switched-on repo. Correct any that are wrong.
+                </p>
+                <v-btn variant="tonal" height="40" class="ghe__describe-btn" prepend-icon="mdi-text-box-edit-outline" :loading="describing" @click="writeDescriptions">
+                  Write missing descriptions
+                </v-btn>
+              </div>
+              <v-expansion-panels v-model="openPanels" multiple variant="accordion" class="ghe__owners">
+                <v-expansion-panel v-for="g in shownGroups" :key="g.owner" :value="g.owner" class="ghe__owner">
+                  <v-expansion-panel-title class="ghe__owner-title">
+                    <div class="ghe__owner-head">
+                      <span class="ghe__owner-name">{{ g.owner }}</span>
+                      <span class="ghe__owner-meta">
+                        {{ g.personal ? 'Yours, on by default except forks' : g.ownerType === 'Organization' ? 'Organization, off by default' : 'Someone else\'s, off by default' }}.
+                        {{ onCount(g) }} of {{ g.repos.length }} on.
+                        <template v-if="g.withCommits != null">{{ g.withCommits ? `${plural(g.withCommits, 'has', 'have')} your commits.` : 'None have your commits.' }}</template>
+                        <template v-if="g.sso"> Needs SSO authorization.</template>
+                      </span>
+                    </div>
+                  </v-expansion-panel-title>
+                  <v-expansion-panel-text>
+                    <div v-if="(g.withCommitsOff ?? 0) > 0 || onCount(g) > 0" class="ghe__bulk">
+                      <v-btn
+                        v-if="(g.withCommitsOff ?? 0) > 0"
+                        color="success"
+                        variant="tonal"
+                        height="44"
+                        prepend-icon="mdi-toggle-switch"
+                        :loading="bulkBusy === `on:${g.owner}`"
+                        :disabled="!!bulkBusy"
+                        @click="turnOnWithCommits(g)"
+                      >
+                        Turn on the {{ plural(g.withCommitsOff ?? 0, 'repo', 'repos') }} with your commits
+                      </v-btn>
+                      <v-btn
+                        v-if="onCount(g) > 0"
+                        variant="text"
+                        height="44"
+                        prepend-icon="mdi-toggle-switch-off-outline"
+                        :loading="bulkBusy === `off:${g.owner}`"
+                        :disabled="!!bulkBusy"
+                        @click="turnAllOff(g)"
+                      >
+                        Turn all off
+                      </v-btn>
+                    </div>
+                    <v-alert v-if="!g.personal && onCount(g) > 0" type="warning" density="compact" class="ghe__warning" role="note">
+                      {{ CLIENT_WARNING }}
+                    </v-alert>
+                    <v-text-field
+                      v-if="listedRepos(g).length > 12"
+                      v-model="filters[g.owner]"
+                      :label="`Find a repo in ${g.owner}`"
+                      prepend-inner-icon="mdi-magnify"
+                      clearable
+                      hide-details
+                      density="compact"
+                      class="ghe__filter"
+                    />
+                    <ul class="ghe__repos">
+                      <li v-for="r in visibleRepos(g)" :key="r.fullName" class="ghe__repo">
+                        <div class="ghe__repo-row">
+                          <div class="ghe__repo-text">
+                            <!-- Name and details are one link, so the tap area is the full 44px row height. -->
+                            <a v-if="r.htmlUrl" :href="r.htmlUrl" target="_blank" rel="noopener noreferrer" class="ghe__repo-link" :aria-label="`${r.name} on GitHub (opens a new tab)`">
+                              <span class="ghe__repo-name">{{ r.name }}<span v-if="r.isFork" class="ghe__fork">Fork</span></span>
+                              <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
+                            </a>
+                            <div v-else class="ghe__repo-link">
+                              <span class="ghe__repo-name">{{ r.name }}<span v-if="r.isFork" class="ghe__fork">Fork</span></span>
+                              <span class="ghe__repo-meta">{{ repoMeta(r) }}</span>
+                            </div>
+                            <span v-if="r.included && r.indexError" class="ghe__repo-error">{{ r.indexError }}</span>
+                            <span v-if="r.note" class="ghe__repo-note">{{ r.note }}</span>
+                            <div v-if="r.appRepo && data.appRepo" class="ghe__topics" role="group" :aria-label="`Topics ${r.name} counts for`">
+                              <div v-for="grp in topicGroups" :key="grp.cap" class="ghe__topic-group">
+                                <span class="ghe__topic-label">{{ grp.label }}</span>
+                                <div class="ghe__topic-chips">
+                                  <v-chip
+                                    v-for="t in grp.topics"
+                                    :key="t.name"
+                                    size="small"
+                                    variant="tonal"
+                                    :color="grp.cap === 'yes' ? 'primary' : undefined"
+                                    closable
+                                    :disabled="savingTopics"
+                                    :close-label="`Remove ${t.name}`"
+                                    :aria-label="`${t.name}: move to ${grp.other}`"
+                                    class="ghe__topic"
+                                    @click="moveTopic(t)"
+                                    @click:close="removeTopic(t.name)"
+                                  >
+                                    {{ t.name }}
+                                  </v-chip>
+                                  <span v-if="!grp.topics.length" class="ghe__muted">none</span>
+                                </div>
+                              </div>
+                              <p class="ghe__topic-hint">Tap a topic to move it to the other level.<template v-if="data.appRepo.edited"> <button type="button" class="ghe__topic-reset" :disabled="savingTopics" @click="saveTopics(null, 'The starting topics are back.')">Put the starting topics back</button></template></p>
+                              <form class="ghe__topic-add" @submit.prevent="addTopic">
+                                <v-text-field
+                                  v-model="topicText"
+                                  label="Add a topic"
+                                  placeholder="Model Context Protocol"
+                                  maxlength="60"
+                                  density="compact"
+                                  hide-details
+                                  class="ghe__topic-field"
+                                />
+                                <v-select
+                                  v-model="topicCap"
+                                  :items="CAP_ITEMS"
+                                  label="Counts"
+                                  density="compact"
+                                  hide-details
+                                  class="ghe__topic-cap"
+                                />
+                                <v-btn type="submit" color="primary" variant="tonal" height="40" :loading="savingTopics" :disabled="!topicText.trim()">Add</v-btn>
+                              </form>
+                            </div>
+                            <form v-if="editingDesc === r.fullName" class="ghe__desc-edit" @submit.prevent="saveDescription(r)">
+                              <v-text-field
+                                v-model="descText"
+                                :label="`What answers call ${r.name}`"
+                                placeholder="car wash management software"
+                                maxlength="120"
+                                density="compact"
+                                hide-details
+                                autofocus
+                                class="ghe__desc-field"
+                              />
+                              <v-btn type="submit" color="primary" variant="flat" height="40" :loading="savingDesc">Save</v-btn>
+                              <v-btn variant="text" height="40" :disabled="savingDesc" @click="editingDesc = null">Cancel</v-btn>
+                            </form>
+                            <div v-else-if="r.included || r.description" class="ghe__desc">
+                              <span class="ghe__desc-label">Answers call it:</span>
+                              <span v-if="r.description" class="ghe__desc-text">{{ r.description }}<span v-if="r.descriptionBy === 'devin'" class="ghe__desc-by"> (yours)</span></span>
+                              <span v-else class="ghe__desc-text ghe__desc-text--none">no description yet</span>
+                              <v-btn variant="text" size="small" class="ghe__desc-btn" prepend-icon="mdi-pencil-outline" :aria-label="`Edit what answers call ${r.name}`" @click="startDescription(r)">Edit</v-btn>
                             </div>
                           </div>
-                          <p class="ghe__topic-hint">Tap a topic to move it to the other level.<template v-if="data.appRepo.edited"> <button type="button" class="ghe__topic-reset" :disabled="savingTopics" @click="saveTopics(null, 'The starting topics are back.')">Put the starting topics back</button></template></p>
-                          <form class="ghe__topic-add" @submit.prevent="addTopic">
-                            <v-text-field
-                              v-model="topicText"
-                              label="Add a topic"
-                              placeholder="Model Context Protocol"
-                              maxlength="60"
-                              density="compact"
-                              hide-details
-                              class="ghe__topic-field"
-                            />
-                            <v-select
-                              v-model="topicCap"
-                              :items="CAP_ITEMS"
-                              label="Counts"
-                              density="compact"
-                              hide-details
-                              class="ghe__topic-cap"
-                            />
-                            <v-btn type="submit" color="primary" variant="tonal" height="40" :loading="savingTopics" :disabled="!topicText.trim()">Add</v-btn>
-                          </form>
-                        </div>
-                        <form v-if="editingDesc === r.fullName" class="ghe__desc-edit" @submit.prevent="saveDescription(r)">
-                          <v-text-field
-                            v-model="descText"
-                            :label="`What answers call ${r.name}`"
-                            placeholder="car wash management software"
-                            maxlength="120"
-                            density="compact"
+                          <v-switch
+                            :model-value="r.included"
+                            color="success"
                             hide-details
-                            autofocus
-                            class="ghe__desc-field"
+                            inset
+                            density="compact"
+                            class="ghe__switch"
+                            :loading="switching[r.fullName] ? 'success' : false"
+                            :disabled="!!switching[r.fullName]"
+                            :aria-label="`Use ${r.fullName} for GitHub evidence`"
+                            @update:model-value="toggle(g, r, $event)"
                           />
-                          <v-btn type="submit" color="primary" variant="flat" height="40" :loading="savingDesc">Save</v-btn>
-                          <v-btn variant="text" height="40" :disabled="savingDesc" @click="editingDesc = null">Cancel</v-btn>
-                        </form>
-                        <div v-else-if="r.included || r.description" class="ghe__desc">
-                          <span class="ghe__desc-label">Answers call it:</span>
-                          <span v-if="r.description" class="ghe__desc-text">{{ r.description }}<span v-if="r.descriptionBy === 'devin'" class="ghe__desc-by"> (yours)</span></span>
-                          <span v-else class="ghe__desc-text ghe__desc-text--none">no description yet</span>
-                          <v-btn variant="text" size="small" class="ghe__desc-btn" prepend-icon="mdi-pencil-outline" :aria-label="`Edit what answers call ${r.name}`" @click="startDescription(r)">Edit</v-btn>
                         </div>
-                      </div>
-                      <v-switch
-                        :model-value="r.included"
-                        color="success"
-                        hide-details
-                        inset
-                        density="compact"
-                        class="ghe__switch"
-                        :loading="switching[r.fullName] ? 'success' : false"
-                        :disabled="!!switching[r.fullName]"
-                        :aria-label="`Use ${r.fullName} for GitHub evidence`"
-                        @update:model-value="toggle(g, r, $event)"
-                      />
+                      </li>
+                    </ul>
+                    <p v-if="!filteredCount(g)" class="ghe__hint">No repo here matches.</p>
+                    <v-btn
+                      v-if="filteredCount(g) > (shown[g.owner] ?? PAGE)"
+                      variant="text"
+                      height="44"
+                      class="ghe__more"
+                      @click="shown[g.owner] = (shown[g.owner] ?? PAGE) + PAGE"
+                    >
+                      Show {{ Math.min(PAGE, filteredCount(g) - (shown[g.owner] ?? PAGE)) }} more of {{ filteredCount(g) }}
+                    </v-btn>
+                  </v-expansion-panel-text>
+                </v-expansion-panel>
+              </v-expansion-panels>
+            </section>
+
+          </v-tabs-window-item>
+
+          <v-tabs-window-item value="identities" :transition="false" :reverse-transition="false">
+            <!-- Tokens -->
+            <section v-if="data.tokens.length" class="ghe__block" aria-labelledby="ghe-tokens">
+              <h3 id="ghe-tokens" class="ghe__heading">Tokens</h3>
+              <ul class="ghe__tokens">
+                <li v-for="t in data.tokens" :key="t.position" class="ghe__token">
+                  <div class="ghe__token-name">
+                    Token {{ t.position }}<span class="ghe__muted">, from {{ t.source }}</span>
+                  </div>
+                  <div v-if="t.error" class="ghe__token-error">{{ t.error }}</div>
+                  <div v-else class="ghe__token-text">
+                    Signed in as {{ t.login }}. Reads {{ ownersText(t.owners) }}.
+                    <template v-if="t.ssoOrgs.length"> GitHub left out {{ t.ssoOrgs.join(', ') }} until the token is authorized for SSO there.</template>
+                  </div>
+                </li>
+              </ul>
+            </section>
+
+            <!-- Identities -->
+            <section class="ghe__block" aria-labelledby="ghe-ids">
+              <h3 id="ghe-ids" class="ghe__heading">Commits that count as yours</h3>
+              <p class="ghe__hint">
+                A commit counts when its author email is listed here, or when GitHub links it to one of these logins. Commits by anyone else in the same repo are never read.
+                <template v-if="!data.identities.edited"> These start from your knowledge base email, your GitHub noreply addresses, and the token's login.</template>
+              </p>
+              <div class="ghe__ids">
+                <v-textarea
+                  v-model="emailsText"
+                  label="Author emails, one per line"
+                  rows="3"
+                  auto-grow
+                  autocomplete="off"
+                  spellcheck="false"
+                  wrap="off"
+                  hide-details
+                  class="ghe__ids-field"
+                  :disabled="savingIds"
+                />
+                <v-textarea
+                  v-model="loginsText"
+                  label="GitHub logins, one per line"
+                  rows="3"
+                  auto-grow
+                  autocomplete="off"
+                  spellcheck="false"
+                  wrap="off"
+                  hide-details
+                  class="ghe__ids-field"
+                  :disabled="savingIds"
+                />
+              </div>
+              <div class="ghe__ids-actions">
+                <v-btn :color="idsChanged ? 'primary' : undefined" :variant="idsChanged ? 'flat' : 'tonal'" height="44" :disabled="!idsChanged" :loading="savingIds" @click="saveIds">
+                  Save
+                </v-btn>
+                <v-btn v-if="idsChanged" variant="text" height="44" :disabled="savingIds" @click="resetIdentityDraft">Cancel</v-btn>
+                <v-btn v-if="data.identities.edited && !idsChanged" variant="text" height="44" :disabled="savingIds" @click="saveIdentities({ reset: true }, 'Back to the defaults.')">
+                  Use the defaults
+                </v-btn>
+              </div>
+
+              <div v-if="data.unlistedEmails.length" class="ghe__unlisted">
+                <div class="ghe__unlisted-title">Emails that do not count yet</div>
+                <p class="ghe__hint mb-2">
+                  These are on commits with your login as the author name, but GitHub links them to no account, so they could be anyone's. Add one only if it is yours.
+                </p>
+                <ul class="ghe__unlisted-list">
+                  <li v-for="u in data.unlistedEmails" :key="u.email" class="ghe__unlisted-row">
+                    <div class="ghe__unlisted-text">
+                      <span class="ghe__unlisted-email">{{ u.email }}</span>
+                      <span class="ghe__repo-meta">{{ u.commits }} {{ u.commits === 1 ? 'commit' : 'commits' }} in {{ u.repos.map(repoShort).join(', ') }}</span>
                     </div>
+                    <v-btn variant="tonal" height="44" prepend-icon="mdi-plus" :disabled="savingIds" :aria-label="`Add ${u.email} as yours`" @click="addEmail(u.email)">
+                      Add
+                    </v-btn>
                   </li>
                 </ul>
-                <p v-if="!filteredCount(g)" class="ghe__hint">No repo here matches.</p>
-                <v-btn
-                  v-if="filteredCount(g) > (shown[g.owner] ?? PAGE)"
-                  variant="text"
-                  height="44"
-                  class="ghe__more"
-                  @click="shown[g.owner] = (shown[g.owner] ?? PAGE) + PAGE"
-                >
-                  Show {{ Math.min(PAGE, filteredCount(g) - (shown[g.owner] ?? PAGE)) }} more of {{ filteredCount(g) }}
-                </v-btn>
-              </v-expansion-panel-text>
-            </v-expansion-panel>
-          </v-expansion-panels>
-        </section>
-
-        <!-- Identities -->
-        <section class="ghe__block" aria-labelledby="ghe-ids">
-          <h3 id="ghe-ids" class="ghe__heading">Commits that count as yours</h3>
-          <p class="ghe__hint">
-            A commit counts when its author email is listed here, or when GitHub links it to one of these logins. Commits by anyone else in the same repo are never read.
-            <template v-if="!data.identities.edited"> These start from your knowledge base email, your GitHub noreply addresses, and the token's login.</template>
-          </p>
-          <div class="ghe__ids">
-            <v-textarea
-              v-model="emailsText"
-              label="Author emails, one per line"
-              rows="3"
-              auto-grow
-              autocomplete="off"
-              spellcheck="false"
-              wrap="off"
-              hide-details
-              class="ghe__ids-field"
-              :disabled="savingIds"
-            />
-            <v-textarea
-              v-model="loginsText"
-              label="GitHub logins, one per line"
-              rows="3"
-              auto-grow
-              autocomplete="off"
-              spellcheck="false"
-              wrap="off"
-              hide-details
-              class="ghe__ids-field"
-              :disabled="savingIds"
-            />
-          </div>
-          <div class="ghe__ids-actions">
-            <v-btn :color="idsChanged ? 'primary' : undefined" :variant="idsChanged ? 'flat' : 'tonal'" height="44" :disabled="!idsChanged" :loading="savingIds" @click="saveIds">
-              Save
-            </v-btn>
-            <v-btn v-if="idsChanged" variant="text" height="44" :disabled="savingIds" @click="resetIdentityDraft">Cancel</v-btn>
-            <v-btn v-if="data.identities.edited && !idsChanged" variant="text" height="44" :disabled="savingIds" @click="saveIdentities({ reset: true }, 'Back to the defaults.')">
-              Use the defaults
-            </v-btn>
-          </div>
-
-          <div v-if="data.unlistedEmails.length" class="ghe__unlisted">
-            <div class="ghe__unlisted-title">Emails that do not count yet</div>
-            <p class="ghe__hint mb-2">
-              These are on commits with your login as the author name, but GitHub links them to no account, so they could be anyone's. Add one only if it is yours.
-            </p>
-            <ul class="ghe__unlisted-list">
-              <li v-for="u in data.unlistedEmails" :key="u.email" class="ghe__unlisted-row">
-                <div class="ghe__unlisted-text">
-                  <span class="ghe__unlisted-email">{{ u.email }}</span>
-                  <span class="ghe__repo-meta">{{ u.commits }} {{ u.commits === 1 ? 'commit' : 'commits' }} in {{ u.repos.map(repoShort).join(', ') }}</span>
-                </div>
-                <v-btn variant="tonal" height="44" prepend-icon="mdi-plus" :disabled="savingIds" :aria-label="`Add ${u.email} as yours`" @click="addEmail(u.email)">
-                  Add
-                </v-btn>
-              </li>
-            </ul>
-          </div>
-        </section>
+              </div>
+            </section>
+          </v-tabs-window-item>
+        </v-tabs-window>
       </template>
     </v-card-text>
 
@@ -804,6 +814,18 @@ onMounted(async () => {
 </template>
 
 <style scoped lang="scss">
+.ghe__tabs {
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  padding: 0 8px;
+}
+
+.ghe__tab {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .ghe {
   scroll-margin-top: 72px;
 
@@ -1083,8 +1105,19 @@ onMounted(async () => {
     gap: 6px;
   }
 
+  // A long topic wraps inside its chip, so the remove button never runs past the chip at 390.
   &__topic {
     max-width: 100%;
+    height: auto !important;
+    min-height: 32px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+    white-space: normal;
+
+    :deep(.v-chip__content) {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
   }
 
   &__topic-hint {

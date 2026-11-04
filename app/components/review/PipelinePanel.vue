@@ -5,12 +5,11 @@ import { OUTCOME, clockTime, outcomeOf, outcomeText, parseTime, runDemos, statsT
 import { plainError } from '#shared/utils/plain-text'
 import { taskLabel } from '#shared/utils/run-outcome'
 import { backlogText, bulkText, queueItemColor, queueItemText } from '#shared/utils/queue-text'
-import { appLimitPauseText, subscriptionPauseText } from '#shared/utils/subscription'
-import type { SubscriptionStatus } from '#shared/types/pipeline'
 
 // Settings > Pipeline: start any step by hand, watch it wait in the job queue and run, and read
 // the recent run log. Every trigger goes through POST /api/pipeline/run, which adds the task to
-// the queue; the worker runs one item at a time, oldest first.
+// the queue; the worker runs one item at a time, oldest first. The spend, the subscription limits,
+// and the stage table moved to Settings > Claude usage (SettingsClaudeUsage) on 2026-11-04.
 const health = usePipelineHealth()
 const snackbar = useSnackbar()
 
@@ -33,107 +32,8 @@ const TASKS: TaskDef[] = [
 ]
 
 const runs = computed<PipelineRunView[]>(() => health.runs.value?.runs ?? [])
-const spent = computed(() => health.runs.value?.aiSpentToday ?? 0)
-const budget = computed(() => health.runs.value?.aiBudget ?? 0)
-const spentPct = computed(() => (budget.value > 0 ? Math.min(100, (spent.value / budget.value) * 100) : 0))
-const overBudget = computed(() => budget.value > 0 && spent.value >= budget.value)
-
-// Devin's Claude subscription: steps run on it while its token is set, and the dollar budget then
-// covers only steps left on the API key. While its limit holds, Claude steps wait for the reset.
-const subscription = computed(() => health.runs.value?.subscription ?? null)
-const onSubscription = computed(() => !!subscription.value?.on)
-const pausedText = computed(() => (subscription.value?.pause ? subscriptionPauseText(subscription.value.pause.until) : null))
-
-// This app's own limits on the subscription, in estimated dollars: per day and over 7 days.
-// Background work stops at the share marked on the daily bar; at either limit every call stops.
-const limits = computed(() => subscription.value?.limits ?? null)
-const subSpent = computed(() => subscription.value?.spent ?? null)
-const showSubscription = computed(() => !!limits.value && (onSubscription.value || (subSpent.value?.week.calls ?? 0) > 0))
-/** The API key line shows when steps run on the key, or a key is set beside the subscription. */
-const showApiLine = computed(() => !onSubscription.value || !!subscription.value?.apiKey)
-const sharePct = computed(() => limits.value?.backgroundSharePct ?? 70)
-const limitText = computed(() => {
-  const stop = subscription.value?.stop
-  return stop ? appLimitPauseText(stop.kind, stop.until, { sharePct: stop.sharePct }) : null
-})
-const pct = (spent: number, limit: number) => (limit > 0 ? Math.min(100, (spent / limit) * 100) : 0)
-const todayPct = computed(() => pct(subSpent.value?.today.estUsd ?? 0, limits.value?.dailyUsd ?? 0))
-const weekPct = computed(() => pct(subSpent.value?.week.estUsd ?? 0, limits.value?.weekUsd ?? 0))
-const todayTone = computed(() => (todayPct.value >= 100 ? 'bg-error' : todayPct.value >= sharePct.value ? 'bg-warning' : 'bg-primary'))
-const weekTone = computed(() => (weekPct.value >= 100 ? 'bg-error' : weekPct.value >= 80 ? 'bg-warning' : 'bg-primary'))
-
-const dailyInput = ref('')
-const weekInput = ref('')
-const savingLimits = ref(false)
-function limitError(raw: string, label: string): string | null {
-  const n = Number(raw)
-  if (!String(raw).trim() || !Number.isFinite(n) || n <= 0) return `Enter the ${label} in dollars, above $0`
-  if (n > 10_000) return `The ${label} can be at most $10,000`
-  return null
-}
-const dailyError = computed(() => limitError(dailyInput.value, 'daily limit'))
-const weekError = computed(() => limitError(weekInput.value, '7-day limit'))
-/** An input differs from the saved limit (an empty or unreadable one counts as changed). */
-const differs = (raw: string, saved: number) => !String(raw).trim() || !(Math.abs(Number(raw) - saved) < 0.005)
-const limitsDirty = computed(() => {
-  const l = limits.value
-  return !!l && (differs(dailyInput.value, l.dailyUsd) || differs(weekInput.value, l.weekUsd))
-})
-/** The inputs follow the server until Devin edits them. */
-watch(limits, (l, before) => {
-  if (!l || savingLimits.value) return
-  const edited = before && (differs(dailyInput.value, before.dailyUsd) || differs(weekInput.value, before.weekUsd))
-  if (!edited) {
-    dailyInput.value = l.dailyUsd.toFixed(2)
-    weekInput.value = l.weekUsd.toFixed(2)
-  }
-}, { immediate: true })
-
-async function saveLimits() {
-  if (dailyError.value || weekError.value) return
-  savingLimits.value = true
-  try {
-    const res = await $fetch<{ subscription: SubscriptionStatus; released: number }>('/api/settings/subscription-limits', {
-      method: 'PUT',
-      body: { dailyUsd: Number(dailyInput.value), weekUsd: Number(weekInput.value) },
-    })
-    if (health.runs.value) health.runs.value = { ...health.runs.value, subscription: res.subscription }
-    dailyInput.value = res.subscription.limits.dailyUsd.toFixed(2)
-    weekInput.value = res.subscription.limits.weekUsd.toFixed(2)
-    snackbar.info(res.released ? `Limits saved. ${res.released} paused ${res.released === 1 ? 'item runs' : 'items run'} again.` : 'Limits saved')
-    if (res.released) void follow()
-  }
-  catch (e: any) {
-    snackbar.notify(`Limits not saved: ${e?.data?.statusMessage || e?.message || 'unknown error'}`, 'error', { timeout: -1 })
-  }
-  finally {
-    savingLimits.value = false
-  }
-}
-
-// Where the money went: before Devin decides (every job) and after Apply (only jobs he chose).
-const stages = computed(() => health.runs.value?.aiStages ?? null)
-const STAGE_PHASES = [
-  { phase: 'before', label: 'Before you decide, for every job' },
-  { phase: 'after', label: 'After you tap Apply, only for jobs you chose' },
-  { phase: 'other', label: 'Other' },
-] as const
-const stageGroups = computed(() => STAGE_PHASES
-  .map(p => ({ ...p, rows: (stages.value?.stages ?? []).filter(s => s.phase === p.phase) }))
-  .filter(g => g.rows.length))
-const usd = (n: number) => `$${n.toFixed(2)}`
-// Each row adds API dollars and the subscription estimate; a column with any subscription call in it
-// says "est." so it reads as the estimate the bar above shows.
-const todayEstimated = computed(() => (stages.value?.stages ?? []).some(s => (s.today.subscriptionCalls ?? 0) > 0))
-const weekEstimated = computed(() => (stages.value?.stages ?? []).some(s => (s.week.subscriptionCalls ?? 0) > 0))
-/** "3 applications chosen with Apply in the last 7 days; preparing them cost $1.23, about $0.41 each." */
-const perApplication = computed(() => {
-  const n = stages.value?.appliedThisWeek ?? 0
-  const prep = stages.value?.appliedPrepareUsd ?? 0
-  if (!n) return 'No Apply in the last 7 days.'
-  return `${n} ${n === 1 ? 'application' : 'applications'} chosen with Apply in the last 7 days; preparing ${n === 1 ? 'it' : 'them'} cost ${usd(prep)}, about ${usd(prep / n)} each.`
-})
-const callCount = (n: number) => `${n.toLocaleString('en-US')} ${n === 1 ? 'call' : 'calls'}`
+// Steps run on Devin's Claude subscription while its token is set; the tag on each step says so.
+const onSubscription = computed(() => !!health.runs.value?.subscription?.on)
 
 function latest(task: string) {
   return runs.value.find(r => r.task === task) ?? null
@@ -165,7 +65,6 @@ function dailyText(run: QueueItemView): string {
 
 const starting = ref<string | null>(null)
 const canceling = ref<number | null>(null)
-const watching = ref(false)
 
 async function start(task: TaskDef) {
   starting.value = task.id
@@ -198,23 +97,7 @@ async function cancel(item: QueueItemView) {
   }
 }
 
-/** Refresh the queue and the run log while anything waits or runs, for up to 30 minutes. */
-async function follow() {
-  if (watching.value) return
-  watching.value = true
-  try {
-    const until = Date.now() + 30 * 60_000
-    await new Promise(r => setTimeout(r, 600))
-    await health.refresh(30)
-    while (Date.now() < until && (health.queueBusy.value || runs.value.some(r => r.status === 'running'))) {
-      await new Promise(r => setTimeout(r, 2500))
-      await health.refresh(30)
-    }
-  }
-  finally {
-    watching.value = false
-  }
-}
+const follow = () => health.follow()
 
 function duration(r: PipelineRunView) {
   const a = parseTime(r.startedAt)
@@ -241,101 +124,6 @@ onMounted(() => {
 
 <template>
   <div class="pp">
-    <p v-if="pausedText" class="pp__paused" role="status">
-      <v-icon icon="mdi-pause-circle-outline" size="18" class="pp__paused-icon" />
-      <span>{{ pausedText }}</span>
-    </p>
-    <p v-if="limitText" class="pp__paused" role="status">
-      <v-icon icon="mdi-pause-circle-outline" size="18" class="pp__paused-icon" />
-      <span>{{ limitText }}</span>
-    </p>
-
-    <section v-if="showSubscription && limits && subSpent" class="pp__sub" aria-label="Claude subscription limits">
-      <div class="pp__budget-text">
-        <span class="pp__strong">Claude subscription:</span>
-        est. <span class="pp__strong tabular">{{ usd(subSpent.today.estUsd) }}</span> of {{ usd(limits.dailyUsd) }} today,
-        <span class="pp__strong tabular">{{ usd(subSpent.week.estUsd) }}</span> of {{ usd(limits.weekUsd) }} in the last 7 days
-      </div>
-      <div class="pp__bars">
-        <div class="pp__bar-row">
-          <span class="pp__bar-label">Today</span>
-          <div class="pp__meter pp__meter--bar" role="meter" :aria-valuenow="Math.round(todayPct)" aria-valuemin="0" aria-valuemax="100" aria-label="Daily Claude limit used">
-            <span :class="todayTone" :style="{ width: `${todayPct}%` }" />
-            <i class="pp__tick" :style="{ left: `${sharePct}%` }" aria-hidden="true" />
-          </div>
-          <span class="pp__bar-num tabular">{{ callCount(subSpent.today.calls) }}</span>
-        </div>
-        <div class="pp__bar-row">
-          <span class="pp__bar-label">Last 7 days</span>
-          <div class="pp__meter pp__meter--bar" role="meter" :aria-valuenow="Math.round(weekPct)" aria-valuemin="0" aria-valuemax="100" aria-label="7-day Claude limit used">
-            <span :class="weekTone" :style="{ width: `${weekPct}%` }" />
-          </div>
-          <span class="pp__bar-num tabular">{{ callCount(subSpent.week.calls) }}</span>
-        </div>
-      </div>
-      <p class="pp__sub-note">
-        Background work (scheduled steps, reading and scoring jobs) stops at {{ sharePct }}% of the daily limit, the mark on the bar. What you start yourself can use the rest. At either limit every Claude call stops until midnight, or until the 7-day total drops under it. Amounts are Claude Code's estimate of what each call would cost on the API.
-      </p>
-      <form class="pp__limits" novalidate @submit.prevent="saveLimits">
-        <v-text-field
-          v-model="dailyInput"
-          label="Daily limit"
-          prefix="$"
-          type="number"
-          inputmode="decimal"
-          min="0.01"
-          step="0.5"
-          density="compact"
-          variant="outlined"
-          hide-details="auto"
-          :error-messages="limitsDirty && dailyError ? [dailyError] : []"
-          class="pp__limit"
-        />
-        <v-text-field
-          v-model="weekInput"
-          label="7-day limit"
-          prefix="$"
-          type="number"
-          inputmode="decimal"
-          min="0.01"
-          step="1"
-          density="compact"
-          variant="outlined"
-          hide-details="auto"
-          :error-messages="limitsDirty && weekError ? [weekError] : []"
-          class="pp__limit"
-        />
-        <v-btn type="submit" variant="tonal" color="primary" height="40" :loading="savingLimits" :disabled="!limitsDirty || !!dailyError || !!weekError">Save limits</v-btn>
-      </form>
-    </section>
-
-    <div v-if="showApiLine" class="pp__budget">
-      <div class="pp__budget-text">
-        <span class="pp__strong">${{ spent.toFixed(2) }}</span>
-        of ${{ budget.toFixed(2) }} {{ onSubscription ? 'API key budget' : 'AI budget' }} spent today<span v-if="overBudget" class="text-error">. Steps that use {{ onSubscription ? 'the API key' : 'Claude' }} stop until midnight</span>.<span v-if="onSubscription"> Only steps mapped to the API key count against it.</span>
-      </div>
-      <div class="pp__meter" role="meter" :aria-valuenow="Math.round(spentPct)" aria-valuemin="0" aria-valuemax="100" aria-label="AI budget used today">
-        <span :class="overBudget ? 'bg-error' : spentPct >= 70 ? 'bg-warning' : 'bg-primary'" :style="{ width: `${spentPct}%` }" />
-      </div>
-    </div>
-
-    <div v-if="stages" class="pp__stages" aria-label="AI spend by stage">
-      <div class="pp__stages-row pp__stages-row--head">
-        <span>Where it went</span>
-        <span class="pp__stages-num">{{ todayEstimated ? 'Today, est.' : 'Today' }}</span>
-        <span class="pp__stages-num">{{ weekEstimated ? 'Last 7 days, est.' : 'Last 7 days' }}</span>
-      </div>
-      <template v-for="g in stageGroups" :key="g.phase">
-        <div class="pp__stages-phase">{{ g.label }}</div>
-        <div v-for="s in g.rows" :key="s.key" class="pp__stages-row" :title="s.purposes.length ? `Counts: ${s.purposes.join(', ')}` : undefined">
-          <span class="pp__stages-name">{{ s.label }}</span>
-          <span class="pp__stages-num tabular">{{ usd(s.today.costUsd) }}</span>
-          <span class="pp__stages-num tabular">{{ usd(s.week.costUsd) }} <span class="pp__stages-calls">{{ s.week.calls }} {{ s.week.calls === 1 ? 'call' : 'calls' }}</span></span>
-        </div>
-        <p v-if="g.phase === 'after'" class="pp__stages-note">{{ perApplication }}</p>
-      </template>
-    </div>
-
     <ul class="pp__tasks">
       <li v-for="t in TASKS" :key="t.id" class="pp__task" :class="{ 'pp__task--main': t.id === 'pipeline:daily' }">
         <div class="pp__task-text">
@@ -368,7 +156,7 @@ onMounted(() => {
       </li>
     </ul>
 
-    <div class="pp__log-head">
+    <div id="queue" class="pp__log-head">
       <h3 class="pp__h">Queue</h3>
     </div>
     <p class="pp__queue-help">
@@ -403,7 +191,7 @@ onMounted(() => {
       </li>
     </ul>
 
-    <div class="pp__log-head">
+    <div id="runs" class="pp__log-head">
       <h3 class="pp__h">Recent runs</h3>
       <v-btn variant="text" height="44" prepend-icon="mdi-refresh" :loading="health.loading.value" @click="health.refresh(30)">Refresh</v-btn>
     </div>
@@ -448,170 +236,6 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .pp {
-  &__paused {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin: 0 0 16px;
-    padding: 10px 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-theme-warning), 0.45);
-    background: rgba(var(--v-theme-warning), 0.08);
-    color: rgb(var(--v-theme-warning));
-    font-size: 0.875rem;
-    font-weight: 600;
-    line-height: 1.4;
-  }
-
-  &__paused-icon {
-    flex: none;
-    margin-top: 1px;
-  }
-
-  &__budget {
-    margin-bottom: 16px;
-  }
-
-  &__sub {
-    margin: 0 0 18px;
-    padding: 12px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  }
-
-  &__bars {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin: 10px 0 8px;
-  }
-
-  &__bar-row {
-    display: grid;
-    grid-template-columns: 88px minmax(0, 1fr) 96px;
-    align-items: center;
-    gap: 12px;
-    font-size: 0.8125rem;
-  }
-
-  &__bar-label {
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  }
-
-  &__bar-num {
-    text-align: right;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  }
-
-  &__tick {
-    position: absolute;
-    top: -2px;
-    bottom: -2px;
-    width: 2px;
-    margin-left: -1px;
-    background: rgba(var(--v-theme-on-surface), 0.55);
-  }
-
-  &__sub-note {
-    margin: 0 0 12px;
-    font-size: 0.8125rem;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  }
-
-  &__limits {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 12px;
-  }
-
-  &__limit {
-    flex: 0 0 160px;
-    max-width: 160px;
-  }
-
-  &__budget-text {
-    font-size: 0.875rem;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  }
-
-  &__strong {
-    font-weight: 700;
-    color: rgb(var(--v-theme-on-surface));
-  }
-
-  &__meter {
-    margin-top: 8px;
-    height: 6px;
-    border-radius: 3px;
-    overflow: hidden;
-    background: rgba(var(--v-theme-on-surface), 0.08);
-
-    span {
-      display: block;
-      height: 100%;
-    }
-
-    // The subscription bars: in a row with their label, and room for the background share mark.
-    &--bar {
-      position: relative;
-      margin-top: 0;
-      height: 8px;
-      overflow: visible;
-
-      span {
-        border-radius: 3px;
-      }
-    }
-  }
-
-  &__stages {
-    margin: 0 0 18px;
-    padding: 10px 14px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    font-size: 0.8125rem;
-  }
-
-  &__stages-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 88px 168px;
-    gap: 12px;
-    padding: 3px 0;
-
-    &--head {
-      font-weight: 600;
-      color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-      border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-      padding-bottom: 6px;
-      margin-bottom: 2px;
-    }
-  }
-
-  &__stages-name {
-    padding-left: 12px;
-  }
-
-  &__stages-num {
-    text-align: right;
-  }
-
-  &__stages-calls {
-    display: inline-block;
-    min-width: 64px;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  }
-
-  &__stages-phase {
-    margin-top: 8px;
-    font-weight: 600;
-  }
-
-  &__stages-note {
-    margin: 2px 0 0 12px;
-    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  }
-
   &__tasks {
     list-style: none;
     margin: 0;
@@ -679,7 +303,9 @@ onMounted(() => {
     flex-shrink: 0;
   }
 
+  // Review's Runs and Queue links land on these headings (/settings/pipeline#runs, #queue).
   &__log-head {
+    scroll-margin-top: 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;

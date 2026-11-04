@@ -1,5 +1,5 @@
 // GET /api/settings/keys
-// Which of the environment variables the Settings > API Keys card lists are set on the server.
+// Which of the environment variables the Settings > API keys page lists are set on the server.
 // Booleans only: a value, or any part of one, never leaves the server.
 const KEYS: Record<string, string> = {
   NUXT_CLAUDE_CODE_OAUTH_TOKEN: 'claudeCodeOauthToken',

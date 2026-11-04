@@ -2,7 +2,7 @@
 import type { SourcesStatus, SourceStatusRow } from '#shared/types/sources'
 import { plainError } from '#shared/utils/plain-text'
 
-// Settings > Job sources: one line per source with its last pull time (the watermark after which
+// Settings > Job search > Job sources: one line per source with its last pull time (the watermark after which
 // only newer listings are asked for) and what the last search found, passed the filters, already
 // knew, and stored. "Pull everything again" clears the watermarks so the next search reads each
 // source's whole window: the last 14 days, or every open posting on an employer board.
@@ -113,13 +113,8 @@ defineExpose({ load })
 </script>
 
 <template>
-  <v-card variant="outlined">
+  <v-card variant="outlined" class="job-sources">
     <v-card-item class="job-sources__head">
-      <template #prepend>
-        <v-avatar color="info" variant="tonal" size="36" rounded="lg">
-          <v-icon icon="mdi-database-arrow-down-outline" size="20" />
-        </v-avatar>
-      </template>
       <v-card-title class="text-subtitle-1 font-weight-medium">
         Job sources
       </v-card-title>
@@ -167,6 +162,13 @@ defineExpose({ load })
 
 <style scoped lang="scss">
 .job-sources {
+  // The subtitle is a full sentence; let it wrap instead of cutting off.
+  :deep(.v-card-subtitle),
+  :deep(.v-card-title) {
+    white-space: normal;
+    line-height: 1.45;
+  }
+
   &__reset {
     text-transform: none;
     letter-spacing: normal;
@@ -232,8 +234,9 @@ defineExpose({ load })
 
   .job-sources__head {
     grid-template-areas:
-      'prepend content'
-      '. append';
+      'content'
+      'append';
+    grid-template-columns: minmax(0, 1fr);
 
     :deep(.v-card-item__append) {
       justify-self: start;

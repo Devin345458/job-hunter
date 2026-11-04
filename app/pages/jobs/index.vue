@@ -106,7 +106,7 @@ async function runSearch() {
   try {
     const result = await triggerSearch()
     if (result.queued) {
-      snackbar.info(result.message, { text: 'View queue', handler: () => router.push('/settings#pipeline') })
+      snackbar.info(result.message, { text: 'View queue', handler: () => router.push('/settings/pipeline#queue') })
       return
     }
     // New postings are read and scored afterward, one queue item each, so under Best match they would sit at
@@ -114,7 +114,7 @@ async function runSearch() {
     if (result.jobsFound > 0 && sort.value !== 'date') sort.value = 'date'
     else await load()
     const found = `${result.found} listing${result.found === 1 ? '' : 's'} checked`
-    const settingsAction = { text: 'View run', handler: () => router.push('/settings') }
+    const settingsAction = { text: 'View run', handler: () => router.push('/settings/pipeline#runs') }
     if (result.jobsFound > 0) {
       snackbar.success(`Search finished: ${result.jobsFound} new job${result.jobsFound === 1 ? '' : 's'}, shown first under Newest. ${found}.`, settingsAction)
     }
@@ -125,8 +125,8 @@ async function runSearch() {
   catch (e: any) {
     const message = e?.data?.statusMessage || e?.statusMessage || e?.message || 'The job search failed.'
     snackbar.error(message, {
-      text: 'Go to Settings',
-      handler: () => router.push('/settings'),
+      text: 'Job search settings',
+      handler: () => router.push('/settings/job-search'),
     })
   }
   finally {
@@ -272,14 +272,14 @@ onBeforeRouteLeave((to) => {
       <v-icon icon="mdi-briefcase-search-outline" size="64" class="mb-4" style="opacity: 0.3;" />
       <h3 class="text-h6 mb-2">No Jobs Found</h3>
       <p class="text-body-2 text-medium-emphasis mb-2" style="max-width: 400px; margin: 0 auto;">
-        Jobs appear here after a search runs. Set what to search for in Settings, then wait for the next scheduled run or start one with Search now.
+        Jobs appear here after a search runs. Set what to search for in Settings > Job search, then wait for the next scheduled run or start one with Search now.
       </p>
       <div class="d-flex flex-wrap justify-center ga-3 mt-4">
         <v-btn
           variant="tonal"
           color="primary"
           prepend-icon="mdi-tune-variant"
-          to="/settings"
+          to="/settings/job-search"
         >
           Configure Search
         </v-btn>
@@ -305,7 +305,7 @@ onBeforeRouteLeave((to) => {
             This runs every active search configuration against the job boards right away, instead of waiting for the next scheduled run. It can take a minute.
           </p>
           <p class="text-body-2 text-medium-emphasis mb-0">
-            New postings are listed first under Newest until the next scheduled run scores them. The run is logged in Settings under Recent runs.
+            New postings are listed first under Newest until the next scheduled run scores them. The run is logged in Settings > Pipeline under Recent runs.
           </p>
         </v-card-text>
         <v-card-actions class="px-6 pb-5">

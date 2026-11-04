@@ -57,7 +57,7 @@ onMounted(load)
 <template>
   <div class="memory-status">
     <div class="memory-status__line">
-      <span class="memory-status__label text-body-2 font-weight-medium">Memory</span>
+      <span class="memory-status__label text-body-2 font-weight-medium">Status</span>
       <v-chip v-if="status" size="small" variant="tonal" :color="label.color" :prepend-icon="label.icon" label>{{ label.text }}</v-chip>
       <span v-if="status?.checkedAt" class="text-body-2 text-medium-emphasis">Last checked {{ when(status.checkedAt) }}</span>
       <v-spacer />

@@ -29,8 +29,8 @@ export interface RunsResponse {
 
 /**
  * Shared, app-wide pipeline health: counts from /api/stats and recent runs plus today's AI
- * spend from /api/pipeline/runs. The shell reads it for nav badges, the review page for the
- * health strip, and Settings for the Pipeline panel.
+ * spend from /api/pipeline/runs. The shell reads it for nav badges and the Settings statuses, the
+ * review page for the health strip, and Settings > Pipeline and Settings > Claude usage.
  */
 export function usePipelineHealth() {
   const stats = useState<StatsResponse | null>('health-stats', () => null)
@@ -106,5 +106,29 @@ export function usePipelineHealth() {
     }
   }
 
-  return { stats, runs, loading, error, refresh, lastRun, queueBusy, watchQueue }
+  const following = useState<boolean>('health-following', () => false)
+
+  /**
+   * Refresh the queue and the run log every 2.5 seconds while anything waits or runs, for up to 30
+   * minutes: after Run, Cancel, or saving limits that put paused items back. One loop for the whole
+   * app, so Settings > Pipeline and Settings > Claude usage never poll twice.
+   */
+  async function follow() {
+    if (following.value) return
+    following.value = true
+    try {
+      const until = Date.now() + 30 * 60_000
+      await new Promise(r => setTimeout(r, 600))
+      await refresh(30)
+      while (Date.now() < until && (queueBusy.value || (runs.value?.runs ?? []).some(r => r.status === 'running'))) {
+        await new Promise(r => setTimeout(r, 2500))
+        await refresh(30)
+      }
+    }
+    finally {
+      following.value = false
+    }
+  }
+
+  return { stats, runs, loading, error, refresh, lastRun, queueBusy, watchQueue, follow }
 }

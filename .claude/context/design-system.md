@@ -70,6 +70,11 @@ Three emphasis levels through opacity: default 0.94, medium 0.66, disabled 0.4. 
 | Quote from a posting | 2px primary rule on the left, 10px indent, 13px | `ReviewCompFloor.vue` |
 | Status dot | 8px square, 2px radius | health strip, run log, ledger |
 | Toast | Desktop bottom left, 280 to 340px wide, clear of the decision bar; phone top | `app/components/AppSnackbar.vue` |
+| Nav group (Settings) | Header row 44px: icon, title, chevron (an 8px warning square before it when folded and Claude usage is paused). Children text only, 13px/500, 32px tall on desktop and 44px in the phone drawer, 40px indent under a 1px rule at 17px; active child gets the primary tint, the rest medium emphasis. Opens on entering a Settings route, folds on leaving; the header click only toggles | `app/layouts/default.vue` |
+| Settings sub page header | "Settings" eyebrow 12px/600 medium emphasis, `h4` title, one sentence subtitle from `settingsPages.ts`, 24px below | `app/components/settings/PageHeader.vue` |
+| Settings list row (phone) | 72px minimum, 12px 12px 12px 16px padding, 20px icon in medium emphasis, 15px/600 title with a status tag, 13px line in medium emphasis, chevron in disabled emphasis; all rows share one 12px bordered surface with hairlines between | `app/pages/settings/index.vue` |
+| Card tabs | `v-tabs` 48px as the card's first row with a hairline under it, 14px/600, no uppercase, primary; both panels stay mounted | `app/components/settings/GithubEvidence.vue` |
+| Phone sub page app bar | Back arrow to the list in place of the menu button, title is the sub page | `app/layouts/default.vue` |
 
 ## Decisions
 
@@ -80,3 +85,11 @@ Three emphasis levels through opacity: default 0.94, medium 0.66, disabled 0.4. 
 | 2026-11-01 | Approve is a plain primary button, no confirm dialog, no swipe | The brief: one tap, deliberate. The bar states the consequence instead of asking twice |
 | 2026-11-01 | Queue is the home page; health is a small panel, not a stat-card row | The job is to decide, not to read metrics |
 | 2026-11-01 | Toasts bottom left on desktop, top on phones | Bottom right covered the Approve button |
+| 2026-11-04 | Settings is six pages, one per job: Pipeline (run, queue, log), Claude usage (spend and limits), Job search (searches and sources), GitHub evidence, Memory, API keys | The single page stacked six unrelated tools, and the spend table and limit fields sat above the Run buttons, so the page Devin opens most started with money. Each page now answers one question |
+| 2026-11-04 | Spend, limits, and the amber pause lines moved off Pipeline to Claude usage | The fix for a pause is the limit field. Queue items keep their own "Paused" note, and the nav marks Claude usage Paused |
+| 2026-11-04 | Desktop `/settings` goes straight to Pipeline; the phone gets a list of the pages | On desktop the sidebar group already is that list, so a list page would only cost a click. The phone has no lasting nav, so the list is the map. Pipeline is first because every link into Settings (Runs, Queue, View run) lands there |
+| 2026-11-04 | The Settings group header only opens and closes | A header that also navigated would leave the page when he only wanted to see the sub pages; the group opens itself on any Settings route |
+| 2026-11-04 | Sub pages in the sidebar are text only, indented under a rule | A second icon column made fourteen rows read as one flat list; the indent carries the hierarchy |
+| 2026-11-04 | GitHub evidence: tabs Repos and Identities and tokens; this app's repo keeps its topics in its own row | The topics set what that one repo's switch counts, so they stay beside the switch. A third tab would split one decision across two places |
+| 2026-11-04 | No tinted avatars on Settings card headers | Six avatars spent five semantic colors on decoration; the page header names the page and color stays for status |
+| 2026-11-04 | Bottom bar's active item colored through `base-color` | Vuetify colors a link button only on its exact path, so every Settings sub page (and `/review/12`) left its button gray |

@@ -14,7 +14,7 @@ import { resumeClock, type AppLimitKind } from '#shared/utils/subscription'
 // the daily limit (NUXT_BACKGROUND_BUDGET_SHARE, default 0.7), so what Devin starts can use the
 // rest. At 100% of either limit every call stops. Stopped queue items go back in the queue to run
 // after midnight, or when the 7-day total drops under the limit (ai.ts and plugins/queue.ts).
-// The limits live in app_settings key `subscription_limits`, so Settings > Pipeline changes them
+// The limits live in app_settings key `subscription_limits`, so Settings > Claude usage changes them
 // without a redeploy; NUXT_SUBSCRIPTION_DAILY_LIMIT_USD and NUXT_SUBSCRIPTION_WEEK_LIMIT_USD are
 // only the first defaults.
 
@@ -138,12 +138,12 @@ export function weekLiftTime(limit: number, total = spendSince(WEEK_START).estUs
 
 function stopMessage(kind: AppLimitKind, spent: number, limit: number, until: string, sharePct: number): string {
   if (kind === 'app_week') {
-    return `This app's 7-day Claude limit is reached (est. ${usd(spent)} of ${usd(limit)} in the last 7 days). Claude calls resume at ${resumeClock(until, { timeZone: PIPELINE_TIME_ZONE })}. Raise the limit in Settings > Pipeline to keep going sooner.`
+    return `This app's 7-day Claude limit is reached (est. ${usd(spent)} of ${usd(limit)} in the last 7 days). Claude calls resume at ${resumeClock(until, { timeZone: PIPELINE_TIME_ZONE })}. Raise the limit in Settings > Claude usage to keep going sooner.`
   }
   if (kind === 'app_background') {
-    return `Background work paused at ${sharePct}% of this app's daily Claude limit (est. ${usd(spent)} of ${usd(limit)} today). The rest is kept for what you start yourself, and the backlog continues after midnight. Raise the limit in Settings > Pipeline to keep it going today.`
+    return `Background work paused at ${sharePct}% of this app's daily Claude limit (est. ${usd(spent)} of ${usd(limit)} today). The rest is kept for what you start yourself, and the backlog continues after midnight. Raise the limit in Settings > Claude usage to keep it going today.`
   }
-  return `This app's daily Claude limit is reached (est. ${usd(spent)} of ${usd(limit)} today). Claude calls resume at midnight. Raise the limit in Settings > Pipeline to keep going today.`
+  return `This app's daily Claude limit is reached (est. ${usd(spent)} of ${usd(limit)} today). Claude calls resume at midnight. Raise the limit in Settings > Claude usage to keep going today.`
 }
 
 /**
