@@ -57,11 +57,12 @@ const sourceOptions = [
 
 /** The environment variables the API Keys card lists, with what each one is for. */
 const API_KEYS = [
-  { names: ['NUXT_ANTHROPIC_API_KEY'], text: 'Powers AI job matching and resume tailoring. Required for the core features.' },
+  { names: ['NUXT_CLAUDE_CODE_OAUTH_TOKEN'], text: 'Your personal Claude subscription token (from claude setup-token). Every AI step runs on it through the Claude Agent SDK. Required for the core features.' },
+  { names: ['NUXT_ANTHROPIC_API_KEY'], text: 'Anthropic Console API key, billed per use. Optional: used only without the subscription token, or for a step NUXT_AI_STEP_BACKENDS sends to the API.' },
   { names: ['NUXT_JSEARCH_API_KEY'], text: 'RapidAPI key for the JSearch source. Optional: other sources work without keys.' },
   { names: ['NUXT_ADZUNA_APP_ID', 'NUXT_ADZUNA_API_KEY'], text: 'Adzuna credentials. Optional: free keys at adzuna.com.' },
   { names: ['NUXT_GITHUB_TOKEN'], text: 'Publishes demo repos and the resume site when you approve an application. Optional: without it nothing is published.' },
-  { names: ['NUXT_GITHUB_READ_TOKENS', 'NUXT_GITHUB_READ_TOKEN'], text: 'Read-only GitHub tokens for GitHub evidence (Contents, Metadata, Pull requests read), comma separated, one per owner. Optional: without them GitHub evidence reads with NUXT_GITHUB_TOKEN.' },
+  { names: ['NUXT_GITHUB_READ_TOKENS'], text: 'Read-only GitHub tokens for GitHub evidence (Contents, Metadata, Pull requests read), comma separated, one per owner. Optional: without them GitHub evidence reads with NUXT_GITHUB_TOKEN. NUXT_GITHUB_READ_TOKEN (one token) is the older single-token form.' },
 ]
 
 /** Which of those variables the server has, from GET /api/settings/keys. Booleans only, never a value. */
