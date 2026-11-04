@@ -15,6 +15,11 @@ export const FOOTPRINT_LIMITS = {
   /** Matched file names and message words the aggregate names. */
   topFiles: 4,
   topWords: 4,
+  /** Candidate stories: the projects with the most matching commits, and the commits read in full from each. */
+  storyProjects: 3,
+  /** Commits read in full from the busiest project, and from each of the others. */
+  storyCommits: 8,
+  storyCommitsOther: 4,
 } as const
 
 export interface SubjectFootprint {
@@ -34,6 +39,32 @@ export interface SubjectFootprint {
   sample: Array<{ repo: string; url: string; title: string; date: string }>
   /** Of the commits, those in this app's own repo, which Claude Code agents he directed wrote. */
   directed: number
+  /**
+   * The candidate stories: the projects with the most matching commits, each with its most telling
+   * commits (the subject in the title, a long body, figures such as "257 to 0", recent), oldest
+   * first. The draft reads these commits' full messages and builds its answer around one of them.
+   */
+  stories: Array<{ repo: string; commits: number; first: string; last: string; picks: Array<{ url: string; title: string; date: string; score: number }> }>
+}
+
+/** Figures a commit body states: "257 to 0", "32/32", "1,903", "44px", "17 findings". */
+const FIGURE = /\b\d[\d,.]*(?:\s*(?:\/|to|x|->)\s*\d[\d,.]*)?(?:%|px|ms|s\b)?/g
+
+/**
+ * How well a commit tells a story about the subject: the subject in its title, a body that explains
+ * the work, figures that measure it, and recent work first among equals. A docs commit records
+ * writing, not building, but an audit or a design it records is often what set the work off, so it
+ * stays a candidate below the code commits.
+ */
+export function storyScore(c: { title: string; body: string; date: string; inTitle: boolean; wordHit: boolean; pathShare: number; newest: string }): number {
+  const rest = c.body.slice(c.title.length)
+  const figures = (rest.match(FIGURE) ?? []).filter(f => !/^(?:19|20)\d{2}$/.test(f)).length
+  const ageYears = Math.max(0, (Date.parse(c.newest) - Date.parse(c.date)) / (365 * 864e5))
+  return (c.inTitle ? 100 : c.pathShare >= 0.5 ? 50 : c.wordHit ? 40 : 10)
+    + Math.min(rest.trim().length, 1500) / 50
+    + Math.min(figures, 8) * 6
+    + Math.max(0, 15 - ageYears * 5)
+    - (/^(?:\[[^\]]*\]\s*)?docs(?:\([^)]*\))?!?:/i.test(c.title) ? 30 : 0)
 }
 
 /**
@@ -84,6 +115,9 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
   const matchedWords = new Map<string, number>()
   // The most telling commit per project: one whose message names the subject, else a small change.
   const best = new Map<string, { score: number; url: string; title: string; date: string }>()
+  // Every telling commit per project, for the candidate stories.
+  const told = new Map<string, Array<{ url: string; title: string; date: string; body: string; inTitle: boolean; wordHit: boolean; pathShare: number }>>()
+  const span = new Map<string, { first: string; last: string }>()
   for (const r of rows) {
     const own = isAppRepo(r.repo)
     const re = own ? appRe : wordRe
@@ -100,6 +134,9 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
     commits++
     if (own) directed++
     byRepo.set(r.repo, (byRepo.get(r.repo) ?? 0) + 1)
+    const day = r.authoredAt.slice(0, 10)
+    const sp = span.get(r.repo)
+    span.set(r.repo, { first: !sp || day < sp.first ? day : sp.first, last: !sp || day > sp.last ? day : sp.last })
     const year = r.authoredAt.slice(0, 4)
     const y = years.get(year) ?? { projects: new Set<string>(), commits: 0 }
     y.projects.add(r.repo)
@@ -132,10 +169,20 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
       - (/^(?:\[[^\]]*\]\s*)?docs(?:\([^)]*\))?!?:/i.test(title) ? 60 : 0)
     const prev = best.get(r.repo)
     if (!prev || score > prev.score) best.set(r.repo, { score, url: r.url, title: title.slice(0, 200), date: r.authoredAt.slice(0, 10) })
+    told.set(r.repo, [...(told.get(r.repo) ?? []), { url: r.url, title: title.slice(0, 200), date: day, body, inTitle, wordHit: !!wordHit, pathShare }])
   }
   if (!commits) return null
   const perYear = [...years.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([year, v]) => ({ year, projects: v.projects.size, commits: v.commits }))
   const busiest = [...byRepo.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([repo]) => repo)
+  const newest = [...span.values()].reduce((m, v) => (v.last > m ? v.last : m), '')
+  const stories = busiest.filter(repo => told.has(repo)).slice(0, FOOTPRINT_LIMITS.storyProjects).map((repo, i) => {
+    const picks = told.get(repo)!
+      .map(c => ({ url: c.url, title: c.title, date: c.date, score: Math.round(storyScore({ ...c, newest })) }))
+      .sort((a, b) => b.score - a.score || b.date.localeCompare(a.date))
+      .slice(0, i === 0 ? FOOTPRINT_LIMITS.storyCommits : FOOTPRINT_LIMITS.storyCommitsOther)
+      .sort((a, b) => a.date.localeCompare(b.date))
+    return { repo, commits: byRepo.get(repo)!, first: span.get(repo)!.first, last: span.get(repo)!.last, picks }
+  })
   return {
     subject,
     commits,
@@ -153,6 +200,7 @@ export function subjectFootprint(subject: string, anchors: TermSet): SubjectFoot
     sample: busiest.map(repo => ({ repo, ...best.get(repo)! })).filter(s => s.url).slice(0, FOOTPRINT_LIMITS.sampleCommits)
       .map(({ repo, url, title, date }) => ({ repo, url, title, date })),
     directed,
+    stories,
   }
 }
 

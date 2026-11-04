@@ -4,7 +4,7 @@ import { useDisplay } from 'vuetify'
 import type { QuestionView } from '#shared/types/pipeline'
 import { plainKnowledgeRefs, plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
+import { EXAMPLE_LEVELS, recordsDraftLabel, takesExample, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Open questions answered in place. Yes or no and choices are one tap; numbers take one short
 // field and written answers a growing box, each with Save. Answers go through
@@ -253,7 +253,7 @@ const chatBoxText = computed(() => {
           <label :id="`qs-example-${q.id}-label`" :for="`qs-example-${q.id}`" class="qs__example-label">Where did you do it?</label>
           <p class="qs__example-hint">The job or project, what you did, and the result if there was one. It is saved exactly as you write it.</p>
           <p v-if="!levels[q.id]" class="qs__example-pick">Tap Yes or Some experience above, then save.</p>
-          <p v-if="shownRecords(q)" class="qs__records-label">{{ RECORDS_DRAFT_LABEL }}</p>
+          <p v-if="shownRecords(q)" class="qs__records-label">{{ recordsDraftLabel(shownRecords(q)?.draft) }}</p>
           <v-textarea
             :id="`qs-example-${q.id}`"
             v-model="examples[q.id]"
@@ -312,7 +312,7 @@ const chatBoxText = computed(() => {
       <!-- Written answers can run to several paragraphs and bullet lines: the box grows with them,
            Enter adds a line, and only Save sends. 4,000 characters is the server's limit. -->
       <div v-else-if="q.answerType !== 'number'" class="qs__form qs__form--text">
-        <p v-if="shownRecords(q)" class="qs__records-label">{{ RECORDS_DRAFT_LABEL }}</p>
+        <p v-if="shownRecords(q)" class="qs__records-label">{{ recordsDraftLabel(shownRecords(q)?.draft) }}</p>
         <v-textarea
           v-model="drafts[q.id]"
           label="Your answer"
