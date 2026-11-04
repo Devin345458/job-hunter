@@ -39,7 +39,10 @@ export const REVIEW_STATUS: Partial<Record<ApplicationStatus, StatusMeta>> = {
   declined: { label: L.declined!, color: 'secondary', icon: 'mdi-close', group: 'closed' },
 }
 
-/** Group names, the same on the review queue and the Applications page. */
+/**
+ * Group names on the review queue. The Applications page reuses them, except that it splits the
+ * send group into Ready to send (the state's own name) and Needs you.
+ */
 export const GROUP_LABEL: Record<ReviewGroup, string> = {
   decide: 'To decide',
   preparing: 'Preparing',
