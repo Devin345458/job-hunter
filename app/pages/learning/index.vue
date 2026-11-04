@@ -195,10 +195,10 @@ onMounted(load)
       <!-- What employers did with the applications that went out -->
       <section v-if="outcomes" class="mb-8">
         <h2 class="section-heading">What employers did</h2>
+        <!-- The promise always shows; how the rates count shows once there are rates to read. -->
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
-          Rates over real applications that went out. Heard back counts any reply, rejections included.
-          Interviews count every application that reached one, so an offer counts there too.
-          These are recorded only: employer outcomes do not change scores.
+          Recorded only: employer outcomes never change scores.
+          <template v-if="outcomes.total.sent">Heard back counts any reply, rejections included. Interviews count every application that reached one, so an offer counts there too.</template>
           <template v-if="outcomes.sandboxExcluded">{{ outcomes.sandboxExcluded }} sandbox {{ outcomes.sandboxExcluded === 1 ? 'application is' : 'applications are' }} left out.</template>
         </p>
         <v-card v-if="!outcomes.total.sent" variant="outlined" class="pa-6">
