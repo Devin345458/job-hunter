@@ -134,12 +134,18 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .demos-page {
-  // Sized to the demos there are: one demo takes the column, never half a row beside a void.
+  // Sized to the demos there are: one demo takes the canvas edge to edge, never half a row
+  // beside a void; two or more sit two across from 1280px.
   &__grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: 16px;
-    max-width: 920px;
+
+    @media (min-width: 1280px) {
+      &:has(> :nth-child(2)) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
   }
 
   &__empty {

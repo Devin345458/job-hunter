@@ -393,15 +393,16 @@ const chatBoxText = computed(() => {
   flex-direction: column;
   gap: 10px;
 
+  // A question is a raised panel. One that blocks approve keeps a 3px amber left edge and its
+  // amber label, the same mark as on the Questions page, not an amber box and tint on every one.
   &__item {
     padding: 14px 16px;
-    border-radius: 8px;
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    background: rgba(var(--v-theme-on-surface), 0.02);
+    border-radius: 10px;
+    background: rgb(var(--v-theme-surface-bright));
 
     &--blocking {
-      border-color: rgba(var(--v-theme-warning), 0.4);
-      background: rgba(var(--v-theme-warning), 0.05);
+      border-left: 3px solid rgb(var(--v-theme-warning));
+      padding-left: 13px;
     }
   }
 

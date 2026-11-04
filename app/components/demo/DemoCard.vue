@@ -129,6 +129,7 @@ const testFacts = computed(() => {
 
   &__gap,
   &__summary {
+    max-width: 80ch;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     line-height: 1.6;
   }

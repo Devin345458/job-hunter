@@ -245,7 +245,7 @@ onMounted(load)
 
       <v-row class="mb-2">
         <!-- Score moves -->
-        <v-col cols="12" lg="8">
+        <v-col cols="12">
           <h2 class="section-heading">Recent score moves</h2>
           <v-card v-if="moves.length === 0" variant="outlined" class="pa-6">
             <p class="text-body-2 text-medium-emphasis mb-0">No scores have moved yet. They move when a rule changes and learning runs.</p>
@@ -296,7 +296,7 @@ onMounted(load)
         </v-col>
 
         <!-- Search adjustments -->
-        <v-col cols="12" lg="4">
+        <v-col cols="12">
           <h2 class="section-heading">Search changes</h2>
           <v-card variant="outlined" class="pa-4">
             <template v-if="searchEmpty">
