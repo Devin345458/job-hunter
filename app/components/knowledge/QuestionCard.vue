@@ -176,6 +176,8 @@ async function draftFromRecords() {
     recordsMessage.value = [res.memoryNote, res.reply].filter(Boolean).join(' ')
     return
   }
+  // Nearest work only: the line saying nothing about the subject was found stays in view.
+  if (res.draft.adjacentOnly) recordsMessage.value = [res.memoryNote, res.reply].filter(Boolean).join(' ')
   const typed = boxNow()
   if (typed && typed !== res.draft.text.trim() && (takesExample.value ? exampleOpen.value : showInput.value)) {
     pendingRecords.value = { draft: res.draft, note: res.memoryNote }

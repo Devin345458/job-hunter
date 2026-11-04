@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { z } from 'zod'
 import { repoCommits, repoSources } from '../db/schema'
 import type {
@@ -19,10 +19,11 @@ import { loadKnowledge, type KnowledgeEntry } from './knowledge'
 import { memoryLogLine, memoryTarget, searchMemory, type MemorySearch } from './memory'
 import { addedOutcomes, contentWords, questionChatContext, stemWord, stopFor } from './question-chat'
 import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
-import { isLegacyQuestion, parseYesNo, takesExample, type QuestionRow } from './questions'
+import { findKnowledgeEntry, isLegacyQuestion, isNegativeKnowledge, knowledgeCovers, knowledgeTargetFor, parseYesNo, takesExample, type QuestionRow } from './questions'
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
-import { cleanTerms, messageBody, type TermSet } from './repos/search'
+import { cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
+import { isAppRepo } from './repos/settings'
 import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
 // "Draft from my records": a first-person draft for a skill, experience, or written question,
@@ -976,6 +977,43 @@ export const RECORDS_STEP_LABELS: Record<RecordsDraftStep, string> = {
   rewriting: 'Rewriting it to clear the bar',
 }
 
+/**
+ * Finding nothing is not a No: much of Devin's work sits where the app cannot look (a local
+ * checkout, a client's repo he has not switched on). A draft says No only when he has said so: the
+ * question answered No, a negative knowledge base entry for the subject (what a No answer or "I
+ * don't have these" writes), or a sentence of his own in this chat that says he has not done it.
+ */
+export function devinSaidNo(q: QuestionRow, entries: KnowledgeEntry[], said: string[]): boolean {
+  if (parseYesNo(q.answer ?? '') === 'no') return true
+  const target = knowledgeTargetFor(q)
+  if (isNegativeKnowledge(findKnowledgeEntry(target.category, target.key, entries)?.value)) return true
+  const subject = q.subject?.trim() || ''
+  if (subject && isNegativeKnowledge(knowledgeCovers(subject)?.value)) return true
+  const words = subjectParts(subject || q.question).map(w => w.toLowerCase())
+  if (!words.length) return false
+  return said.some(text => splitSentences(text).some((sentence) => {
+    const lower = sentence.toLowerCase()
+    return /\b(?:no|not|never|haven't|hasn't|don't|didn't|do not|did not|have not)\b/.test(lower) && words.some(w => hasWord(lower, w))
+  }))
+}
+
+/** How many of his commits the counts read: switched-on, indexed repos, this app's repo left out. */
+function searchedCommitCount(): number {
+  const db = useDb()
+  const repos = db.select({ fullName: repoSources.fullName }).from(repoSources)
+    .where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
+    .map(r => r.fullName).filter(n => !isAppRepo(n))
+  if (!repos.length) return 0
+  return db.select({ url: repoCommits.url }).from(repoCommits).where(inArray(repoCommits.repo, repos)).all().length
+}
+
+/** "your knowledge base, 10,493 of your commits, and your past Claude sessions". */
+function searchedText(commits: number, memory: RecordsMemoryUse): string {
+  const parts = ['your knowledge base', commits ? `${commits.toLocaleString('en-US')} of your commits` : null, memory === 'used' || memory === 'none' ? 'your past Claude sessions' : null].filter((x): x is string => !!x)
+  const searched = listJoin(parts)
+  return memory === 'unreachable' || memory === 'busy' ? `${searched}; your past Claude sessions were not reachable` : searched
+}
+
 const MEMORY_NOTES: Record<'unreachable' | 'busy', string> = {
   unreachable: 'Your laptop\'s memory is not reachable right now, so this draft uses your knowledge base, your GitHub, and what you said only.',
   busy: 'Your laptop\'s memory server is busy or asleep, so this draft uses your knowledge base, your GitHub, and what you said only.',
@@ -1170,10 +1208,14 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     let draft = await writeAndCheck(null)
     logDraft('', draft)
     const textOf = (d: typeof draft) => d.kept.map(k => k.text).join(' ')
+    // Records that show nothing are not a No (devinSaidNo): the draft then offers only the nearest
+    // work, with no level, and says what was searched.
+    const saidNo = devinSaidNo(q, entries, said)
+    const absent = (d: typeof draft) => d.out.level === 'No' && !saidNo
     // A No goes into no example box: the card's No needs none.
-    const exampleNo = (d: typeof draft) => box === 'example' && d.out.level === 'No'
+    const exampleNo = (d: typeof draft) => box === 'example' && d.out.level === 'No' && saidNo
     let coach: RecordsDraftCoach | null = null
-    if (draft.kept.length && !exampleNo(draft)) {
+    if (draft.kept.length && !exampleNo(draft) && !absent(draft)) {
       // The coach reads the draft that held up, not what Claude first wrote.
       step('coaching')
       coach = await coachDraft(q.id, questionLines, draft.out.level, textOf(draft), target, names)
@@ -1182,7 +1224,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
       if (coach && !coach.ships) {
         const second = await writeAndCheck(rewriteBrief(draft.kept, coach))
         logDraft(' rewrite', second)
-        if (second.kept.length && !exampleNo(second)) {
+        if (second.kept.length && !exampleNo(second) && !absent(second)) {
           step('coaching')
           const coach2 = await coachDraft(q.id, questionLines, second.out.level, textOf(second), target, names)
           if (coach2) console.info(`[draft-from-records] question ${q.id} rewrite coach: ${coach2.scores.map(x => `${x.dimension} ${x.score}`).join(', ')}, average ${coach2.average}${coach2.hardFails.length ? `, hard fails: ${coach2.hardFails.join('; ')}` : ''}, ${coach2.ships ? 'clears the bar' : 'under the bar'}`)
@@ -1198,13 +1240,30 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     const droppedCount = Object.values(dropped).reduce((a, b) => a + b, 0)
     const kept: RecordsDraftSentence[] = draft.kept.map(({ part: _part, ...k }) => k)
     const missing = draft.out.missing?.trim() ? scrubDashes(draft.out.missing.trim()) : null
+    if (absent(draft)) {
+      // Nothing about the subject in what the app can see: say what was searched, pick no level,
+      // and offer the nearest work as sentences he can use if he picks Some experience or No.
+      const bridge = draft.kept.filter(k => k.part === 'bridge').map(({ part: _part, ...k }) => k)
+      const line = `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(), memoryUse)}).`
+      console.info(`[draft-from-records] question ${q.id}: nothing found, ${bridge.length} sentences of nearest work offered, no level picked`)
+      return {
+        ok: true,
+        draft: bridge.length ? { text: bridge.map(b => b.text).join(' '), level: null, sentences: bridge, box, coach: null, adjacentOnly: true } : null,
+        reply: bridge.length
+          ? `${line} Below is the nearest work they show, for you to use if you pick Some experience or No yourself; no answer is picked for you.`
+          : `${line} If you did it, tell me in a sentence or two where, and I will draft from that.`,
+        memory: memoryUse,
+        memoryNote,
+        searched: counts,
+      }
+    }
     if (!kept.length || exampleNo(draft)) {
       // An example box under No: the records show none of it, so the honest answer is No; the
       // nearest work they show is said in the reply, never put in the box.
       const bridge = draft.kept.filter(k => k.part === 'bridge').map(k => k.text)
       const nearest = exampleNo(draft) && bridge.length ? ` The nearest work your records show: ${bridge.join(' ')}` : ''
       const why = exampleNo(draft)
-        ? `Your records do not show this work, so the honest answer is No.${nearest}`
+        ? `You have said you have not done this, so No fits.${nearest}`
         : draft.out.sentences.length
           ? `I wrote a draft, but no sentence held up against your records (${listJoin(Object.entries(dropped).map(([k, v]) => `${v} with ${k}`))}), so I left it out.`
           : 'Your records do not show this work, so there is no draft.'

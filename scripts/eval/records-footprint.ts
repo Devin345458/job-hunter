@@ -127,5 +127,23 @@ const queryOk = longest <= 1024 && covered === names.length
 if (!queryOk) failed++
 console.log(`\n=== code search query length\n${queryOk ? 'PASS' : 'FAIL'} ${names.length} repos in ${queries.length} queries, longest ${longest} characters (GitHub refuses over 1,024)`)
 
+// Finding nothing is not a No: a No only when Devin said it (an answer, a negative entry, his words).
+const { devinSaidNo } = await import('../../server/utils/draft-from-records')
+const gql = { id: 0, kind: 'knows', subject: 'GraphQL', question: 'Have you used GraphQL in a real project?', answer: null, knowledgeKey: null, status: 'pending' } as any
+const kb = [...entries]
+const saidNoCases: Array<[string, any, any[], string[], boolean]> = [
+  ['nothing said, no entry', gql, kb, [], false],
+  ['his words say he has not', gql, kb, ['I have never used GraphQL.'], true],
+  ['his words name it without a No', gql, kb, ['GraphQL came up at my last job.'], false],
+  ['answered No before', { ...gql, answer: 'No' }, kb, [], true],
+  ['a negative knowledge entry', gql, [...kb, { id: -1, category: 'skill', key: 'GraphQL', value: 'Does not know this: GraphQL.' }], [], true],
+]
+console.log('\n=== a No only when Devin said it')
+for (const [label, q, es, said, want] of saidNoCases) {
+  const got = devinSaidNo(q, es, said)
+  if (got !== want) failed++
+  console.log(`${got === want ? 'PASS' : 'FAIL'} ${label}: ${got}`)
+}
+
 console.log(`\n${failed ? `${failed} not as expected` : 'all as expected'}`)
 process.exit(failed ? 1 : 0)

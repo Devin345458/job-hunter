@@ -126,6 +126,11 @@ export interface RecordsDraft {
   box: 'example' | 'answer'
   /** The coach pass; null when it could not run. Absent on drafts made before it existed. */
   coach?: RecordsDraftCoach | null
+  /**
+   * The records show nothing about the subject: these sentences are only the nearest work they
+   * show, for Devin to use if he picks Some experience or No himself. Level is null; nothing is picked.
+   */
+  adjacentOnly?: boolean
 }
 
 /** What a records draft is doing now, for the step line under the spinner. */

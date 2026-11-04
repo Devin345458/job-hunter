@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { asksForRecordsDraft, chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, RECORDS_DRAFT_LABEL, takesExample, useDraftStepLine, useQuestionChat, type ChatMessage, type ChatQuestion, type DraftMeta } from './chat-store'
+import type { RecordsDraft } from '#shared/types/question-chat'
 
 // Ask Claude about a question before answering it. Shown as a sticky column beside the question
 // list on wide screens and inside a dialog on narrower ones; both read the same conversations.
@@ -125,8 +126,10 @@ const confirmingDraft = ref<string | null>(null)
  * On a pending skill or experience question a draft example means a yes: "Use this draft" picks the
  * level Claude suggested (Some experience when it said so, else Yes) and fills the example box in one tap.
  */
-function draftLevel(m: { suggestedAnswer?: string | null }): string | null {
+function draftLevel(m: { suggestedAnswer?: string | null; records?: RecordsDraft | null }): string | null {
   if (!exampleQuestion.value || props.question?.status !== 'pending') return null
+  // A draft from his records carries its own level; none (nothing found) picks none.
+  if (m.records) return m.records.level
   const s = m.suggestedAnswer ?? ''
   return (EXAMPLE_LEVELS as readonly string[]).includes(s) ? s : 'Yes'
 }

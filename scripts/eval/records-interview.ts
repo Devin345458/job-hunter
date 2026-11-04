@@ -150,7 +150,7 @@ for (const id of ids) {
   if (!localText) {
     // No local draft to compare: the draft and its coach pass only (the Some experience and No paths).
     console.log(`drafted in ${seconds} seconds; no local draft to judge against`)
-    results.push({ id, subject: q.subject, question: q.question, seconds, steps, memory: res.memory, app: res.draft.text, appChars: res.draft.text.length, level: res.draft.level, coach: res.draft.coach ?? null, reply: res.reply, unjudged: true })
+    results.push({ id, subject: q.subject, question: q.question, seconds, steps, memory: res.memory, app: res.draft.text, appChars: res.draft.text.length, level: res.draft.level, adjacentOnly: !!res.draft.adjacentOnly, coach: res.draft.coach ?? null, reply: res.reply, unjudged: true })
     writeFileSync(outPath, JSON.stringify(results, null, 2))
     continue
   }
@@ -192,6 +192,7 @@ for (const r of results) {
   }
   if (r.unjudged) {
     console.log(`\n${r.id} ${r.subject} (${r.seconds} s, level ${r.level ?? 'none'}, ${r.appChars} chars, not judged: no local draft)`)
+    console.log(`  REPLY: ${r.reply}`)
     console.log(`  APP DRAFT: ${r.app}`)
     for (const qq of r.coach?.questions ?? []) console.log(`  STRONGER: ${qq}`)
     if (r.coach) console.log(`  COACH: ${r.coach.scores.map((x: any) => `${x.dimension} ${x.score}`).join(', ')}; average ${r.coach.average}; ${r.coach.ships ? 'clears the bar' : 'under the bar'}${r.coach.rewritten ? '; rewritten once' : ''}`)
