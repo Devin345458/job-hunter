@@ -97,6 +97,12 @@ elif [ -f "$SRC_DB" ]; then
   sqlite3 "$SRC_DB" ".backup '$WT/data/job-hunter.db'"
   if [ -d "$ROOT/data/resumes" ]; then cp -R "$ROOT/data/resumes/." data/resumes/; fi
   echo "Copied the main checkout's database into data/job-hunter.db."
+  # Queue items copied with the database belong to the checkout they came from. Left queued or
+  # running, this worktree's worker would resume them at boot and spend Claude calls on them.
+  if sqlite3 data/job-hunter.db "select 1 from sqlite_master where name='task_queue'" | grep -q 1; then
+    n="$(sqlite3 data/job-hunter.db "update task_queue set status='canceled', note='Canceled: copied into a worktree' where status in ('queued','running'); select changes();")"
+    echo "Canceled ${n} queue items copied from the main checkout."
+  fi
 else
   echo "No database in the main checkout. The app creates and migrates one on the first request."
 fi
