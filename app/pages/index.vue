@@ -460,6 +460,7 @@ const leftParts = computed(() => [
 
   &__sr {
     position: absolute;
+    font-size: 1.25rem;
     width: 1px;
     height: 1px;
     margin: -1px;

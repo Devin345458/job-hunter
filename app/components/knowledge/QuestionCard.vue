@@ -818,8 +818,7 @@ watch(() => props.pick?.nonce, () => {
     margin-top: 12px;
     padding: 10px 12px;
     border-radius: 8px;
-    background: rgba(var(--v-theme-warning), 0.1);
-    border: 1px solid rgba(var(--v-theme-warning), 0.3);
+    background: rgb(var(--v-theme-surface-bright));
   }
 
   &__records-actions {

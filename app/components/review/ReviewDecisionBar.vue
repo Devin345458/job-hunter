@@ -290,8 +290,10 @@ const consequence = computed(() => {
     border: 0;
     cursor: pointer;
 
+    // A 44px tap target on a phone without growing the line: the padding is pulled back by margin.
     @media (max-width: 959.98px) {
       padding-block: 13px;
+      margin-block: -13px;
     }
   }
 

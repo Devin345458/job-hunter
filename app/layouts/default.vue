@@ -539,8 +539,10 @@ function badgeLabel(item: NavItem): string {
     }
   }
 
+  // A 4px inset keeps the end labels ("Settings") on the 16px phone margin.
   &__bottom {
     border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+    padding-inline: 4px;
   }
 
   &__bottom-label {
