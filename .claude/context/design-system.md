@@ -43,7 +43,7 @@ Text: on-surface white at 0.96; medium emphasis 0.70 (`#b4b4b4` on black); disab
 
 ## Type
 
-Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. `font-variant-numeric: tabular-nums` on `:root`, so every number lines up and money is one face everywhere.
+Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular figures only where figures line up or change in place: `.tabular`, badges, and the score, money and count columns listed in `global.scss`. Never on running text: Inter's tnum gives the hyphen a figure-width slot ("full - stack").
 
 - `h4` 24px/600, -0.015em (page titles, the one h1 per screen)
 - `h5` 20px/600, `h6` 17px/600
@@ -108,7 +108,7 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. `font-var
 | 2026-11-04 | Restyle: true-black flat (dealt, seed 815537509) over the 2026-11-01 slate and cobalt | The slate read as the stock dark dashboard and blue sat on chrome (nav, links, pills, every button), so color said nothing. The study's darks are neutral |
 | 2026-11-04 | One data hue (`score`, sky) on the match score everywhere | Review showed the score in blue and Jobs and the job page in green; the dealt lime is also the positive color, so a 45 would have read like a Submitted pill |
 | 2026-11-04 | Primary by inversion, corners kept at 8px | The style's move; the pill shape it deals is banned by Devin's brief |
-| 2026-11-04 | Inter replaces Schibsted Grotesk; tabular figures app wide | The dealt face; Schibsted's tabular comma took a digit-wide slot, which kept money out of tabular figures and mixed faces in Settings |
+| 2026-11-04 | Inter replaces Schibsted Grotesk; tabular figures on figures only | The dealt face. Tabular figures app wide put a gap around every hyphen in running text, so they are scoped to figure columns, badges and `.tabular` |
 | 2026-11-04 | Kept the open-plane shell (no desktop top bar) | The dealt T-frame needs a top bar with something real in it; the app has no search or switcher, and the sheet flags an empty top bar. The redraw dealt No sidebar, which cannot hold eight destinations and the Settings group |
 | 2026-11-04 | Health folds to one line above the queue | It held the top 390px of the queue column; the line keeps the paused or blocked state visible and the Runs and Queue links |
 | 2026-11-04 | Jobs is a list with pay columns, not a card grid | Score, base and total could not be compared down a 3-up grid of 5 to 8 chips a card |
