@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Benefit, BenefitCategory, CompensationBreakdown } from '#shared/types/pipeline'
+import { compParts, countsTowardTotal, payPartNames } from '#shared/utils/comp-parts'
 import { loadKnowledge } from './knowledge'
 import * as questionsModule from './questions'
 import { answeredValue, askQuestion } from './questions'
@@ -113,16 +114,8 @@ export function percentInQuote(n: number, quote: string): boolean {
 
 const PERIOD_FACTOR = { year: 1, month: 12, hour: 2080 } as const
 
-/**
- * Benefits whose stated value goes into the total. Parental and family-forming benefits
- * (childcare, fertility, adoption) and uncategorized perks pay out only if used, so an "up to $10,000" fertility
- * allowance would inflate the estimate. They keep their value on the page but stay out of the total.
- */
-const USE_DEPENDENT = /fertility|child\s?care|daycare|adoption|surrogacy|family[\s-](forming|planning|building)|egg freezing|\bivf\b/i
-
-export function countsTowardTotal(b: { category: BenefitCategory; name: string; detail?: string }): boolean {
-  return b.category !== 'parental' && b.category !== 'other' && !USE_DEPENDENT.test(`${b.name} ${b.detail ?? ''}`)
-}
+// Which benefits count toward the total (countsTowardTotal) and how the total adds up
+// (compParts) live in shared/utils/comp-parts.ts, so the screens explain the same sum.
 
 const FULL_COVERAGE = /100\s?%|fully (paid|covered)|full(y)? cover|at no cost|no cost|free (medical|health)|employer[\s-]paid|company[\s-]paid|paid in full|covers? (all|the full)|premiums? (are )?(fully )?(paid|covered)/i
 
@@ -146,6 +139,11 @@ function oneOf<T extends string>(value: string | null | undefined, allowed: read
 
 const PERIODS = ['year', 'month', 'hour'] as const
 const RECURRENCES = ['year', 'month', 'one_time', 'unknown'] as const
+
+/** What a percent match's detail says about its value: "4% of base pay". Rows before 2026-11-04 said "4% of the base midpoint". */
+export function matchDetailSuffix(percent: number): string {
+  return `${percent}% of base pay`
+}
 
 /**
  * Turns Claude's extraction into a CompensationBreakdown. Every figure whose quote is not in
@@ -214,30 +212,27 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
   if (baseAnnualMin == null && baseAnnualMax != null) notes.push('Only a maximum base was stated.')
   if (basePeriod && basePeriod !== 'year' && baseLow != null) notes.push(`Base converted to yearly: ${basePeriod === 'hour' ? 'hourly rate times 2,080 hours' : 'monthly pay times 12'}.`)
 
-  // Bonus: percent applies to each end of the base range
+  // Bonus: a percent applies to each end of the base range (compParts); estimatedAnnual keeps the
+  // value at the base midpoint, the one figure the screens show for it.
   let bonus: CompensationBreakdown['bonus'] = null
-  let bonusLow = 0
-  let bonusHigh = 0
   if (ex.bonus) {
     const status = verified('bonus', ex.bonus.quote, [[ex.bonus.percentOfBase, 'percent'], [ex.bonus.amount, 'money']])
     if (status !== 'no_quote') {
       let estimated: number | null = null
+      let percent: number | null = null
       if (status === 'ok' && ex.bonus.amount != null) {
         estimated = round(ex.bonus.amount)
-        bonusLow = bonusHigh = estimated
       }
-      else if (status === 'ok' && ex.bonus.percentOfBase != null && ex.bonus.percentOfBase > 0 && ex.bonus.percentOfBase <= 100 && baseLow != null && baseHigh != null && baseMid != null) {
-        bonusLow = round(baseLow * ex.bonus.percentOfBase / 100)
-        bonusHigh = round(baseHigh * ex.bonus.percentOfBase / 100)
+      else if (status === 'ok' && ex.bonus.percentOfBase != null && ex.bonus.percentOfBase > 0 && ex.bonus.percentOfBase <= 100 && baseMid != null) {
         estimated = round(baseMid * ex.bonus.percentOfBase / 100)
+        percent = ex.bonus.percentOfBase
       }
-      bonus = { description: ex.bonus.description, estimatedAnnual: estimated, quote: ex.bonus.quote }
+      bonus = { description: ex.bonus.description, estimatedAnnual: estimated, quote: ex.bonus.quote, ...(percent != null ? { percentOfBase: percent } : {}) }
     }
   }
 
   // Equity: only a stated yearly value, or a stated grant over stated vesting years
   let equity: CompensationBreakdown['equity'] = null
-  let equityAnnual = 0
   if (ex.equity) {
     const status = verified('equity', ex.equity.quote, [[ex.equity.amountPerYear, 'money'], [ex.equity.totalGrant, 'money']])
     if (status !== 'no_quote') {
@@ -246,7 +241,6 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
       else if (status === 'ok' && ex.equity.totalGrant != null && ex.equity.vestingYears != null && ex.equity.vestingYears > 0 && text.includes(String(ex.equity.vestingYears))) {
         estimated = round(ex.equity.totalGrant / ex.equity.vestingYears)
       }
-      equityAnnual = estimated ?? 0
       equity = { description: ex.equity.description, estimatedAnnual: estimated, quote: ex.equity.quote }
     }
   }
@@ -258,6 +252,7 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
     const status = verified(`benefit "${b.name}"`, b.quote, [[b.amount, 'money'], [b.category === 'retirement' ? b.percentOfBase : null, 'percent']])
     if (status === 'no_quote') continue
     let value: number | null = null
+    let percent: number | null = null
     let detail = b.detail
     if (status === 'ok' && b.amount != null && b.amount > 0) {
       if (b.amountRecurrence === 'year') value = round(b.amount)
@@ -265,15 +260,18 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
       else detail = `${detail} (one-time or unstated frequency, not counted per year)`
     }
     else if (status === 'ok' && b.category === 'retirement' && b.percentOfBase != null && b.percentOfBase > 0 && b.percentOfBase <= 25) {
+      // The total counts the percent of each end of the base range (compParts), as for a bonus;
+      // estimatedAnnualValue keeps the value at the midpoint.
       if (baseMid != null) {
         value = round(baseMid * b.percentOfBase / 100)
-        detail = `${detail} (${b.percentOfBase}% of the base midpoint)`
+        percent = b.percentOfBase
+        detail = `${detail} (${matchDetailSuffix(b.percentOfBase)})`
       }
     }
     if (value != null && !countsTowardTotal(b)) detail = `${detail} (not counted in the total: its value depends on use)`
-    benefits.push({ name: b.name, category: b.category, detail, estimatedAnnualValue: value, quote: b.quote })
+    benefits.push({ name: b.name, category: b.category, detail, estimatedAnnualValue: value, ...(percent != null ? { percentOfBase: percent } : {}), quote: b.quote })
   }
-  const benefitTotal = benefits.reduce((sum, b) => sum + (countsTowardTotal(b) ? b.estimatedAnnualValue ?? 0 : 0), 0)
+  const totals = compParts({ baseAnnualMin, baseAnnualMax, bonus, equity, benefits })
 
   const hasBase = baseLow != null
   const anyValue = hasBase || (bonus?.estimatedAnnual ?? null) != null || (equity?.estimatedAnnual ?? null) != null || benefits.some(b => b.estimatedAnnualValue != null)
@@ -290,8 +288,8 @@ export function buildCompensation(ex: CompExtraction, postingText: string): Comp
     bonus,
     equity,
     benefits,
-    totalEstimateMin: hasBase ? round(baseLow! + bonusLow + equityAnnual + benefitTotal) : null,
-    totalEstimateMax: hasBase ? round(baseHigh! + bonusHigh + equityAnnual + benefitTotal) : null,
+    totalEstimateMin: hasBase ? totals.totalMin : null,
+    totalEstimateMax: hasBase ? totals.totalMax : null,
     confidence: hasBase ? 'stated' : anyValue ? 'partial' : 'not_stated',
     notes: notes.join(' '),
     extractedAt: new Date().toISOString(),
@@ -467,7 +465,8 @@ export function scoreCompensation(comp: CompensationBreakdown | null, prefs: Com
   }
 
   let estimate = postingMid
-  parts.push(`The midpoint scored is ${usd(postingMid)} a year, from the posting's estimated total (${comp.totalEstimateMin === comp.totalEstimateMax ? usd(postingMid) : `${usd(comp.totalEstimateMin!)} to ${usd(comp.totalEstimateMax!)}`}: base${comp.bonus?.estimatedAnnual ? ', bonus' : ''}${comp.equity?.estimatedAnnual ? ', equity' : ''}${comp.benefits.some(b => b.estimatedAnnualValue) ? ', and benefits with a stated value' : ''}).`)
+  // Names exactly what the total counts (compParts), as the pay panel beside it does.
+  parts.push(`The midpoint scored is ${usd(postingMid)} a year, from the posting's estimated total (${comp.totalEstimateMin === comp.totalEstimateMax ? usd(postingMid) : `${usd(comp.totalEstimateMin!)} to ${usd(comp.totalEstimateMax!)}`}: ${payPartNames(compParts(comp))}).`)
 
   const unvaluedHealth = comp.benefits.some(b => isFullyPaidHealth(b) && b.estimatedAnnualValue == null)
   if (unvaluedHealth) {

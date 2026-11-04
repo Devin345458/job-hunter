@@ -2,6 +2,7 @@
 import type { CompensationBreakdown, ScoreBreakdown } from '#shared/types/pipeline'
 import { money, moneyRange } from '~/composables/review/format'
 import { payExtraText, payFiguresInText, payReasoningText } from '#shared/utils/pay-format'
+import { benefitPart, compParts, otherBenefitsText, partAmount, partPercent, type CompPart } from '#shared/utils/comp-parts'
 import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
 
 // Total compensation against Devin's floor. The scale draws base pay as a solid band, the
@@ -19,6 +20,9 @@ const props = defineProps<{
   /** Desktop review card: with compact, leaves out the scale when no floor is set (there is nothing to clear) and tightens the lines. */
   dense?: boolean
 }>()
+
+/** Compact only: the "See all" link under the counted parts asks the card to open the full list. */
+const emit = defineEmits<{ 'show-benefits': [] }>()
 
 const currency = computed(() => props.comp?.currency || props.listing?.currency || 'USD')
 const floor = computed(() => props.score?.compensation.floor ?? null)
@@ -84,6 +88,48 @@ const totalBand = computed(() => {
 })
 
 const benefits = computed(() => props.comp?.benefits ?? [])
+
+// What the total counts, from the same function that computed it (shared/utils/comp-parts.ts).
+const parts = computed(() => (props.comp ? compParts(props.comp) : null))
+const hasTotal = computed(() => parts.value?.totalMin != null)
+const countedPart = (kind: CompPart['kind']) => (hasTotal.value ? parts.value?.counted.find(p => p.kind === kind) ?? null : null)
+const countedBenefits = computed(() => (hasTotal.value ? parts.value?.counted.filter(p => p.kind === 'benefit') ?? [] : []))
+
+/** Bonus or equity: the amount the total counts ("$23,550 to $31,950 counted"), else the plain phrase. */
+function extraText(kind: 'bonus' | 'equity', extra: { estimatedAnnual: number | null } | null | undefined): string {
+  const p = countedPart(kind)
+  return p ? `${partAmount(p, currency.value)} counted` : payExtraText(extra, currency.value)
+}
+function extraLabel(kind: 'bonus' | 'equity'): string {
+  const p = countedPart(kind)
+  const label = kind === 'bonus' ? 'Bonus' : 'Equity'
+  return p?.percentOfBase != null ? `${label}, ${partPercent(p)}` : label
+}
+
+/** The benefits the total leaves out, after the counted ones: "7 quoted, no dollar value". */
+const othersText = computed(() => {
+  if (!benefits.value.length) return 'Not stated'
+  if (!hasTotal.value || !parts.value) return `${benefits.value.length} quoted from the posting`
+  return otherBenefitsText(parts.value)
+})
+
+/** Full list: counted first, then valued but left out, then the rest, each with what the total does with it. */
+const benefitRows = computed(() => {
+  const list = benefits.value.map((b) => {
+    const part = hasTotal.value && parts.value ? benefitPart(parts.value, b) : null
+    const state: 'counted' | 'left_out' | 'unvalued' = part ? 'counted' : b.estimatedAnnualValue != null ? 'left_out' : 'unvalued'
+    const value = part ? `${partAmount(part, currency.value)}/yr` : b.estimatedAnnualValue != null ? `${money(b.estimatedAnnualValue, currency.value)}/yr` : 'no dollar value'
+    return { b, state, value }
+  })
+  const rank = { counted: 0, left_out: 1, unvalued: 2 }
+  return list.sort((x, y) => rank[x.state] - rank[y.state])
+})
+const benefitCount = computed(() => {
+  const n = benefits.value.length
+  if (!n) return 'none stated'
+  const counted = benefitRows.value.filter(r => r.state === 'counted').length
+  return hasTotal.value ? (counted ? `${counted} of ${n} counted` : `${n}, none counted`) : `${n} quoted`
+})
 const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
   stated: 'Salary stated in the posting',
   partial: 'Some pay details stated',
@@ -129,9 +175,19 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
 
     <dl v-if="compact" class="comp__brief" :class="{ 'comp__brief--dense': dense }">
       <div><dt>Base</dt><dd>{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'Not stated' }}</dd></div>
-      <div><dt>Bonus</dt><dd>{{ payExtraText(comp?.bonus, currency) }}</dd></div>
-      <div><dt>Equity</dt><dd>{{ payExtraText(comp?.equity, currency) }}</dd></div>
-      <div><dt>Benefits</dt><dd>{{ benefits.length ? `${benefits.length} quoted from the posting` : 'Not stated' }}</dd></div>
+      <div><dt>{{ extraLabel('bonus') }}</dt><dd>{{ extraText('bonus', comp?.bonus) }}</dd></div>
+      <div><dt>{{ extraLabel('equity') }}</dt><dd>{{ extraText('equity', comp?.equity) }}</dd></div>
+      <div v-for="(p, i) in countedBenefits" :key="`b${i}`">
+        <dt>{{ p.label }}<template v-if="p.percentOfBase != null">, {{ partPercent(p) }}</template></dt>
+        <dd>{{ partAmount(p, currency) }} counted</dd>
+      </div>
+      <div v-if="othersText || !countedBenefits.length">
+        <dt>{{ countedBenefits.length ? 'Other benefits' : 'Benefits' }}</dt>
+        <dd>
+          {{ othersText }}
+          <button v-if="benefits.length" type="button" class="comp__more" @click="emit('show-benefits')">See all {{ benefits.length }}</button>
+        </dd>
+      </div>
     </dl>
 
     <template v-if="!compact">
@@ -144,7 +200,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
           <dt>Bonus</dt>
           <dd>
             <template v-if="comp?.bonus">
-              <span>{{ payExtraText(comp.bonus, currency) }}</span>
+              <span>{{ countedPart('bonus') ? `${partAmount(countedPart('bonus')!, currency)} a year` : payExtraText(comp.bonus, currency) }}<span v-if="countedPart('bonus')" class="comp__tag">counted{{ countedPart('bonus')!.percentOfBase != null ? `, ${partPercent(countedPart('bonus')!)}` : '' }}</span></span>
               <span class="comp__desc">{{ comp.bonus.description }}</span>
               <q class="comp__quote">{{ comp.bonus.quote }}</q>
             </template>
@@ -155,7 +211,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
           <dt>Equity</dt>
           <dd>
             <template v-if="comp?.equity">
-              <span>{{ payExtraText(comp.equity, currency) }}</span>
+              <span>{{ countedPart('equity') ? `${partAmount(countedPart('equity')!, currency)} a year` : payExtraText(comp.equity, currency) }}<span v-if="countedPart('equity')" class="comp__tag">counted</span></span>
               <span class="comp__desc">{{ comp.equity.description }}</span>
               <q class="comp__quote">{{ comp.equity.quote }}</q>
             </template>
@@ -163,13 +219,15 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
           </dd>
         </div>
         <div class="comp__line comp__line--stack">
-          <dt>Benefits <span class="comp__count">{{ benefits.length || 'none stated' }}</span></dt>
+          <dt>Benefits <span class="comp__count">{{ benefitCount }}</span></dt>
           <dd>
             <ul v-if="benefits.length" class="comp__benefits">
-              <li v-for="(b, i) in benefits" :key="i">
+              <li v-for="({ b, state, value }, i) in benefitRows" :key="i">
                 <div class="comp__benefit-row">
                   <span class="comp__benefit-name">{{ b.name }}</span>
-                  <span class="comp__benefit-value">{{ b.estimatedAnnualValue !== null ? `${money(b.estimatedAnnualValue, currency)}/yr` : 'not valued' }}</span>
+                  <span class="comp__benefit-value" :class="{ 'comp__benefit-value--counted': state === 'counted' }">
+                    {{ value }}<span v-if="state === 'counted'" class="comp__tag">counted</span><span v-else-if="state === 'left_out'" class="comp__tag">not counted</span>
+                  </span>
                 </div>
                 <span v-if="b.detail" class="comp__desc">{{ b.detail }}</span>
                 <q class="comp__quote">{{ b.quote }}</q>
@@ -395,6 +453,44 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
     flex-shrink: 0;
     font-size: 0.8125rem;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+
+    &--counted {
+      color: rgb(var(--v-theme-on-surface));
+    }
+  }
+
+  // A neutral status tag (design-system.md): what the total does with an amount.
+  &__tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.4;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    background: rgb(var(--v-theme-surface-light));
+    white-space: nowrap;
+  }
+
+  &__more {
+    margin-left: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-weight: 500;
+    color: rgb(var(--v-theme-on-surface));
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    white-space: nowrap;
+
+    &:focus-visible {
+      outline: 2px solid rgb(var(--v-theme-primary));
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
   }
 
   &__notes {

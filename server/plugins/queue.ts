@@ -36,6 +36,10 @@ export default defineNitroPlugin((nitroApp) => {
     console.error('[runs] could not close stale runs', e)
   }
 
+  // Once after the 2026-11-04 deploy (server/utils/comp-repair.ts): a percent 401(k) match counts
+  // at each end of the base range. No Claude call; a failure never stops the worker.
+  repairCompTotalsOnce(m => console.log(`[repair] ${m}`)).catch(e => console.error('[repair] could not repair the pay totals', e))
+
   const w = createWorker()
   w.start()
 

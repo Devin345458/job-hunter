@@ -44,8 +44,14 @@ export interface Benefit {
   name: string
   category: BenefitCategory
   detail: string
-  /** Annual dollar value when the posting states it or a stated figure implies it. Null when it would be a guess. */
+  /**
+   * Annual dollar value when the posting states it or a stated figure implies it. Null when it would be a guess.
+   * For a percent match (percentOfBase set) this is the value at the base midpoint; the total counts the
+   * percent of each end of the base range instead (compParts() in shared/utils/comp-parts.ts).
+   */
   estimatedAnnualValue: number | null
+  /** Retirement match as a percent of base pay, such as 4 for "up to 4% match". Absent on rows stored before 2026-11-04 until the repair. */
+  percentOfBase?: number | null
   /** Exact text from the posting this benefit came from. */
   quote: string
 }
@@ -60,10 +66,14 @@ export interface CompensationBreakdown {
   /** Base salary converted to a yearly figure. */
   baseAnnualMin: number | null
   baseAnnualMax: number | null
-  bonus: { description: string; estimatedAnnual: number | null; quote: string } | null
+  /**
+   * estimatedAnnual is the stated amount, or for a percent bonus the value at the base midpoint;
+   * percentOfBase (set for a percent bonus) makes the total count the percent of each end.
+   */
+  bonus: { description: string; estimatedAnnual: number | null; quote: string; percentOfBase?: number | null } | null
   equity: { description: string; estimatedAnnual: number | null; quote: string } | null
   benefits: Benefit[]
-  /** Base plus bonus plus equity plus valued benefits, yearly. */
+  /** Base plus bonus plus equity plus valued benefits, yearly. compParts() in shared/utils/comp-parts.ts adds them. */
   totalEstimateMin: number | null
   totalEstimateMax: number | null
   /** stated: the posting gives a salary range. partial: some numbers. not_stated: no pay information. */

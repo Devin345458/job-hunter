@@ -2,8 +2,8 @@
 import type { CompensationBreakdown } from '#shared/types/pipeline'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { formatMoney, formatRange } from './format'
-import { payFiguresInText } from '#shared/utils/pay-format'
-import { payExtraText } from '#shared/utils/pay-format'
+import { payExtraText, payFiguresInText } from '#shared/utils/pay-format'
+import { benefitPart, compParts, partAmount, partPercent, totalSourcesText, type CompPart } from '#shared/utils/comp-parts'
 
 const props = defineProps<{
   compensation: CompensationBreakdown | null
@@ -46,20 +46,48 @@ const baseAnnualText = computed(() => {
 
 const totalText = computed(() => (c.value ? formatRange(c.value.totalEstimateMin, c.value.totalEstimateMax, c.value.currency) : ''))
 
+// What the total counts, from the function that computed it (shared/utils/comp-parts.ts).
+const parts = computed(() => (c.value ? compParts(c.value) : null))
+const hasTotal = computed(() => parts.value?.totalMin != null)
+/** "Base $157K to $213K plus 401(k) match ($6,280 to $8,520, 4% of base). 7 other benefits have no dollar value." */
+const sourcesText = computed(() => (parts.value && c.value ? totalSourcesText(parts.value, c.value.currency) : ''))
+const countedPart = (kind: CompPart['kind']) => (hasTotal.value ? parts.value?.counted.find(p => p.kind === kind) ?? null : null)
+
+/** Bonus or equity: the amount the total counts, else the plain phrase. */
+function extraText(kind: 'bonus' | 'equity', extra: { estimatedAnnual: number | null } | null | undefined): string {
+  const p = countedPart(kind)
+  if (!p) return payExtraText(extra, c.value?.currency)
+  const pct = partPercent(p)
+  return `${partAmount(p, c.value?.currency)} a year${pct ? `, ${pct}` : ''}`
+}
+
 const BENEFITS_SHOWN = 6
 const showAllBenefits = ref(false)
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
   (a ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '') === (b ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '')
 
-/** Valued benefits first; detail and quote only when they say more than the name. */
+/** Counted benefits first, then valued but left out, then the rest; detail and quote only when they say more than the name. */
 const benefitRows = computed(() => {
-  const list = [...(c.value?.benefits ?? [])].sort((a, b) => Number(b.estimatedAnnualValue != null) - Number(a.estimatedAnnualValue != null))
-  return list.map(b => ({
-    ...b,
-    showDetail: !!b.detail && !same(b.detail, b.name),
-    showQuote: !!b.quote && !same(b.quote, b.name) && !same(b.quote, b.detail),
-  }))
+  const rank = { counted: 0, left_out: 1, unvalued: 2 }
+  return (c.value?.benefits ?? []).map((b) => {
+    const part = hasTotal.value && parts.value ? benefitPart(parts.value, b) : null
+    const state: keyof typeof rank = part ? 'counted' : b.estimatedAnnualValue != null ? 'left_out' : 'unvalued'
+    const value = part ? `${partAmount(part, c.value?.currency)} a year` : b.estimatedAnnualValue != null ? `${formatMoney(b.estimatedAnnualValue)} a year` : 'No dollar value'
+    return {
+      ...b,
+      state,
+      value,
+      showDetail: !!b.detail && !same(b.detail, b.name),
+      showQuote: !!b.quote && !same(b.quote, b.name) && !same(b.quote, b.detail),
+    }
+  }).sort((x, y) => rank[x.state] - rank[y.state])
+})
+const benefitsHeading = computed(() => {
+  const n = benefitRows.value.length
+  const counted = benefitRows.value.filter(r => r.state === 'counted').length
+  if (!hasTotal.value) return `Benefits (${n})`
+  return counted ? `Benefits: ${counted} of ${n} counted in the total` : `Benefits: ${n}, none counted in the total`
 })
 const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.value : benefitRows.value.slice(0, BENEFITS_SHOWN)))
 </script>
@@ -90,7 +118,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
           {{ totalText }}
         </div>
         <div class="text-caption text-medium-emphasis">
-          Base, plus bonus, equity, and benefits only where the posting gives a figure.
+          {{ sourcesText }}
         </div>
       </div>
 
@@ -113,7 +141,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
         <div v-if="c.bonus" class="comp-breakdown__item">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2 font-weight-medium">Bonus</span>
-            <span class="text-body-2">{{ payExtraText(c.bonus, c.currency) }}</span>
+            <span class="text-body-2">{{ extraText('bonus', c.bonus) }}<span v-if="countedPart('bonus')" class="comp-breakdown__tag">Counted</span></span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ c.bonus.description }}
@@ -127,7 +155,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
         <div v-if="c.equity" class="comp-breakdown__item">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2 font-weight-medium">Equity</span>
-            <span class="text-body-2">{{ payExtraText(c.equity, c.currency) }}</span>
+            <span class="text-body-2">{{ extraText('equity', c.equity) }}<span v-if="countedPart('equity')" class="comp-breakdown__tag">Counted</span></span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ c.equity.description }}
@@ -140,7 +168,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
 
       <div v-if="benefitRows.length" class="comp-breakdown__benefits">
         <div class="text-body-2 font-weight-medium mb-2">
-          Benefits ({{ benefitRows.length }})
+          {{ benefitsHeading }}
         </div>
         <div v-for="(b, i) in visibleBenefits" :key="i" class="comp-breakdown__benefit">
           <div class="comp-breakdown__item-head">
@@ -148,8 +176,8 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
               {{ b.name }}
               <v-chip size="x-small" variant="outlined" class="ml-1">{{ BENEFIT_LABELS[b.category] ?? b.category }}</v-chip>
             </span>
-            <span class="text-body-2" :class="{ 'text-medium-emphasis': b.estimatedAnnualValue == null }">
-              {{ b.estimatedAnnualValue != null ? `${formatMoney(b.estimatedAnnualValue)} a year` : 'Not valued' }}
+            <span class="text-body-2" :class="{ 'text-medium-emphasis': b.state !== 'counted' }">
+              {{ b.value }}<span v-if="b.state === 'counted'" class="comp-breakdown__tag">Counted</span><span v-else-if="b.state === 'left_out'" class="comp-breakdown__tag">Not counted</span>
             </span>
           </div>
           <div v-if="b.showDetail" class="text-caption text-medium-emphasis">
@@ -220,6 +248,21 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
 
   &__benefit {
     margin-bottom: 10px;
+  }
+
+  // A neutral status tag (design-system.md): what the total does with an amount.
+  &__tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    line-height: 1.4;
+    vertical-align: 1px;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    background: rgb(var(--v-theme-surface-light));
+    white-space: nowrap;
   }
 
   &__notes {

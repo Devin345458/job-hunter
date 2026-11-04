@@ -3,6 +3,7 @@ import type { ReviewItem, SkillClaimSource } from '#shared/types/pipeline'
 import { answerText, formQuestionIds, hostOf, itemStatusMeta, moneyRange, plural, properName, timeAgo } from '~/composables/review/format'
 import { demoStopKind, fixPlurals, gapSummaryText, plainKnowledgeRefs } from '#shared/utils/plain-text'
 import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
+import { compParts, partNames } from '#shared/utils/comp-parts'
 
 // One application, everything needed to decide on it. Order: what blocks the decision, the
 // verdict (score and pay against the floor), then supporting detail, with long documents
@@ -180,7 +181,12 @@ const paySummary = computed(() => {
   else parts.push('no salary stated')
   if (c.bonus) parts.push('bonus')
   if (c.equity) parts.push('equity')
-  parts.push(`${plural(c.benefits.length, 'benefit')} quoted`)
+  // What the total counts, named as the pay panel names it.
+  const p = compParts(c)
+  const counted = p.totalMin != null ? p.counted.filter(x => x.kind === 'benefit') : []
+  if (counted.length) parts.push(`${partNames(counted)} counted`)
+  const others = c.benefits.length - counted.length
+  if (others) parts.push(`${plural(others, counted.length ? 'more benefit' : 'benefit')} quoted`)
   return parts.join(', ')
 })
 
@@ -197,6 +203,7 @@ const demoTone = computed(() => (props.item.demo?.status === 'failed' && !demoSt
 const gapLine = computed(() => plainKnowledgeRefs(fixPlurals(gapSummaryText(props.item.gap?.summary, props.item.demo))))
 
 const demoSection = ref<{ show: () => void } | null>(null)
+const paySection = ref<{ show: () => void } | null>(null)
 
 const answers = computed(() => props.item.form.answers)
 const fieldsById = computed(() => new Map((props.item.form.snapshot?.fields ?? []).map(f => [f.id, f])))
@@ -311,6 +318,7 @@ const letterPreview = computed(() => {
             :listing="{ min: item.job.salaryMin, max: item.job.salaryMax, currency: item.job.salaryCurrency }"
             compact
             :dense="fill"
+            @show-benefits="paySection?.show()"
           />
         </div>
         <!-- Desktop: Matched count and every Missing skill by its whole name, full width under the score and pay. -->
@@ -402,7 +410,7 @@ const letterPreview = computed(() => {
           <ReviewFormRead :answers="answers" :snapshot="item.form.snapshot" :form-error="item.form.error" :detail="item.form.snapshot || item.form.error ? null : item.statusDetail" />
         </ReviewSection>
 
-        <ReviewSection title="Pay and benefits" icon="mdi-cash-multiple" :summary="paySummary">
+        <ReviewSection ref="paySection" title="Pay and benefits" icon="mdi-cash-multiple" :summary="paySummary">
           <ReviewCompFloor
             :comp="item.compensation"
             :score="item.score"
