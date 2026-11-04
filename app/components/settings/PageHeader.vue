@@ -1,14 +1,14 @@
 <script setup lang="ts">
 // The header every Settings sub page opens with: "Settings" above the sub page's title and its one
-// sentence, all from app/utils/settingsPages.ts. On a phone the app bar's back arrow returns to
-// the Settings list; on desktop the sidebar group shows where the page sits.
+// sentence, all from app/utils/settingsPages.ts. The eyebrow shows on desktop only: on a phone the
+// app bar already shows a back arrow and the sub page's name, and the arrow returns to the list.
 const props = defineProps<{ slug: string }>()
 const page = computed(() => SETTINGS_PAGES.find(p => p.slug === props.slug))
 </script>
 
 <template>
   <header v-if="page" class="page-header settings-head">
-    <div class="settings-head__eyebrow">Settings</div>
+    <div class="settings-head__eyebrow d-none d-md-block">Settings</div>
     <h1 class="text-h4 page-header__title">{{ page.title }}</h1>
     <p class="text-body-2 page-header__subtitle">{{ page.subtitle }}</p>
   </header>

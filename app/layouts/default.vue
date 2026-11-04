@@ -173,6 +173,8 @@ function badgeFor(item: NavItem): number {
               <v-list-item
                 v-bind="groupProps"
                 :active="false"
+                role="button"
+                tabindex="0"
                 :aria-expanded="isOpen"
                 rounded="lg"
                 min-height="44"
@@ -317,7 +319,7 @@ function badgeFor(item: NavItem): number {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 20px 16px 16px;
+    padding: 16px 16px 12px;
   }
 
   &__mark {
@@ -347,7 +349,7 @@ function badgeFor(item: NavItem): number {
   }
 
   &__nav-item {
-    margin-bottom: 2px;
+    margin-bottom: 1px;
 
     :deep(.v-list-item__prepend) {
       width: 32px;
@@ -376,7 +378,7 @@ function badgeFor(item: NavItem): number {
   // The vertical rule on the left ties them to Settings without a second icon column.
   &__group :deep(.v-list-group__items) {
     position: relative;
-    margin: 0 0 4px;
+    margin: 0 0 2px;
 
     &::before {
       content: '';
@@ -445,7 +447,7 @@ function badgeFor(item: NavItem): number {
   }
 
   &__foot {
-    padding: 12px 8px 16px;
+    padding: 8px 8px 12px;
     border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 

@@ -1158,6 +1158,7 @@ onMounted(async () => {
   // with wide content (the app repo's topic chips) from squeezing it out of line.
   &__switch {
     flex: 0 0 auto;
+    align-self: flex-start;
     min-width: 52px;
 
     :deep(.v-selection-control) {

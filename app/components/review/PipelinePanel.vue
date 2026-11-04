@@ -104,7 +104,9 @@ function duration(r: PipelineRunView) {
   const b = parseTime(r.finishedAt)
   if (!a || !b) return r.status === 'running' ? 'running' : ''
   const s = Math.max(0, Math.round((b.getTime() - a.getTime()) / 1000))
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
 const openRun = ref<number | null>(null)
@@ -115,8 +117,14 @@ const TRIGGER: Record<string, string> = { schedule: 'the schedule', manual: 'you
 
 const heartbeat = computed(() => health.runs.value?.lastHeartbeat ?? null)
 
+const route = useRoute()
+
 onMounted(() => {
-  health.refresh(30).then(() => {
+  health.refresh(30).then(async () => {
+    if (route.hash === '#runs' || route.hash === '#queue') {
+      await nextTick()
+      document.getElementById(route.hash.slice(1))?.scrollIntoView({ block: 'start' })
+    }
     if (health.queueBusy.value || runs.value.some(r => r.status === 'running')) follow()
   })
 })
@@ -310,6 +318,10 @@ onMounted(() => {
     align-items: center;
     justify-content: space-between;
     margin: 20px 0 4px;
+
+    @media (max-width: 959.98px) {
+      scroll-margin-top: 72px;
+    }
   }
 
   &__h {
@@ -472,7 +484,7 @@ onMounted(() => {
     row-gap: 2px;
 
     .pp__dot { grid-area: dot; }
-    .pp__run-task { grid-area: task; }
+    .pp__run-task { grid-area: task; white-space: normal; }
     .pp__run-status { grid-area: status; white-space: normal; }
     .pp__run-when { grid-area: when; text-align: right; }
     .pp__run-dur { grid-area: dur; }

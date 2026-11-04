@@ -114,7 +114,6 @@ onMounted(async () => {
     <template v-if="!isDesktop && !leaving">
       <div class="page-header settings-hub__header">
         <h1 class="text-h4 page-header__title">Settings</h1>
-        <p class="text-body-2 page-header__subtitle">Pick what to change or check.</p>
       </div>
 
       <nav aria-label="Settings pages">
