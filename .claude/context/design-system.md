@@ -4,12 +4,14 @@ The restyle of 2026-11-04 (branch feature/design-restyle, not merged until Devin
 
 ## Direction
 
-App style true-black-flat (design-taste-frontend `draw.mjs --app`, kind support, seed 815537509), chosen because Devin works through a queue for a few minutes a day on phone and desktop, one decision per card. One true black ground; elevation by lightness alone; color only on data and on what blocks.
+App style true-black-flat (design-taste-frontend `draw.mjs --app`, kind support, seed 815537509), chosen because Devin works through a queue for a few minutes a day on phone and desktop, one decision per card. One true black ground; elevation by lightness alone.
 
-- **Face:** the one data hue, sky `#4cb3f0` (theme color `score`), on the match score wherever it shows: the Review card's number and ledger bar, the queue rows, the Jobs score column, the job page ring, Applications rows. No status uses it, so "how well it fits" never reads as good or bad.
-- **Signature:** the score ledger (skills x 60% + pay x 40% = score) on the Decide card, and the score ring (92% filled, in the score hue) as the app's mark in the sidebar and on Sign in.
+**Status keeps its color. This overrides the style's "color only on data" rule and any later restyle.** Devin, 2026-11-04, after seeing the gray-only version: "honestly it kind of sucks. I feel like the old styles were much easier to visually skim like red this is a problem you need to address now it's just a bunch of grey everywhere." Every state the pre-restyle app colored keeps success, warning, error or info on the same element or its replacement: status pills and tags, the match score by band, requirement chips (matched green with the check, partial amber, missing red), amber on what waits on him, red on failures, green on what worked. A lint or inspector WARN about color is expected and is not a reason to remove it. He kept the restyle's palette (white primary, the values below), not the old blue buttons.
+
+- **Match score by band** through `scoreColor()` in `app/components/jobs/format.ts`: green 80 and up, amber 60 to 79, red under 60, on the Review ledger (total, bar), queue rows, Jobs rows, the job page ring and verdict, Applications rows and page, Learning's score moves. (The restyle's single sky `score` hue was removed on 2026-11-04.)
+- **Signature:** the score ledger (skills x 60% + pay x 40% = score) on the Decide card, and the score ring (92% filled, in primary) as the app's mark in the sidebar and on Sign in.
 - **One primary per screen,** made primary by inversion: white fill, black label. Links, focus rings and selected controls read in ink.
-- **Amber only on what blocks an approval** and its count: the Questions badge (blocking count), "Blocks an approval" on a question card with a 3px amber left edge, Needs you counts, Answer first, pause and limit lines.
+- **Amber on what waits on Devin,** as before the restyle: question cards any application waits on (amber border and text; a 3px amber left edge when it blocks an approval), the open count on Questions, blocking questions on the Send card (border and tint), the Needs you tab count, the Questions badge, pause and limit lines, confirm boxes.
 
 ## Banned (from the brief, enforced in the theme)
 
@@ -32,14 +34,13 @@ All colors live in the Vuetify theme. SCSS reads them as `rgb(var(--v-theme-*))`
 | `surface-light` | `#2a2a2a` | Meter tracks, neutral tags, disabled button fill |
 | `sunken` | `#080808` | Documents read inline: resume, letter, posting, logs |
 | `primary` | `#ffffff`, text `#000000` | The one primary action (inversion), focus ring, selected controls |
-| `score` | `#4cb3f0` | The match score, everywhere; nothing else |
 | `secondary`, `accent`, `info` | `#b4b4b4`, `#b4b4b4`, `#c8c8c8` | Neutral: running, preparing, notices are not signals |
-| `success` | `#3fc07a` | Submitted, heard back, learned plus points |
-| `warning` | `#e5a93b` | Only what blocks an approval, and pauses |
-| `error` | `#e5566f` | Failed, missing requirement mark, learned minus points |
+| `success` | `#3fc07a` | Submitted, heard back, matched requirements, the 80+ score band, learned plus points |
+| `warning` | `#e5a93b` | What waits on Devin, pauses, partial failures, the 60 to 79 score band |
+| `error` | `#e5566f` | Failed, missing requirements, the under-60 score band, learned minus points |
 | `border-color` / `border-opacity` | `#262626` / 1 | Row rules and control edges (solid; dividers forced to it in global.scss) |
 
-Text: on-surface white at 0.96; medium emphasis 0.70 (`#b4b4b4` on black); disabled 0.5. Status pills are pale pairs: the hue on a 12 to 14% tint of itself; neutral states (primary, info, secondary) read as ink on `surface-light`.
+Text: on-surface white at 0.96; medium emphasis 0.70 (`#b4b4b4` on black); disabled 0.5. Status pills are pale pairs: the hue on a 12 to 14% tint of itself, for every status color (primary, info, secondary included); only grey and a neutral tag read as ink on `surface-light`.
 
 ## Type
 
@@ -51,7 +52,7 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular f
 - `body-2` 14px/400, line height 1.5
 - `caption` 12px; `overline` 12px/500 sentence case (no tracking)
 - Buttons 14px/500, no uppercase, no tracking
-- The answer figure (score ledger total) 36px/600 in the score hue
+- The answer figure (score ledger total) 36px/600 in the score's band color
 
 ## Depth and spacing
 
@@ -71,7 +72,7 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular f
 | Health line | One 40px line above the queue: the state that matters most in its color (account problem, pause, limit, interrupted approval) else the last run, Runs and Queue links, opens the detail on click | `ReviewHealth.vue` (variant `line`) |
 | Review card | No border; nested panels `surface-bright`; title h2 under the queue's h1, h1 on `/review/:id` (`titleTag`); state pill on the meta line under the title | `ReviewCard.vue` |
 | Decision bar | Stage 1 reads "Nothing goes to <employer> until you approve it." with "What Apply does" opening the full sentence | `ReviewDecisionBar.vue` |
-| Queue row | Score 17/600 in the score hue; the open row on `surface-bright` (no bar) | `ReviewQueueList.vue` |
+| Queue row | Score 17/600 in its band color; the open row on `surface-bright` (no bar) | `ReviewQueueList.vue` |
 | Jobs row | Columns score 48, role, state 148, base 156, total 156, figures right-aligned under one header; tablet four columns; phone two-line rows (score, title, total; state, company, base) | `JobRow.vue`, `pages/jobs/index.vue` |
 | Underline tabs | 40px, 14/500, a 2px ink indicator on a full-width rule; only tabs with a count show; scroll sideways on a phone | `StatusPipeline.vue` |
 | Key-value rows | Key column 160 to 260px, value, source and date; rules between rows on one card | `pages/knowledge/index.vue` |
@@ -107,7 +108,8 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular f
 | 2026-11-04 | No tinted avatars on Settings card headers | Six avatars spent five semantic colors on decoration; the page header names the page and color stays for status |
 | 2026-11-04 | Bottom bar's active item colored through `base-color` | Vuetify colors a link button only on its exact path, so every Settings sub page (and `/review/12`) left its button gray |
 | 2026-11-04 | Restyle: true-black flat (dealt, seed 815537509) over the 2026-11-01 slate and cobalt | The slate read as the stock dark dashboard and blue sat on chrome (nav, links, pills, every button), so color said nothing. The study's darks are neutral |
-| 2026-11-04 | One data hue (`score`, sky) on the match score everywhere | Review showed the score in blue and Jobs and the job page in green; the dealt lime is also the positive color, so a 45 would have read like a Submitted pill |
+| 2026-11-04 | (Superseded the same day) One data hue (`score`, sky) on the match score everywhere | Replaced by the band colors below |
+| 2026-11-04 | Status colors restored on every state; the match score by band again | Devin: "the old styles were much easier to visually skim like red this is a problem you need to address now it's just a bunch of grey everywhere." The restyle's palette and layouts stay |
 | 2026-11-04 | Primary by inversion, corners kept at 8px | The style's move; the pill shape it deals is banned by Devin's brief |
 | 2026-11-04 | Inter replaces Schibsted Grotesk; tabular figures on figures only | The dealt face. Tabular figures app wide put a gap around every hyphen in running text, so they are scoped to figure columns, badges and `.tabular` |
 | 2026-11-04 | Kept the open-plane shell (no desktop top bar) | The dealt T-frame needs a top bar with something real in it; the app has no search or switcher, and the sheet flags an empty top bar. The redraw dealt No sidebar, which cannot hold eight destinations and the Settings group |
