@@ -51,6 +51,22 @@ fi
 # employer forms every 3 hours. Manual runs (Settings, /api/pipeline/run) still work.
 grep -q '^NUXT_SCHEDULER_ENABLED=' .env || printf 'NUXT_SCHEDULER_ENABLED=false\n' >>.env
 
+# Claude: a worktree runs every step on Devin's personal subscription through the Agent SDK, as
+# production does, so local tests get the real models. The proxy at ANTHROPIC_BASE_URL serves only
+# claude-haiku-4-5. The token lives in the macOS keychain (service job-hunter-claude-token), never
+# in the repo; printf is a shell builtin, so the token never reaches a child process's argv.
+if ! grep -Eq '^NUXT_CLAUDE_CODE_OAUTH_TOKEN=.+' .env; then
+  CLAUDE_TOKEN="$(security find-generic-password -s job-hunter-claude-token -w 2>/dev/null || true)"
+  if [ -n "$CLAUDE_TOKEN" ]; then
+    sed -i '' '/^NUXT_CLAUDE_CODE_OAUTH_TOKEN=/d' .env
+    printf 'NUXT_CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$CLAUDE_TOKEN" >>.env
+    echo "Claude: local runs use the personal subscription (token from the keychain)."
+  else
+    echo "Claude: no job-hunter-claude-token in the keychain, so local runs use the proxy (claude-haiku-4-5 only)."
+  fi
+  unset CLAUDE_TOKEN
+fi
+
 # Port: 3000 belongs to the main checkout. Skip ports another checkout has claimed or something is listening on.
 PORT="$(env_value .env NUXT_PORT)"
 if [ -z "$PORT" ]; then
