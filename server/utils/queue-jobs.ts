@@ -101,17 +101,20 @@ function stepStartedAt(): string {
 
 /** Waits until no item of these tasks is queued or running, saying how far it got every 30 seconds. */
 /**
- * Per-job items of `tasks` still in the queue: running, due (queued to run now), and deferred
- * (queued to run later: put back by a Claude limit until its reset), with the note of one deferred
- * item ("Paused: this app's daily Claude limit is reached, resumes at midnight").
+ * Per-job items of `tasks` still in the queue: running, due (queued, to be waited for), and
+ * deferred (put back by a Claude limit until its reset: a later run_after and pauseItem()'s
+ * "Paused: ..." note), with the note of one deferred item ("Paused: this app's daily Claude limit
+ * is reached, resumes at midnight"). A queued item with a later run_after and no such note counts
+ * as due, so a step keeps waiting for it as before.
  */
 export function perJobQueueCounts(tasks: readonly string[]): { running: number; due: number; deferred: number; note: string | null } {
   const now = sqlTime()
+  const deferred = sql`(${taskQueue.status} = 'queued' and ${taskQueue.runAfter} > ${now} and coalesce(${taskQueue.note}, '') like 'Paused: %')`
   const row = useDb().select({
     running: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'running' then 1 else 0 end), 0)`,
-    due: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'queued' and ${taskQueue.runAfter} <= ${now} then 1 else 0 end), 0)`,
-    deferred: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'queued' and ${taskQueue.runAfter} > ${now} then 1 else 0 end), 0)`,
-    note: sql<string | null>`max(case when ${taskQueue.status} = 'queued' and ${taskQueue.runAfter} > ${now} then ${taskQueue.note} end)`,
+    due: sql<number>`coalesce(sum(case when ${taskQueue.status} = 'queued' and not ${deferred} then 1 else 0 end), 0)`,
+    deferred: sql<number>`coalesce(sum(case when ${deferred} then 1 else 0 end), 0)`,
+    note: sql<string | null>`max(case when ${deferred} then ${taskQueue.note} end)`,
   }).from(taskQueue).where(and(inArray(taskQueue.task, [...tasks]), inArray(taskQueue.status, ['queued', 'running']))).get()
   return { running: row?.running ?? 0, due: row?.due ?? 0, deferred: row?.deferred ?? 0, note: row?.note ?? null }
 }

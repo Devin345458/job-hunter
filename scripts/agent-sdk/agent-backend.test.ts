@@ -555,6 +555,10 @@ describe('this app\'s subscription limit', () => {
     assert.match(m.queueItemText({ status: 'queued', label: 'Score a job', step: null, note: back.note, attempts: 0 }), /^Paused: Score a job; background work is at 70%/)
     // A step waiting on per-job items does not wait for one the limit put back.
     assert.deepEqual(m.perJobQueueCounts([m.MATCH_ONE_TASK]), { running: 0, due: 0, deferred: 1, note: back.note })
+    // An item queued for later without a limit's note is still waited for.
+    const later = m.enqueue(m.ENRICH_ONE_TASK, { jobId: 10 }, { trigger: 'chained', runAfter: new Date(Date.now() + 3600_000) }).item
+    assert.deepEqual(m.perJobQueueCounts([m.ENRICH_ONE_TASK]), { running: 0, due: 1, deferred: 0, note: null })
+    db().run(m.sql`delete from task_queue where id = ${later.id}`)
     // Raising the limit in Settings lets it run now.
     m.saveSubscriptionLimits({ dailyUsd: 50, weekUsd: 200 })
     assert.equal(m.releaseAppLimitItems(), 1)
