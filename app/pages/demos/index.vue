@@ -90,7 +90,7 @@ onBeforeUnmount(() => {
         Demo projects
       </h1>
       <p class="page-header__subtitle">
-        <template v-if="!loading">{{ demos.length.toLocaleString('en-US') }} {{ demos.length === 1 ? 'project' : 'projects' }}, </template>each private until you approve its application
+        <template v-if="!loading">{{ demos.length.toLocaleString('en-US') }} {{ demos.length === 1 ? 'project' : 'projects' }}, each private until you approve its application</template>
       </p>
     </div>
 
@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
     </v-alert>
 
     <div v-if="loading" class="demos-page__grid">
-      <v-skeleton-loader v-for="n in 2" :key="n" type="article" />
+      <v-skeleton-loader type="article" />
     </div>
 
     <div v-else-if="demos.length === 0 && !loadError" class="demos-page__empty">

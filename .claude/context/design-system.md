@@ -83,6 +83,7 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular f
 | Settings list row (phone) | 72px minimum, 20px icon in medium emphasis, 15px/600 title with a status tag, 13px line, chevron | `app/pages/settings/index.vue` |
 | Toast | Desktop bottom left, 280 to 340px wide, clear of the decision bar; phone top | `app/components/AppSnackbar.vue` |
 | Menu | Floats on `surface-bright`, one step above the card it opens from | `global.scss` |
+| Loading skeleton | Flat bars one tone above what they sit on (`surface-bright` on a card, `surface` on the page ground with `skeleton--ground`), at the real layout, no shimmer; counts and data lines wait for the data instead of reading 0 | `global.scss`, every `v-skeleton-loader` |
 | Switch | Off: a light gray thumb on a `surface-light` track; on: the color the screen gives it | `global.scss` |
 | Blocking mark | A 3px amber left edge and the amber "Blocks an approval" label, the same on the Questions page and the Send card; questions that do not block are plain raised panels | `QuestionCard.vue`, `ReviewQuestions.vue` |
 | Gap plan item | The requirement as the heading, the plan's decision under it in gray with its icon, "Must have" in ink | `DemoGapAnalysis.vue` |
