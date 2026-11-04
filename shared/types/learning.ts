@@ -137,6 +137,10 @@ export interface QuestionListItem {
   legacy: boolean
   /** Pending knows or has_done question with evidence from Devin's own GitHub commits. Null when there is none. */
   repoSuggestion?: RepoSuggestionView | null
+  /** For a skipped question: whether the app skipped it (with a note saying why) or Devin did. Null otherwise. */
+  skippedBy?: 'app' | 'you' | null
+  /** The app's note on a question it skipped ("Skipped by the app: ...", "Merged into question #N ..."). */
+  skipNote?: string | null
 }
 
 export interface AnswerOutcome {

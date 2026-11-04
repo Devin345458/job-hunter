@@ -351,6 +351,9 @@ watch(() => props.pick?.nonce, () => {
       <p v-if="question.context && !shared && (mode === 'pending' || editing)" class="question-card__context text-body-2 text-medium-emphasis mt-1">
         {{ plainQuestionContext(question.context) }}
       </p>
+      <p v-if="mode === 'skipped' && question.skipNote" class="question-card__context question-card__skip-note text-body-2 text-medium-emphasis mt-1">
+        {{ question.skipNote }}
+      </p>
 
       <div v-if="mode === 'pending' && waiters.length" class="question-card__waiters">
         <span class="question-card__waiters-label text-caption text-medium-emphasis">Waiting on this</span>

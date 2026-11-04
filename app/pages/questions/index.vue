@@ -15,13 +15,17 @@ const loadError = ref<string | null>(null)
 const saving = ref<Record<number, string | null>>({})
 const showAnswered = ref(false)
 const showSkipped = ref(false)
+const showAppSkipped = ref(false)
 
 const pending = computed(() => all.value.filter(q => q.status === 'pending'))
 const waitingOnYou = computed(() => pending.value.filter(q => q.waitingApplicationIds.length > 0 || q.blocking))
 const quick = computed(() => pending.value.filter(q => !q.legacy && !(q.waitingApplicationIds.length > 0 || q.blocking)))
 const legacy = computed(() => pending.value.filter(q => q.legacy && !(q.waitingApplicationIds.length > 0 || q.blocking)))
 const answered = computed(() => all.value.filter(q => q.status === 'answered').sort((a, b) => (b.answeredAt ?? '').localeCompare(a.answeredAt ?? '')))
-const skipped = computed(() => all.value.filter(q => q.status === 'skipped'))
+// Questions the app skipped (a duplicate, a subject the knowledge base covers, not a skill) carry
+// its note and are listed apart, so Skipped by you holds only Devin's own skips.
+const skipped = computed(() => all.value.filter(q => q.status === 'skipped' && q.skippedBy !== 'app'))
+const appSkipped = computed(() => all.value.filter(q => q.status === 'skipped' && q.skippedBy === 'app'))
 
 // ── Examples ("Where did you do it?") on Yes and Some experience answers ──
 const isExampleLevel = (answer: string | null) => !!answer && (EXAMPLE_LEVELS as readonly string[]).includes(answer)
@@ -179,7 +183,7 @@ async function skip(q: QuestionListItem) {
   try {
     const out = await $fetch<{ question: QuestionListItem }>(`/api/questions/${q.id}`, { method: 'PATCH', body: { status: 'skipped' } })
     replace(out.question)
-    snackbar.info('Skipped. It is under Skipped if you want it back.', { text: 'Undo', handler: () => reopen(out.question) })
+    snackbar.info('Skipped. It is under Skipped by you if you want it back.', { text: 'Undo', handler: () => reopen(out.question) })
   }
   catch (e: any) {
     snackbar.error(e?.data?.statusMessage || 'Could not skip that question')
@@ -374,7 +378,7 @@ onMounted(async () => {
           </v-expand-transition>
         </section>
 
-        <!-- Skipped -->
+        <!-- Skipped by you -->
         <section v-if="skipped.length" class="mb-4">
           <v-btn
             variant="text"
@@ -384,7 +388,7 @@ onMounted(async () => {
             aria-controls="questions-skipped"
             @click="showSkipped = !showSkipped"
           >
-            Skipped ({{ skipped.length }})
+            Skipped by you ({{ skipped.length }})
           </v-btn>
           <v-expand-transition>
             <!-- v-show sits on a plain wrapper: .d-flex is display: flex !important and would beat it. -->
@@ -392,6 +396,40 @@ onMounted(async () => {
               <div class="d-flex flex-column ga-3">
                 <KnowledgeQuestionCard
                   v-for="q in skipped"
+                  :key="q.id"
+                  :id="`question-${q.id}`"
+                  :question="q"
+                  mode="skipped"
+                  :asking="chatQuestionId === q.id"
+                  @reopen="reopen(q)"
+                  @ask="askAbout(q)"
+                  @box-text="t => (boxTexts[q.id] = t)"
+                />
+              </div>
+            </div>
+          </v-expand-transition>
+        </section>
+
+        <!-- Skipped by the app -->
+        <section v-if="appSkipped.length" class="mb-4">
+          <v-btn
+            variant="text"
+            class="px-1 mb-2 text-medium-emphasis questions-page__toggle"
+            :prepend-icon="showAppSkipped ? 'mdi-chevron-down' : 'mdi-chevron-right'"
+            :aria-expanded="showAppSkipped"
+            aria-controls="questions-app-skipped"
+            @click="showAppSkipped = !showAppSkipped"
+          >
+            Skipped by the app ({{ appSkipped.length }})
+          </v-btn>
+          <v-expand-transition>
+            <div v-show="showAppSkipped" id="questions-app-skipped">
+              <p class="text-body-2 text-medium-emphasis mb-3 questions-page__app-skip-hint">
+                The app skipped these, not you. Each says why. Reopen one to answer it anyway.
+              </p>
+              <div class="d-flex flex-column ga-3">
+                <KnowledgeQuestionCard
+                  v-for="q in appSkipped"
                   :key="q.id"
                   :id="`question-${q.id}`"
                   :question="q"

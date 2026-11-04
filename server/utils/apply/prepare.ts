@@ -5,6 +5,7 @@ import type { FormAnswer, FormSnapshot, TailoredResume } from '#shared/types/pip
 import { AiBudgetExceeded } from '../ai'
 import { analyzeGaps } from '../demo/gaps'
 import { askGapQuestions, scoredGap } from '../skills-judge'
+import { skipForApp } from '../questions'
 import { candidateContact, loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { dataPath } from '../paths'
 import { saveCoverLetterPdf, saveResumePdf } from '../pdf'
@@ -128,7 +129,7 @@ export function releaseStaleQuestions(applicationId: number, answers: FormAnswer
         .where(and(ne(applications.id, applicationId), like(applications.answersJson, `%"needsQuestionId":${q.id},%`)))
         .get())
   for (const q of stale) {
-    if (q.kind === 'form_field') db.update(questions).set({ status: 'skipped', blocking: false }).where(eq(questions.id, q.id)).run()
+    if (q.kind === 'form_field') skipForApp(q.id, 'the application form no longer asks this, or another answer fills the field')
     else if (q.blocking) db.update(questions).set({ blocking: false }).where(eq(questions.id, q.id)).run()
   }
   return stale.length
