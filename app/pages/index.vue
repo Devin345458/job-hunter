@@ -571,6 +571,13 @@ const leftParts = computed(() => [
     }
   }
 
+  // A phone shows one card, not the list, so its skeleton is the card alone.
+  &__skel-list {
+    @media (max-width: 959.98px) {
+      display: none;
+    }
+  }
+
   &__sheet {
     max-height: 80dvh;
   }
