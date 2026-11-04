@@ -228,24 +228,25 @@ p {
 
 // Loading skeletons: flat bars one tone step above what they sit on, at the real size, no shimmer
 // (app-screens.md 11). Vuetify paints bones from on-surface at the border opacity, which is 1 in this
-// theme, so they came out solid white with a gradient sweeping over them.
-.v-skeleton-loader {
+// theme, so they came out solid white with a gradient sweeping over them. Vuetify's own skeleton CSS
+// loads after this file in a production build, hence :root on every rule here.
+:root .v-skeleton-loader {
   border-radius: 16px;
 }
 
-.v-skeleton-loader .v-skeleton-loader__avatar,
-.v-skeleton-loader .v-skeleton-loader__button,
-.v-skeleton-loader .v-skeleton-loader__chip,
-.v-skeleton-loader .v-skeleton-loader__divider,
-.v-skeleton-loader .v-skeleton-loader__heading,
-.v-skeleton-loader .v-skeleton-loader__image,
-.v-skeleton-loader .v-skeleton-loader__ossein,
-.v-skeleton-loader .v-skeleton-loader__text {
+:root .v-skeleton-loader .v-skeleton-loader__avatar,
+:root .v-skeleton-loader .v-skeleton-loader__button,
+:root .v-skeleton-loader .v-skeleton-loader__chip,
+:root .v-skeleton-loader .v-skeleton-loader__divider,
+:root .v-skeleton-loader .v-skeleton-loader__heading,
+:root .v-skeleton-loader .v-skeleton-loader__image,
+:root .v-skeleton-loader .v-skeleton-loader__ossein,
+:root .v-skeleton-loader .v-skeleton-loader__text {
   background: rgb(var(--v-theme-surface-bright));
 }
 
 // A skeleton laid on the page ground itself (a list with no card behind it) steps up to the card tone.
-.v-skeleton-loader.skeleton--ground {
+:root .v-skeleton-loader.skeleton--ground {
   background: transparent;
 
   .v-skeleton-loader__avatar,
@@ -260,7 +261,7 @@ p {
   }
 }
 
-.v-skeleton-loader__bone::after {
+:root .v-skeleton-loader__bone::after {
   content: none;
   animation: none;
 }
