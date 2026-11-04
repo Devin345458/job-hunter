@@ -90,16 +90,28 @@ export interface RecordsDraftSentence {
 /** How the draft used Devin's past Claude sessions. */
 export type RecordsMemoryUse = 'used' | 'none' | 'unreachable' | 'busy' | 'off'
 
-/** The five dimensions an interview coach scores an answer on. */
-export type InterviewDimension = 'Substance' | 'Structure' | 'Relevance' | 'Credibility' | 'Differentiation'
+/**
+ * The five dimensions a written screening answer is scored on (the answer guide's rubric): the
+ * level and scope up front, one project a reader can picture, his own decisions and why, a result
+ * the records state, and a claim that matches the records exactly.
+ */
+export type InterviewDimension = 'Direct answer' | 'Concrete evidence' | 'Ownership and judgment' | 'Outcome' | 'Calibration'
 
 /**
- * The coach pass on a finished draft: how an interviewer would score it, and at most two facts
- * Devin could add to make it stronger, asked as questions ("Add if true: what prompted the audit?").
- * The questions are never filled in for him.
+ * The coach pass on a finished draft: each dimension scored 1 to 5 with the sentence that earns it,
+ * the hard fails, and whether it clears the ship bar (no hard fail, nothing under 3, an average of 4
+ * or more). A draft under the bar gets one rewrite before Devin sees it. The questions ask for at
+ * most two facts only Devin can add ("Add if true: what did you choose instead, and why?"), from the
+ * lowest dimensions; they are never filled in for him.
  */
 export interface RecordsDraftCoach {
-  scores: Array<{ dimension: InterviewDimension; score: number; line: string }>
+  scores: Array<{ dimension: InterviewDimension; score: number; line: string; quote: string | null }>
+  average: number
+  /** "More than 6 sentences", "A tool list", "Over 1,200 characters". */
+  hardFails: string[]
+  ships: boolean
+  /** The draft shown is the rewrite of one that fell under the bar. */
+  rewritten: boolean
   /** "To make this stronger": at most two questions. */
   questions: string[]
 }
@@ -117,7 +129,7 @@ export interface RecordsDraft {
 }
 
 /** What a records draft is doing now, for the step line under the spinner. */
-export type RecordsDraftStep = 'planning' | 'searching' | 'projects' | 'writing' | 'checking' | 'coaching'
+export type RecordsDraftStep = 'planning' | 'searching' | 'projects' | 'writing' | 'checking' | 'coaching' | 'rewriting'
 
 /** GET /api/questions/:id/draft: the draft running for this question, or the one that just finished. */
 export interface RecordsDraftStatus {

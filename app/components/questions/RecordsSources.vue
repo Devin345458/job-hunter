@@ -5,8 +5,9 @@ import type { RecordsDraft, RecordSource } from '#shared/types/question-chat'
 // rests on (a knowledge base entry, one of his commits with its link, the counts across his commits,
 // a past Claude session by date and project, or what he said in the chat). Shown in the chat and under the card's box, so he can
 // check every sentence before he saves. Above them, "To make this stronger": the coach pass's
-// questions for facts only he can add (never filled in for him), and how an interviewer would score
-// the draft on five dimensions.
+// questions for facts only he can add (never filled in for him), and how a screener would score the
+// draft on the answer guide's five dimensions, with the ship bar (no hard fail, nothing under 3, an
+// average of 4 or more).
 
 defineProps<{
   draft: RecordsDraft
@@ -46,13 +47,18 @@ function sourceLine(s: RecordSource): string {
       <ul v-if="draft.coach.questions.length" class="records-sources__coach-list">
         <li v-for="(q, i) in draft.coach.questions" :key="i" class="text-body-2">{{ q }}</li>
       </ul>
-      <p v-else class="records-sources__coach-none text-caption text-medium-emphasis">Nothing to add: it already reads like a strong interview answer.</p>
+      <p v-else class="records-sources__coach-none text-caption text-medium-emphasis">Nothing to add from your records.</p>
       <p v-if="draft.coach.questions.length" class="records-sources__coach-hint text-caption text-medium-emphasis">Answer in the chat and draft again; nothing is added for you.</p>
       <details v-if="draft.coach.scores.length" class="records-sources__scores">
-        <summary class="text-caption">How an interviewer would score it: {{ draft.coach.scores.map(s => `${s.dimension} ${s.score}`).join(', ') }} (out of 5)</summary>
+        <summary class="text-caption">
+          Screening score {{ draft.coach.average }} of 5, {{ draft.coach.ships ? 'clears the bar' : 'under the bar' }}{{ draft.coach.rewritten ? ' (rewritten once)' : '' }}
+        </summary>
+        <p class="records-sources__bar text-caption text-medium-emphasis">The bar: no hard fail, nothing under 3, an average of 4 or more.</p>
+        <p v-if="draft.coach.hardFails.length" class="records-sources__fails text-caption">Hard fails: {{ draft.coach.hardFails.join('; ') }}.</p>
         <ul class="records-sources__score-list">
           <li v-for="s in draft.coach.scores" :key="s.dimension" class="text-caption">
             <strong>{{ s.dimension }} {{ s.score }} of 5:</strong> {{ s.line }}
+            <span v-if="s.quote" class="text-medium-emphasis">On "{{ s.quote }}"</span>
           </li>
         </ul>
       </details>
@@ -142,6 +148,15 @@ function sourceLine(s: RecordSource): string {
       cursor: pointer;
       line-height: 1.4;
     }
+  }
+
+  &__bar,
+  &__fails {
+    margin: 4px 0 0;
+  }
+
+  &__fails {
+    color: rgb(var(--v-theme-error));
   }
 
   &__score-list {
