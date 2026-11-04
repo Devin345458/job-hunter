@@ -41,6 +41,8 @@ export interface AgentRunInput {
   maxTokens?: number
   /** A call Devin is waiting on (chat, drafts, Apply preparation): goes first for a free slot. */
   foreground: boolean
+  /** Adaptive thinking (agentThinking(purpose)); off sends thinking disabled. */
+  thinking?: boolean
   timeoutMs?: number
 }
 
@@ -104,6 +106,26 @@ export function redactAgentSecrets(text: string): string {
   const token = subscriptionToken()
   if (token) out = out.split(token).join('[token]')
   return out.replace(/sk-ant-o[a-z]*\d*-[A-Za-z0-9_-]{8,}/g, '[token]')
+}
+
+// ── Thinking ────────────────────────────────────────────────
+
+/**
+ * Whether a step asks Claude Code for thinking (NUXT_AGENT_THINKING; off by default, "on"/"all"/"*"
+ * for every step, or a comma separated list of purposes such as "tailor,cover_letter").
+ * What it changes, measured on Claude Code 2.1.317 against the fake API on 2026-11-03:
+ * - claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5: nothing. Claude Code sends adaptive
+ *   thinking either way, which is also what the API key path gets (it omits `thinking`, and these
+ *   models then think adaptively; Opus 5.5 cannot turn thinking off at all). Effort, passed per
+ *   step on both backends, is the control on these models.
+ * - claude-haiku-4-5 (the fallback model): off sends thinking disabled, matching the API key path;
+ *   without it Claude Code would add a 32K-token thinking budget.
+ */
+export function agentThinking(purpose: string): boolean {
+  const raw = String(useRuntimeConfig().agentThinking ?? '').trim().toLowerCase()
+  if (!raw || raw === 'off' || raw === 'false' || raw === '0') return false
+  if (raw === 'on' || raw === 'true' || raw === '1' || raw === 'all' || raw === '*') return true
+  return raw.split(',').map(s => s.trim()).includes(purpose.toLowerCase())
 }
 
 // ── Concurrency ─────────────────────────────────────────────
@@ -392,6 +414,7 @@ export async function runAgentQuery(input: AgentRunInput): Promise<AgentRunResul
       persistSession: false,
       maxTurns: input.jsonSchema ? 4 : 2,
       cwd: work,
+      thinking: input.thinking ? { type: 'adaptive' } : { type: 'disabled' },
       env: agentEnv(dirs, input.maxTokens ?? 16000, timeoutMs),
       abortController: abort,
       pathToClaudeCodeExecutable: claudeCodeBinary(),

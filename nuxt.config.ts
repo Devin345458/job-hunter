@@ -170,6 +170,10 @@ export default defineNuxtConfig({
     // separate process of about 190 MB that idles near 0% CPU while Claude answers
     // (scripts/agent-sdk/measure.ts); 3 keeps the peak near 600 MB on the shared Mac Mini.
     agentConcurrency: '3',
+    // Thinking on the subscription (NUXT_AGENT_THINKING): off (default), "on" for every step, or a
+    // comma separated list of purposes ("tailor,cover_letter"). The 5.x models think adaptively
+    // either way, exactly as on the API key; it changes only claude-haiku-4-5 (agentThinking()).
+    agentThinking: 'off',
     // Path to the Claude Code binary the Agent SDK starts. Empty finds the platform package in
     // node_modules; the Docker image sets /opt/claude-code/claude.
     claudeCodePath: '',

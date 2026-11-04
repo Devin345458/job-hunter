@@ -29,6 +29,7 @@ const config: Record<string, unknown> = {
   claudeCodeOauthToken: TOKEN,
   claudeCodePath: '',
   agentConcurrency: '4',
+  agentThinking: 'off',
   agentUid: '10003',
   dailyAiBudgetUsd: '10',
   backgroundBudgetShare: '0.7',
@@ -126,6 +127,7 @@ beforeEach(() => {
   config.aiStepBackends = ''
   config.dailyAiBudgetUsd = '10'
   config.agentConcurrency = '4'
+  config.agentThinking = 'off'
   m.resetAiAccountStops()
   db().run(m.sql`delete from app_settings where key = 'subscription_pause'`)
   db().run(m.sql`delete from ai_calls`)
@@ -214,6 +216,18 @@ describe('aiStructured on the subscription', () => {
     assert.deepEqual(o.outputFormat.schema.required, ['answer', 'score'])
     assert.ok(o.cwd.includes(join(dir, 'agent', 'work')), 'throwaway cwd under dataDir()')
     assert.equal(o.abortController instanceof AbortController, true)
+  })
+
+  test('thinking is off for every step unless NUXT_AGENT_THINKING names it', async () => {
+    await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' })
+    assert.deepEqual(calls[0]!.options.thinking, { type: 'disabled' })
+    config.agentThinking = 'tailor,cover_letter'
+    await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' })
+    await m.aiStructured(Answer, { purpose: 'enrich', prompt: 'x' })
+    assert.deepEqual(calls[1]!.options.thinking, { type: 'adaptive' })
+    assert.deepEqual(calls[2]!.options.thinking, { type: 'disabled' })
+    config.agentThinking = 'on'
+    assert.equal(m.agentThinking('match'), true)
   })
 
   test('keeps one cache breakpoint of its own, with the 1 hour lifetime Claude Code uses', async () => {
@@ -504,6 +518,17 @@ describe('real Claude Code binary', () => {
       assert.ok(!JSON.stringify(msgs[0]!.body).includes(TOKEN), 'not in the request body')
       assert.equal(msgs[0]!.body.max_tokens, 16000, 'the output cap reaches the request (Claude Code defaults to 128000)')
       assert.equal(msgs[0]!.body.model, 'claude-sonnet-5-5', 'the step model from NUXT_AI_STEP_MODELS')
+      // Sonnet 5.5 thinks adaptively whatever the option says, as it does on the API key path.
+      assert.equal(msgs[0]!.body.thinking?.type, 'adaptive')
+      // On the fallback model the setting decides: off sends disabled (the API key path sends no
+      // thinking there), on lets Claude Code add its thinking budget. Both, so the check can tell.
+      await m.aiStructured(Answer, { purpose: 'enrich', model: 'claude-haiku-4-5', prompt: 'Haiku, off.' })
+      config.agentThinking = 'enrich'
+      await m.aiStructured(Answer, { purpose: 'enrich', model: 'claude-haiku-4-5', prompt: 'Haiku, on.' })
+      const [, off, on] = api.requests.filter(r => r.path.startsWith('/v1/messages'))
+      assert.equal(off!.body.model, 'claude-haiku-4-5')
+      assert.deepEqual(off!.body.thinking, { type: 'disabled' })
+      assert.equal(on!.body.thinking?.type, 'enabled')
       const breakpoints = JSON.stringify(msgs[0]!.body).match(/"cache_control"/g)?.length ?? 0
       assert.ok(breakpoints <= 4, `at most 4 cache breakpoints (saw ${breakpoints})`)
       assert.deepEqual(msgs[0]!.body.tools.map((x: any) => x.name).filter((n: string) => n !== 'DeferredToolPlaceholder'), ['StructuredOutput'])

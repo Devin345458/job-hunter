@@ -5,7 +5,7 @@ import { and, gte, sql } from 'drizzle-orm'
 import { aiCalls } from '../db/schema'
 import { FALLBACK_MODEL, MODEL, profileOf, usageCost, type Effort } from './model'
 import { BULK_TASKS, currentQueueContext, getItem } from './queue'
-import { redactAgentSecrets, runAgentQuery, subscriptionTokenSet, type AgentRunResult } from './agent-backend'
+import { agentThinking, redactAgentSecrets, runAgentQuery, subscriptionTokenSet, type AgentRunResult } from './agent-backend'
 import { activeSubscriptionPause, clearSubscriptionPause, recordSubscriptionLimit, subscriptionPauseMessage } from './subscription-pause'
 import type { TailoredResume } from '#shared/types/pipeline'
 
@@ -413,6 +413,7 @@ async function onAgent<T>(opts: AiCallOptions, schema: z.ZodType | null, accept:
       effortSupported: profileOf(model).effort,
       maxTokens: opts.maxTokens ?? 16000,
       foreground: !isBackgroundWork(),
+      thinking: agentThinking(opts.purpose),
     })
     const agent = { estCostUsd: r.estCostUsd }
     if (r.ok) {
