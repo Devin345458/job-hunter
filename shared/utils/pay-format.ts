@@ -38,6 +38,13 @@ export function payRange(min: number | null | undefined, max: number | null | un
   const hi = max ?? null
   if (lo == null && hi == null) return ''
   if (lo != null && hi != null) {
+    // Both ends in one form: a range that crosses $10,000 (a 401(k) match of $8,046 to $13,440)
+    // prints both in full rather than "$8,046 to $13K".
+    if ((Math.abs(lo) >= 10000) !== (Math.abs(hi) >= 10000)) {
+      const { prefix, suffix } = symbolFor(currency)
+      const full = (n: number) => `${n < 0 ? '-' : ''}${prefix}${Math.round(Math.abs(n)).toLocaleString('en-US')}${suffix}`
+      return `${full(lo)} to ${full(hi)}`
+    }
     const a = payAmount(lo, currency)
     const b = payAmount(hi, currency)
     return a === b ? a : `${a} to ${b}`

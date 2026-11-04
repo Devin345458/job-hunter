@@ -95,16 +95,13 @@ const hasTotal = computed(() => parts.value?.totalMin != null)
 const countedPart = (kind: CompPart['kind']) => (hasTotal.value ? parts.value?.counted.find(p => p.kind === kind) ?? null : null)
 const countedBenefits = computed(() => (hasTotal.value ? parts.value?.counted.filter(p => p.kind === 'benefit') ?? [] : []))
 
-/** Bonus or equity: the amount the total counts ("$23,550 to $31,950 counted"), else the plain phrase. */
-function extraText(kind: 'bonus' | 'equity', extra: { estimatedAnnual: number | null } | null | undefined): string {
-  const p = countedPart(kind)
-  return p ? `${partAmount(p, currency.value)} counted` : payExtraText(extra, currency.value)
-}
-function extraLabel(kind: 'bonus' | 'equity'): string {
-  const p = countedPart(kind)
-  const label = kind === 'bonus' ? 'Bonus' : 'Equity'
-  return p?.percentOfBase != null ? `${label}, ${partPercent(p)}` : label
-}
+/** Bonus and equity rows: the amount the total counts ("$20K to $34K counted"), else the plain phrase. */
+const extras = computed(() => (['bonus', 'equity'] as const).map(kind => ({
+  kind,
+  label: kind === 'bonus' ? 'Bonus' : 'Equity',
+  part: countedPart(kind),
+  extra: props.comp?.[kind] ?? null,
+})))
 
 /** The benefits the total leaves out, after the counted ones: "7 quoted, no dollar value". */
 const othersText = computed(() => {
@@ -175,11 +172,14 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
 
     <dl v-if="compact" class="comp__brief" :class="{ 'comp__brief--dense': dense }">
       <div><dt>Base</dt><dd>{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'Not stated' }}</dd></div>
-      <div><dt>{{ extraLabel('bonus') }}</dt><dd>{{ extraText('bonus', comp?.bonus) }}</dd></div>
-      <div><dt>{{ extraLabel('equity') }}</dt><dd>{{ extraText('equity', comp?.equity) }}</dd></div>
+      <div v-for="x in extras" :key="x.kind">
+        <dt>{{ x.label }}<template v-if="x.part?.percentOfBase != null">, <span class="comp__nowrap">{{ partPercent(x.part) }}</span></template></dt>
+        <dd v-if="x.part"><span class="comp__nowrap">{{ partAmount(x.part, currency) }}</span> counted</dd>
+        <dd v-else>{{ payExtraText(x.extra, currency) }}</dd>
+      </div>
       <div v-for="(p, i) in countedBenefits" :key="`b${i}`">
-        <dt>{{ p.label }}<template v-if="p.percentOfBase != null">, {{ partPercent(p) }}</template></dt>
-        <dd>{{ partAmount(p, currency) }} counted</dd>
+        <dt>{{ p.label }}<template v-if="p.percentOfBase != null">, <span class="comp__nowrap">{{ partPercent(p) }}</span></template></dt>
+        <dd><span class="comp__nowrap">{{ partAmount(p, currency) }}</span> counted</dd>
       </div>
       <div v-if="othersText || !countedBenefits.length">
         <dt>{{ countedBenefits.length ? 'Other benefits' : 'Benefits' }}</dt>
@@ -382,10 +382,17 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
       color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
     }
 
+    // The figure keeps its line; a long label wraps instead ("401(k) match," over "4% of base").
     dd {
       margin: 0;
       text-align: right;
+      flex-shrink: 0;
+      max-width: 75%;
     }
+  }
+
+  &__nowrap {
+    white-space: nowrap;
   }
 
   &__line {
@@ -463,7 +470,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
   &__tag {
     display: inline-block;
     margin-left: 6px;
-    padding: 1px 6px;
+    padding: 1px 8px;
     border-radius: 6px;
     font-size: 0.75rem;
     font-weight: 500;

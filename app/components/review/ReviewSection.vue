@@ -19,10 +19,29 @@ const open = ref(props.defaultOpen)
 const id = useId()
 const el = ref<HTMLElement | null>(null)
 
-/** Opens the section and scrolls its heading to the top of the nearest scrolling box. */
+/**
+ * Opens the section and scrolls its heading to the top of the nearest scrolling box. A closed
+ * section scrolls once it has finished opening: before that, a section near the end of the card
+ * leaves the page too short to bring its heading up, and its body stays under the decision bar.
+ */
+let scrollWhenOpen = false
+function scrollToHead() {
+  el.value?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+}
 function show() {
+  if (open.value) {
+    nextTick(scrollToHead)
+    return
+  }
+  scrollWhenOpen = true
   open.value = true
-  nextTick(() => el.value?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
+  // If the transition's after-enter never fires (reduced motion), scroll anyway.
+  setTimeout(opened, 450)
+}
+function opened() {
+  if (!scrollWhenOpen) return
+  scrollWhenOpen = false
+  scrollToHead()
 }
 defineExpose({ show })
 </script>
@@ -41,7 +60,7 @@ defineExpose({ show })
       <span v-if="summary" class="rsec__summary" :class="`rsec__summary--${tone}`">{{ summary }}</span>
       <v-icon icon="mdi-chevron-down" size="20" class="rsec__chevron" />
     </button>
-    <v-expand-transition>
+    <v-expand-transition @after-enter="opened">
       <div v-show="open" :id="id" class="rsec__body">
         <slot />
       </div>

@@ -33,6 +33,7 @@ before(async () => {
     ...(await import('../../server/utils/comp-repair')),
     ...(await import('../../shared/utils/comp-parts')),
     ...(await import('../../server/utils/db')),
+    ...(await import('../../shared/utils/pay-format')),
   }
   m.sql = (await import('drizzle-orm')).sql
 })
@@ -143,6 +144,13 @@ const OLD_BONUS = {
   totalEstimateMin: 120000 + 18000 + 1200,
   totalEstimateMax: 160000 + 24000 + 1200,
 }
+
+test('a pay range prints both ends in one form', () => {
+  assert.equal(m.payRange(8046, 13440, 'USD'), '$8,046 to $13,440')
+  assert.equal(m.payRange(6280, 8520, 'USD'), '$6,280 to $8,520')
+  assert.equal(m.payRange(157000, 213000, 'USD'), '$157K to $213K')
+  assert.equal(m.payRange(7400, 7400, 'USD'), '$7,400')
+})
 
 describe('the one-time repair of rows stored before the fix', () => {
   test('reads the percent back from the detail and recomputes the totals; a second pass changes nothing', () => {
