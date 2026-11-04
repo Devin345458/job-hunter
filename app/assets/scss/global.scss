@@ -192,7 +192,7 @@ p {
   border-color: color-mix(in srgb, currentColor 24%, transparent);
 }
 
-// Menus float, so they step up a level and take the one allowed shadow (overlays only).
+// Menus float, so they step up one level to the raised surface.
 .v-menu > .v-overlay__content > .v-list,
 .v-menu > .v-overlay__content > .v-card {
   background: rgb(var(--v-theme-surface-bright)) !important;
