@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CompensationBreakdown, ScoreBreakdown } from '#shared/types/pipeline'
 import { money, moneyRange } from '~/composables/review/format'
-import { payExtraText, payFiguresInText } from '#shared/utils/pay-format'
+import { payExtraText, payFiguresInText, payReasoningText } from '#shared/utils/pay-format'
 import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
 
 // Total compensation against Devin's floor. The scale draws base pay as a solid band, the
@@ -179,7 +179,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
         </div>
       </dl>
       <p v-if="comp?.notes || score?.compensation.reasoning" class="comp__notes">
-        <span v-if="comp">{{ CONFIDENCE[comp.confidence] }}. </span>{{ secondPerson(plainQuestionRefs(payFiguresInText(score?.compensation.reasoning))) }} {{ secondPerson(plainQuestionRefs(payFiguresInText(comp?.notes))) }}
+        <span v-if="comp">{{ CONFIDENCE[comp.confidence] }}. </span>{{ secondPerson(plainQuestionRefs(payReasoningText(score?.compensation.reasoning))) }} {{ secondPerson(plainQuestionRefs(payFiguresInText(comp?.notes))) }}
       </p>
     </template>
   </div>

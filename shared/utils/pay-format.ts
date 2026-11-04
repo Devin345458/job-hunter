@@ -55,6 +55,18 @@ export function payFiguresInText(text: string | null | undefined): string {
   return text.replace(/\$\s?(\d{1,3}(?:,\d{3})+|\d{4,})(?:\.\d{1,2})?(?![\d,]*K\b)/g, (_, digits: string) => payAmount(Number(digits.replace(/,/g, ''))))
 }
 
+/**
+ * The pay score's sentence with one name per figure: the scored midpoint is "the midpoint
+ * scored", the range is "the estimated total". Scores stored before the rename said "Estimated
+ * total pay is $X a year from the posting (range...)"; this rewords them on read.
+ */
+export function payReasoningText(text: string | null | undefined): string {
+  return payFiguresInText(text).replace(
+    /\bEstimated total pay is (\S+) a year from the posting \(/g,
+    "The midpoint scored is $1 a year, from the posting's estimated total (",
+  )
+}
+
 /** Bonus or equity as one phrase everywhere: a yearly figure, "Yes, amount not stated", or "Not stated". */
 export function payExtraText(extra: { estimatedAnnual: number | null } | null | undefined, currency: string | null | undefined = 'USD'): string {
   if (!extra) return 'Not stated'

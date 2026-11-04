@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { plainQuestionRefs, plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
-import { payFiguresInText } from '#shared/utils/pay-format'
+import { payReasoningText } from '#shared/utils/pay-format'
 import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
@@ -172,7 +172,7 @@ function signed(n: number) {
           </dd>
         </dl>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ secondPerson(plainQuestionRefs(payFiguresInText(score.compensation.reasoning))) }}
+          {{ secondPerson(plainQuestionRefs(payReasoningText(score.compensation.reasoning))) }}
         </p>
       </section>
 
