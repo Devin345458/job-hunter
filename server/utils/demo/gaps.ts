@@ -178,7 +178,7 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
         kind: c.askKind,
         subject,
         answerType: 'yes_no',
-        knowledgeKey: `skill:${subject}`,
+        codeShowable: c.codeShowable,
         applicationId,
         jobId: job.id,
         blocking: false,

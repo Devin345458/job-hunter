@@ -28,6 +28,7 @@ import {
   mergedIntoId,
   parseYesNo,
   questionExample,
+  subjectTarget,
   type QuestionRow,
   type YesNo,
 } from './questions'
@@ -302,7 +303,7 @@ export function skillClaimContext(jobId: number, rawText: unknown, rawSource: un
 /** Where the answer is written: the question's own target, or the one a new question gets. */
 function claimTarget(ctx: SkillClaimContext): { category: string; key: string } {
   if (ctx.question) return knowledgeTargetFor(ctx.question)
-  return ctx.kind === 'knows' ? { category: 'skill', key: ctx.subject } : { category: 'experience', key: `Has done: ${ctx.subject}` }
+  return subjectTarget(ctx.subject, ctx.kind)
 }
 
 function claimKnowledge(ctx: SkillClaimContext): KnowledgeEntry | null {
@@ -419,7 +420,6 @@ export function ensureSkillClaimQuestion(ctx: SkillClaimContext): QuestionRow {
     kind: ctx.kind,
     subject: ctx.subject,
     answerType: 'yes_no',
-    knowledgeKey: ctx.kind === 'knows' ? `skill:${ctx.subject}` : `experience:Has done: ${ctx.subject}`,
     applicationId: ctx.app?.id,
     jobId: ctx.job.id,
     blocking: false,
