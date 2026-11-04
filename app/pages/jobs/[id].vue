@@ -272,7 +272,7 @@ onMounted(() => {
           <!-- Job Header -->
           <v-card variant="outlined" class="mb-6">
             <v-card-item>
-              <v-card-title class="text-h5 font-weight-bold job-detail__title">
+              <v-card-title tag="h1" class="text-h5 job-detail__title">
                 {{ job.title }}
               </v-card-title>
               <v-card-subtitle class="text-body-1 mt-1">
@@ -354,8 +354,7 @@ onMounted(() => {
                   :href="job.applyUrl"
                   target="_blank"
                   rel="noopener"
-                  color="primary"
-                  variant="flat"
+                  variant="outlined"
                   size="small"
                   prepend-icon="mdi-form-select"
                 >

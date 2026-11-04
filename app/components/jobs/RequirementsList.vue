@@ -16,8 +16,9 @@ const emit = defineEmits<{
 }>()
 
 const STATUS = {
-  have: { label: 'Have', color: 'success', icon: 'mdi-check-circle-outline' },
-  partial: { label: 'Partly', color: 'warning', icon: 'mdi-circle-half-full' },
+  // Signs, not color: a check, a half circle, a cross (the same as the Review card's checklist).
+  have: { label: 'Have', color: 'on-surface', icon: 'mdi-check-circle-outline' },
+  partial: { label: 'Partly', color: 'secondary', icon: 'mdi-circle-half-full' },
   lack: { label: 'Missing', color: 'error', icon: 'mdi-close-circle-outline' },
   unknown: { label: 'Not in profile', color: 'grey', icon: 'mdi-help-circle-outline' },
 } as const

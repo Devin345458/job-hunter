@@ -85,7 +85,7 @@ function signed(n: number) {
           <span class="text-h5 font-weight-bold">{{ score.final }}</span>
         </v-progress-circular>
         <div>
-          <div class="text-body-1 font-weight-medium" :class="`text-${scoreColor(score.final)}`">
+          <div class="text-body-1 font-weight-medium">
             {{ RECOMMENDATION_LABELS[score.recommendation] }}
           </div>
           <div class="text-caption text-medium-emphasis">
@@ -115,22 +115,10 @@ function signed(n: number) {
         <p class="text-body-2 score-breakdown__reasoning">
           {{ secondPerson(plainScoreFigures(score.skills.reasoning)) }}
         </p>
-        <!-- Matched and Missing from skill-sets, the same as the review card: Partly counts as matched, with a half circle. -->
-        <div v-if="sets.matched.length" class="score-breakdown__chips">
-          <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Matched {{ sets.matched.length }}</span>
-          <v-chip
-            v-for="c in sets.matched"
-            :key="c.text"
-            size="x-small"
-            variant="tonal"
-            color="success"
-            :prepend-icon="c.status === 'partial' ? 'mdi-circle-half-full' : undefined"
-            :title="c.text !== c.label ? c.text : undefined"
-            :aria-label="c.status === 'partial' ? `${c.label}, partly` : undefined"
-          >
-            {{ c.label }}
-          </v-chip>
-        </div>
+        <!-- Matched is a count: every requirement is listed once, under Requirements, with its status. -->
+        <p v-if="sets.matched.length" class="text-body-2 score-breakdown__matched">
+          Matched {{ sets.matched.length }} of {{ sets.matched.length + sets.missing.length }}<span class="text-medium-emphasis">, each listed under Requirements</span>
+        </p>
         <div v-if="sets.missing.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing {{ sets.missing.length }}</span>
           <v-chip
@@ -139,8 +127,8 @@ function signed(n: number) {
             tag="button"
             type="button"
             size="x-small"
-            variant="tonal"
-            color="error"
+            variant="outlined"
+            prepend-icon="mdi-minus"
             append-icon="mdi-chevron-right"
             class="score-breakdown__claim-chip"
             :title="c.text !== c.label ? c.text : undefined"
@@ -275,6 +263,10 @@ function signed(n: number) {
   &__reasoning {
     margin-top: 10px;
     line-height: 1.6;
+  }
+
+  &__matched {
+    margin: 8px 0 0;
   }
 
   &__chips {
