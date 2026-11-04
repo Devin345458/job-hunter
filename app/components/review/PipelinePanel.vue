@@ -422,7 +422,8 @@ onMounted(() => {
         <v-expand-transition>
           <div v-show="openRun === r.id" class="pp__run-detail">
             <div>Started by {{ TRIGGER[r.trigger] ?? r.trigger }}{{ r.host ? ` on host ${r.host}` : '' }}.</div>
-            <ul v-if="(r.problems?.length ?? 0) > 1" class="pp__problems">
+            <!-- In full here: the status column cuts a long one off ("paused: this app's daily Claude limit reached, co..."). -->
+            <ul v-if="(r.problems?.length ?? 0) > 0" class="pp__problems">
               <li v-for="p in r.problems" :key="p" class="text-warning">{{ p }}</li>
             </ul>
             <div v-if="statsText(r.stats)">Result: {{ statsText(r.stats) }}</div>
