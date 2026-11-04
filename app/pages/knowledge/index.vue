@@ -6,8 +6,8 @@ const snackbar = useSnackbar()
 
 const categories = [
   { title: 'Profile', value: 'profile', icon: 'mdi-account-outline', color: 'primary', description: 'Name, title, summary, contact info' },
-  { title: 'Experience', value: 'experience', icon: 'mdi-briefcase-outline', color: 'secondary', description: 'Work history and roles' },
-  { title: 'Skill', value: 'skill', icon: 'mdi-wrench-outline', color: 'accent', description: 'Technical and soft skills' },
+  { title: 'Experience', value: 'experience', icon: 'mdi-briefcase-outline', color: 'secondary', description: 'Roles, industries, and kinds of work' },
+  { title: 'Skill', value: 'skill', icon: 'mdi-wrench-outline', color: 'accent', description: 'Languages, frameworks, tools, and techniques' },
   { title: 'Preference', value: 'preference', icon: 'mdi-heart-outline', color: 'error', description: 'Work style, culture, salary' },
   { title: 'Project', value: 'project', icon: 'mdi-rocket-launch-outline', color: 'warning', description: 'Notable projects and achievements' },
   { title: 'Education', value: 'education', icon: 'mdi-school-outline', color: 'success', description: 'Degrees and certifications' },
@@ -85,6 +85,10 @@ onMounted(() => fetchEntries())
         <h1 class="text-h4 page-header__title">Knowledge Base</h1>
         <p class="text-body-2 page-header__subtitle">
           Your professional profile in structured form. The AI uses this to match jobs, tailor resumes, and generate interview prep. The more complete your profile, the better the results.
+        </p>
+        <!-- How answers are filed (questions.ts subjectSection): by what the subject is, not by how the question was worded. -->
+        <p class="text-body-2 page-header__subtitle knowledge-page__sections">
+          Skills are the languages, frameworks, tools, and techniques you use (Docker). Experience is your roles and the industries and kinds of work you have done (fintech, on-call).
         </p>
       </div>
       <!-- In the header on every screen. On a phone it used to float over the list cards. -->

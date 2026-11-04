@@ -151,6 +151,11 @@ async function answer(q: QuestionListItem, value: string, example?: string | nul
     replace(out.question)
     // Keys made from a form label can end in a period already ("...professionally or personally.").
     const parts = [`Saved${out.question.example ? ' with your example' : ''} to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`).replace(/[.\s]+$/, '')}.`]
+    // The same subject asked another way took this answer too: reload so those cards move to Answered.
+    if (out.carried?.length) {
+      parts.push(`This also answered ${out.carried.map(c => `#${c.id}`).join(', ')}.`)
+      await load()
+    }
     if (out.refreshedApplicationIds.length) parts.push(`${out.refreshedApplicationIds.length === 1 ? 'One application was' : `${out.refreshedApplicationIds.length} applications were`} updated.`)
     else if (out.refreshUnavailable) parts.push('Waiting applications pick it up once form answers can refresh.')
     if (out.rescored) parts.push(`${out.rescored} ${out.rescored === 1 ? 'job' : 'jobs'} rescored.`)
@@ -194,6 +199,7 @@ async function reopen(q: QuestionListItem) {
   try {
     const out = await $fetch<{ question: QuestionListItem }>(`/api/questions/${q.id}`, { method: 'PATCH', body: { status: 'pending' } })
     replace(out.question)
+    if (q.answeredFrom) snackbar.info(`Undone. #${q.id} is open again, and the app will not answer it from another question again.`)
   }
   catch (e: any) {
     snackbar.error(e?.data?.statusMessage || 'Could not bring that question back')
@@ -371,6 +377,7 @@ onMounted(async () => {
                   @answer="(v, ex) => answer(q, v, ex)"
                   @example="t => saveExample(q, t)"
                   @ask="askAbout(q)"
+                  @reopen="reopen(q)"
                   @box-text="t => (boxTexts[q.id] = t)"
                 />
               </div>
