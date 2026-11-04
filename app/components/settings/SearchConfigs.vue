@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { properName } from '#shared/utils/names'
 
 // Settings > Job search > Search Configurations: what the scheduled searches look for. Each active
@@ -213,7 +212,7 @@ onMounted(fetchConfigs)
         Search Configurations
       </v-card-title>
       <v-card-subtitle>
-        Define what jobs to search for. Each active config runs on its own in every scheduled search, {{ PIPELINE_SCHEDULE_TEXT }}.
+        {{ configs.filter(c => c.isActive).length.toLocaleString('en-US') }} active of {{ configs.length.toLocaleString('en-US') }}; each active one runs in every scheduled search.
       </v-card-subtitle>
       <template #append>
         <v-btn
