@@ -723,6 +723,7 @@ onMounted(async () => {
   &__n {
     margin-left: 6px;
     font-weight: 400;
+    font-variant-numeric: tabular-nums;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
