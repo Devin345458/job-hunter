@@ -408,8 +408,6 @@ const submissionSummary = computed(() => {
   padding: 8px 0 32px;
 
   &__top { margin: 0 0 8px -8px; }
-  &__skel { border-radius: 12px; }
-
   &__state {
     display: grid;
     justify-items: start;

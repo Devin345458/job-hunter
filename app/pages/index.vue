@@ -269,7 +269,7 @@ const leftParts = computed(() => [
   <div class="rv">
     <!-- Loading -->
     <div v-if="!queue.loaded.value && !queue.error.value" class="rv__loading" aria-busy="true" aria-label="Loading the review queue">
-      <v-skeleton-loader type="heading, list-item-two-line@4" class="rv__skel-list" />
+      <v-skeleton-loader type="heading, list-item-two-line@4" class="rv__skel-list skeleton--ground" />
       <v-skeleton-loader type="heading, paragraph, image, paragraph" class="rv__skel-card" />
     </div>
 
@@ -569,11 +569,6 @@ const leftParts = computed(() => [
     @media (min-width: 960px) {
       grid-template-columns: 312px minmax(0, 1fr);
     }
-  }
-
-  &__skel-list,
-  &__skel-card {
-    background: transparent;
   }
 
   &__sheet {

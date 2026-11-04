@@ -216,10 +216,6 @@ async function answer(questionId: number, value: string | null, skip = false) {
     margin: -8px 0 8px -12px;
   }
 
-  &__skel {
-    background: transparent;
-  }
-
   &__state {
     text-align: center;
     display: flex;
