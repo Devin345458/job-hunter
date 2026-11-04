@@ -382,7 +382,6 @@ onMounted(fetchConfigs)
                 size="x-small"
                 variant="outlined"
                 prepend-icon="mdi-minus-circle-outline"
-                color="error"
               >
                 Exclude: {{ parseJsonArray(config.excludedKeywords).join(', ') }}
               </v-chip>

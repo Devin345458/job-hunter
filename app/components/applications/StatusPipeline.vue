@@ -61,6 +61,12 @@ const visible = computed(() => STAGES.filter(s => s.key === 'all' || (props.coun
 
   &::-webkit-scrollbar { display: none; }
 
+  // A narrow phone wraps the tabs to a second line rather than hiding one past the edge.
+  @media (max-width: 599.98px) {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
   &__tab {
     position: relative;
     flex: none;

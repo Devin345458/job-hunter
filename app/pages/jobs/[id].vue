@@ -284,8 +284,8 @@ onMounted(() => {
                   :color="state.color"
                   variant="tonal"
                   size="small"
-                  :to="job.application ? `/applications/${job.application.id}` : undefined"
-                  :aria-label="job.application ? `Application: ${state.label}. Open the application` : `Status: ${state.label}`"
+                  label
+                  :aria-label="`Status: ${state.label}`"
                 >
                   {{ state.label }}
                 </v-chip>

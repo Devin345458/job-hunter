@@ -453,6 +453,7 @@ watch(() => props.pick?.nonce, () => {
             :prefix="isComp ? '$' : undefined"
             :suffix="isComp ? 'a year' : undefined"
             :placeholder="isComp ? '150,000' : 'Number'"
+            aria-label="Your answer"
             inputmode="numeric"
             autocomplete="off"
             enterkeyhint="done"
@@ -472,6 +473,7 @@ watch(() => props.pick?.nonce, () => {
           <v-textarea
             v-model="draft"
             placeholder="Your answer"
+            aria-label="Your answer"
             rows="3"
             auto-grow
             maxlength="4000"
@@ -503,6 +505,7 @@ watch(() => props.pick?.nonce, () => {
             <v-textarea
               v-model="draft"
               placeholder="Answer in your own words. It is stored exactly as you write it."
+              aria-label="Your answer"
               rows="3"
               auto-grow
               maxlength="4000"

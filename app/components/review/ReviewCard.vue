@@ -64,7 +64,7 @@ const skillQs = computed(() => (isStageOne.value ? props.item.openQuestions.filt
 const gapSummary = computed(() => {
   const g = props.item.gap
   if (!g) return 'Not made yet'
-  return plainKnowledgeRefs(fixPlurals(g.summary))
+  return plainKnowledgeRefs(fixPlurals(gapSummaryText(g.summary, null)))
 })
 /** Stage 1 form summary: "14 fields, 6 filled from your profile, 2 waiting on you, 6 written when you apply". */
 const formReadSummary = computed(() => {
@@ -394,7 +394,7 @@ const letterPreview = computed(() => {
         </ReviewSection>
 
         <ReviewSection v-if="isStageOne" title="Gap plan" icon="mdi-map-marker-path" :summary="gapSummary" default-open>
-          <DemoGapAnalysis :gap="item.gap" />
+          <DemoGapAnalysis :gap="item.gap" :show-summary="false" />
         </ReviewSection>
 
         <ReviewSection v-if="isStageOne" title="Employer form" icon="mdi-form-textbox" :summary="formReadSummary" :tone="item.form.error ? 'warning' : 'default'">
