@@ -500,7 +500,10 @@ function writeKnowledge(target: { category: string; key: string }, value: string
   // The same holds for an entry another question's Yes wrote: one subject asked two ways ("Docker"
   // and "Docker containerization") shares one entry, and a second Yes never erases the first
   // answer's example. A No replaces it: the latest answer about a subject is the claim.
-  if (existing && !negative && !isNegativeKnowledge(existing.value)) {
+  // Shared means resume text, or another answer's "(Answer to: ...)" note; a text answer (his own
+  // words, no note) is replaced as before, so a changed LinkedIn URL never stacks under the old one.
+  const shared = !!existing && (existing.source !== 'user_answer' || existing.value.includes('(Answer to: '))
+  if (existing && shared && !negative && !isNegativeKnowledge(existing.value)) {
     const base = previous && previous !== value ? withoutSegment(existing.value, previous) : existing.value
     if (!base.trim()) return upsertKnowledge(target.category, key, value, 'user_answer')
     const merged = base.includes(value) ? base : `${base}\n${value}`

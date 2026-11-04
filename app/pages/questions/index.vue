@@ -153,7 +153,7 @@ async function answer(q: QuestionListItem, value: string, example?: string | nul
     const parts = [`Saved${out.question.example ? ' with your example' : ''} to your knowledge base as ${where(`${out.knowledge!.category}:${out.knowledge!.key}`).replace(/[.\s]+$/, '')}.`]
     // The same subject asked another way took this answer too: reload so those cards move to Answered.
     if (out.carried?.length) {
-      parts.push(`Also answered ${out.carried.map(c => `#${c.id}`).join(', ')}, which ${out.carried.length === 1 ? 'asks' : 'ask'} the same thing.`)
+      parts.push(`This also answered ${out.carried.map(c => `#${c.id}`).join(', ')}.`)
       await load()
     }
     if (out.refreshedApplicationIds.length) parts.push(`${out.refreshedApplicationIds.length === 1 ? 'One application was' : `${out.refreshedApplicationIds.length} applications were`} updated.`)

@@ -102,6 +102,18 @@ expect('carried only to Python questions', python.every(c => /python/i.test(c.ro
 expect('#188 Python FastAPI stays open', db.select().from(questions).where(eq(questions.id, 188)).get()?.status, 'pending')
 expect('#249 Python3 (merged) resolves to the answered #147', [q.canonicalQuestion(249)?.id, q.canonicalQuestion(249)?.status], [147, 'answered'])
 
+console.log('\n== A changed text answer replaces the old one')
+const textQ = db.insert(questions).values({ question: 'Check script: what is your test value?', kind: 'other', subject: 'subject sections check', answerType: 'text', knowledgeKey: 'personal:Subject sections check', status: 'pending', dedupeKey: 'other:subject sections check' }).returning().get()
+await q.answerQuestion(textQ.id, 'first value')
+const second = await q.answerQuestion(textQ.id, 'second value')
+expect('text entry holds only the second answer', second.knowledge?.value, 'second value')
+// A second Docker question with no application (answering #186 would refresh application 48's form answers).
+const dockerQ = db.insert(questions).values({ question: 'Check script: have you used Docker?', kind: 'knows', subject: 'Docker', answerType: 'yes_no', knowledgeKey: 'skill:Docker', status: 'pending', dedupeKey: 'knows:docker check' }).returning().get()
+const docker = await q.answerQuestion(dockerQ.id, 'Yes')
+expect('a second Yes on Docker keeps the #346 example in the shared entry', docker.knowledge?.value.includes((valueBefore[183] ?? '').split(' Example: ')[1]?.slice(0, 40) ?? 'missing'), true)
+expect('and adds its own claim under it', docker.knowledge?.value.includes('Knows Docker. (Answer to: Check script: have you used Docker?)'), true)
+expect('the same answer leaves #346 his own', q.inferredFromId(db.select().from(questions).where(eq(questions.id, 346)).get()), null)
+
 console.log('\n== Second run changes nothing')
 expect('repair runs once', q.refileSubjectSectionsOnce().ran, false)
 expect('carry is idempotent', q.carryAllAnswers().length, 0)
