@@ -361,16 +361,20 @@ export interface AiStageCost {
   phase: 'before' | 'after' | 'other'
   /** The ai_calls purposes counted in this stage. */
   purposes: string[]
-  today: { costUsd: number; calls: number }
-  week: { costUsd: number; calls: number }
+  /**
+   * API key dollars plus the Agent SDK's estimate for calls on Devin's subscription.
+   * `subscriptionCalls` of `calls` ran on the subscription, so their part is an estimate.
+   */
+  today: { costUsd: number; calls: number; subscriptionCalls: number }
+  week: { costUsd: number; calls: number; subscriptionCalls: number }
 }
 
 export interface AiStageCosts {
-  /** What the API key was billed, by stage. Calls on Devin's subscription bill it nothing and are left out. */
+  /** By stage: what the API key was billed plus the subscription estimate (server/utils/ai-stages.ts). */
   stages: AiStageCost[]
   /** Applications chosen with Apply in the last 7 days. */
   appliedThisWeek: number
-  /** What preparing those applications cost (prepare purposes logged against them), so the cost reads per application. */
+  /** What preparing those applications cost (prepare purposes logged against them, API dollars plus the subscription estimate), so the cost reads per application. */
   appliedPrepareUsd: number
   /** Calls on Devin's Claude subscription and the Agent SDK's estimate of what they would cost on the API. */
   subscription: { today: { estUsd: number; calls: number }; week: { estUsd: number; calls: number } }

@@ -112,6 +112,7 @@ before(async () => {
   m.queueItemText = (await import('../../shared/utils/queue-text')).queueItemText
   m.appLimitPauseText = (await import('../../shared/utils/subscription')).appLimitPauseText
   m.stopFor = (await import('../../server/utils/question-chat')).stopFor
+  m.aiStageCosts = (await import('../../server/utils/ai-stages')).aiStageCosts
   m.useDb = (globalThis as any).useDb
   m.setAgentTestHooks({ query: stubQuery as any })
   globalThis.fetch = (async (...args: Parameters<typeof fetch>) => {
@@ -456,8 +457,8 @@ async function asItem<T>(task: string, payload: Record<string, unknown>, trigger
 const isoNear = (a: string, b: number, ms = 5000) => Math.abs(Date.parse(a) - b) < ms
 
 describe('this app\'s subscription limit', () => {
-  test('defaults to $15 a day and $75 over 7 days; the environment is the first default and Settings win', () => {
-    assert.deepEqual(m.subscriptionLimits(), { dailyUsd: 15, weekUsd: 75, fromSettings: false })
+  test('defaults to $15 a day and $105 (seven days of it) over 7 days; the environment is the first default and Settings win', () => {
+    assert.deepEqual(m.subscriptionLimits(), { dailyUsd: 15, weekUsd: 105, fromSettings: false })
     config.subscriptionDailyLimitUsd = '20'
     assert.equal(m.subscriptionLimits().dailyUsd, 20)
     m.saveSubscriptionLimits({ dailyUsd: 5, weekUsd: 30 })
@@ -514,19 +515,19 @@ describe('this app\'s subscription limit', () => {
   })
 
   test('the 7-day limit stops every call until enough of the oldest spend leaves the window', async () => {
-    spend(40, '-6 days')
-    spend(40, '-2 days')
+    spend(60, '-6 days')
+    spend(60, '-2 days')
     const err = await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' }).catch((e: unknown) => e)
     assert.ok(err instanceof m.AiAppLimitReached)
     assert.equal(err.kind, 'app_week')
-    assert.match(err.message, /^This app's 7-day Claude limit is reached \(est\. \$80\.00 of \$75\.00 in the last 7 days\)\. Claude calls resume at (\w{3} )?\d{1,2}:\d{2} [AP]M\. Raise the limit in Settings > Pipeline/)
-    // Dropping the call made 6 days ago leaves $40, under $75: that happens in one day.
+    assert.match(err.message, /^This app's 7-day Claude limit is reached \(est\. \$120\.00 of \$105\.00 in the last 7 days\)\. Claude calls resume at (\w{3} )?\d{1,2}:\d{2} [AP]M\. Raise the limit in Settings > Pipeline/)
+    // Dropping the call made 6 days ago leaves $60, under $105: that happens in one day.
     assert.ok(isoNear(err.until, Date.now() + 86_400_000), `until ${err.until}`)
     assert.equal(calls.length, 0)
     assert.equal(m.stopFor(err).stop, 'budget')
     assert.match(m.stopFor(err).message, /7-day Claude limit is reached .* paused until /)
     // A higher limit lets calls go out again at once.
-    m.saveSubscriptionLimits({ dailyUsd: 15, weekUsd: 100 })
+    m.saveSubscriptionLimits({ dailyUsd: 15, weekUsd: 150 })
     await m.aiStructured(Answer, { purpose: 'tailor', prompt: 'x' })
     assert.equal(calls.length, 1)
   })
@@ -605,6 +606,20 @@ describe('this app\'s subscription limit', () => {
     assert.ok(step.run.stats.errors.some((e: string) => e.startsWith('Paused: background work is at 70%')))
     assert.equal(step.until, undefined, 'the step itself met no stop')
     assert.equal(m.pausedByLimit({ task: 'jobs:match' }, m.itemOutcomeFromRun(step.run), step.until), false, 'so it finishes instead of waiting until midnight')
+  })
+
+  test('the Where it went table adds API dollars and the subscription estimate, and says which rows hold subscription calls', () => {
+    spend(1.25) // purpose tailor: Prepare after Apply, on the subscription
+    db().run(m.sql`insert into ai_calls (purpose, model, backend, cost_usd, est_cost_usd) values ('tailor', 'claude-sonnet-5-5', 'api', 0.5, 0)`)
+    db().run(m.sql`insert into ai_calls (purpose, model, backend, cost_usd, est_cost_usd) values ('enrich', 'claude-sonnet-5-5', 'api', 0.25, 0)`)
+    const costs = m.aiStageCosts()
+    const prepare = costs.stages.find((s: any) => s.key === 'prepare')
+    const read = costs.stages.find((s: any) => s.key === 'read')
+    assert.deepEqual(prepare.today, { costUsd: 1.75, calls: 2, subscriptionCalls: 1 })
+    assert.deepEqual(read.today, { costUsd: 0.25, calls: 1, subscriptionCalls: 0 })
+    // The rows add up to the subscription bar plus the API key's spend.
+    const total = costs.stages.reduce((n: number, s: any) => n + s.today.costUsd, 0)
+    assert.equal(Math.round(total * 100) / 100, Math.round((m.subscriptionSpend().today.estUsd + m.aiSpentToday()) * 100) / 100)
   })
 
   test('an approval is never stopped by the limit and never put back', async () => {

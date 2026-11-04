@@ -8,7 +8,8 @@ import { resumeClock, type AppLimitKind } from '#shared/utils/subscription'
 // estimated dollars (ai_calls.est_cost_usd where backend is 'agent'):
 // - a daily limit (default $15), the day starting at local midnight exactly as the API key budget
 //   counts it (the server runs in America/Chicago), and
-// - a rolling 7-day limit (default $75), over the same window Settings shows as "the last 7 days".
+// - a rolling 7-day limit (default $105, seven times the daily one, so one heavy day does not stop
+//   the week), over the same window Settings shows as "the last 7 days".
 // Background work (scheduled steps, per-job read and score items) stops at the background share of
 // the daily limit (NUXT_BACKGROUND_BUDGET_SHARE, default 0.7), so what Devin starts can use the
 // rest. At 100% of either limit every call stops. Stopped queue items go back in the queue to run
@@ -19,7 +20,7 @@ import { resumeClock, type AppLimitKind } from '#shared/utils/subscription'
 
 export const SUBSCRIPTION_LIMITS_KEY = 'subscription_limits'
 export const DEFAULT_DAILY_LIMIT_USD = 15
-export const DEFAULT_WEEK_LIMIT_USD = 75
+export const DEFAULT_WEEK_LIMIT_USD = 105
 /** The most a limit can be set to in Settings. */
 export const MAX_LIMIT_USD = 10_000
 

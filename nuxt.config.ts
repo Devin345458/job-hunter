@@ -191,7 +191,7 @@ export default defineNuxtConfig({
     // per local day and over a rolling 7 days (server/utils/subscription-budget.ts). Only the first
     // defaults: Settings > Pipeline stores the limits in app_settings, and those win.
     subscriptionDailyLimitUsd: '15',
-    subscriptionWeekLimitUsd: '75',
+    subscriptionWeekLimitUsd: '105',
     // uid of the unprivileged user that runs demo build commands in the container
     demoUid: '10001',
     // Safety switch for real employer submits. 'false' lets the approve path submit only to the

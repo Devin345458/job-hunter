@@ -122,6 +122,10 @@ const stageGroups = computed(() => STAGE_PHASES
   .map(p => ({ ...p, rows: (stages.value?.stages ?? []).filter(s => s.phase === p.phase) }))
   .filter(g => g.rows.length))
 const usd = (n: number) => `$${n.toFixed(2)}`
+// Each row adds API dollars and the subscription estimate; a column with any subscription call in it
+// says "est." so it reads as the estimate the bar above shows.
+const todayEstimated = computed(() => (stages.value?.stages ?? []).some(s => (s.today.subscriptionCalls ?? 0) > 0))
+const weekEstimated = computed(() => (stages.value?.stages ?? []).some(s => (s.week.subscriptionCalls ?? 0) > 0))
 /** "3 applications chosen with Apply in the last 7 days; preparing them cost $1.23, about $0.41 each." */
 const perApplication = computed(() => {
   const n = stages.value?.appliedThisWeek ?? 0
@@ -318,8 +322,8 @@ onMounted(() => {
     <div v-if="stages" class="pp__stages" aria-label="AI spend by stage">
       <div class="pp__stages-row pp__stages-row--head">
         <span>Where it went</span>
-        <span class="pp__stages-num">Today</span>
-        <span class="pp__stages-num">Last 7 days</span>
+        <span class="pp__stages-num">{{ todayEstimated ? 'Today, est.' : 'Today' }}</span>
+        <span class="pp__stages-num">{{ weekEstimated ? 'Last 7 days, est.' : 'Last 7 days' }}</span>
       </div>
       <template v-for="g in stageGroups" :key="g.phase">
         <div class="pp__stages-phase">{{ g.label }}</div>

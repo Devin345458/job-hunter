@@ -2,8 +2,11 @@ import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { aiCalls, decisions } from '../db/schema'
 import type { AiStageCost, AiStageCosts, AiStageKey } from '#shared/types/pipeline'
 
-// Where the AI budget went, by stage of the decide-first flow (API key spend only; calls on Devin's
-// subscription are counted beside it with the SDK's estimate). Every Claude call is logged in
+// Where the AI budget went, by stage of the decide-first flow: API key dollars plus the Agent SDK's
+// estimate for calls on Devin's subscription (each call has one or the other: cost_usd on the key,
+// est_cost_usd on the subscription), so the table adds up to the subscription bar above it. Each
+// figure says how many of its calls ran on the subscription, so Settings marks those columns
+// "est.". Every Claude call is logged in
 // ai_calls with a purpose; each purpose belongs to one stage. Spending before Devin decides runs
 // for every job; spending after Apply runs only for the applications he chose. Settings > Pipeline
 // shows today and the last 7 days. A purpose this map does not know counts under Other.
@@ -30,9 +33,10 @@ export function stageOfPurpose(purpose: string): AiStageKey {
 function totalsSince(since: ReturnType<typeof sql>) {
   return useDb().select({
     purpose: aiCalls.purpose,
-    cost: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)`,
+    cost: sql<number>`coalesce(sum(${aiCalls.costUsd} + ${aiCalls.estCostUsd}), 0)`,
     calls: sql<number>`count(*)`,
-  }).from(aiCalls).where(and(gte(aiCalls.createdAt, since), eq(aiCalls.backend, 'api'))).groupBy(aiCalls.purpose).all()
+    agentCalls: sql<number>`coalesce(sum(case when ${aiCalls.backend} = 'agent' then 1 else 0 end), 0)`,
+  }).from(aiCalls).where(gte(aiCalls.createdAt, since)).groupBy(aiCalls.purpose).all()
 }
 
 /** Calls on Devin's subscription since `since`, with the Agent SDK's estimate of their API price. */
@@ -52,7 +56,7 @@ export function aiStageCosts(): AiStageCosts {
   const week = totalsSince(sql`datetime('now', '-7 days')`)
   const sum = (rows: typeof today, key: AiStageKey) => rows
     .filter(r => stageOfPurpose(r.purpose) === key)
-    .reduce((acc, r) => ({ costUsd: acc.costUsd + (r.cost ?? 0), calls: acc.calls + (r.calls ?? 0) }), { costUsd: 0, calls: 0 })
+    .reduce((acc, r) => ({ costUsd: acc.costUsd + (r.cost ?? 0), calls: acc.calls + (r.calls ?? 0), subscriptionCalls: acc.subscriptionCalls + (r.agentCalls ?? 0) }), { costUsd: 0, calls: 0, subscriptionCalls: 0 })
   const stages = AI_STAGES.map((s) => {
     const t = sum(today, s.key)
     const w = sum(week, s.key)
@@ -61,8 +65,8 @@ export function aiStageCosts(): AiStageCosts {
       label: s.label,
       phase: s.phase,
       purposes: s.key === 'other' ? [...new Set(week.map(r => r.purpose).filter(p => stageOfPurpose(p) === 'other'))].sort() : s.purposes,
-      today: { costUsd: round(t.costUsd), calls: t.calls },
-      week: { costUsd: round(w.costUsd), calls: w.calls },
+      today: { costUsd: round(t.costUsd), calls: t.calls, subscriptionCalls: t.subscriptionCalls },
+      week: { costUsd: round(w.costUsd), calls: w.calls, subscriptionCalls: w.subscriptionCalls },
     }
   })
   const db = useDb()
@@ -70,8 +74,8 @@ export function aiStageCosts(): AiStageCosts {
     .where(and(eq(decisions.decision, 'apply'), gte(decisions.createdAt, sql`datetime('now', '-7 days')`))).all().map(r => r.id))]
   const prepare = AI_STAGES.find(s => s.key === 'prepare')!.purposes
   const appliedPrepareUsd = applied.length
-    ? db.select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd}), 0)` }).from(aiCalls)
-      .where(and(eq(aiCalls.refType, 'application'), eq(aiCalls.backend, 'api'), inArray(aiCalls.refId, applied), inArray(aiCalls.purpose, prepare))).get()?.total ?? 0
+    ? db.select({ total: sql<number>`coalesce(sum(${aiCalls.costUsd} + ${aiCalls.estCostUsd}), 0)` }).from(aiCalls)
+      .where(and(eq(aiCalls.refType, 'application'), inArray(aiCalls.refId, applied), inArray(aiCalls.purpose, prepare))).get()?.total ?? 0
     : 0
   const subscription = {
     today: subscriptionSince(sql`datetime('now', 'localtime', 'start of day', 'utc')`),
