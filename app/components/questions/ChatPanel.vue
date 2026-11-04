@@ -505,7 +505,8 @@ defineExpose({ focus: () => input.value?.focus() })
       gap: 8px;
       padding: 10px 12px;
       border-radius: 8px;
-      background: rgb(var(--v-theme-surface-bright));
+      background: rgba(var(--v-theme-warning), 0.1);
+      border: 1px solid rgba(var(--v-theme-warning), 0.3);
     }
   }
 
@@ -560,7 +561,8 @@ defineExpose({ focus: () => input.value?.focus() })
     margin-top: 10px;
     padding: 10px 12px;
     border-radius: 8px;
-    background: rgb(var(--v-theme-surface-bright));
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
   }
 
   &__confirm-actions {

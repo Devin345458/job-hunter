@@ -178,8 +178,8 @@ onMounted(() => fetchEntries())
             <span class="kv__value">{{ entry.value }}</span>
             <span class="kv__meta">
               <!-- A No answer from /questions. Stored so it is never asked again and never claimed. -->
-              <span v-if="(entry as any).negative" class="kv__tag">Never claimed</span>
-              <span class="kv__source">{{ entry.source === 'user_answer' ? 'Your answer' : entry.source === 'resume' ? 'Resume' : entry.source === 'inferred' ? 'Inferred' : entry.source }}</span>
+              <span v-if="(entry as any).negative" class="kv__tag text-error">Never claimed</span>
+              <span class="kv__source" :class="entry.source === 'resume' ? 'text-primary' : entry.source === 'inferred' ? 'text-warning' : undefined">{{ entry.source === 'user_answer' ? 'Your answer' : entry.source === 'resume' ? 'Resume' : entry.source === 'inferred' ? 'Inferred' : entry.source }}</span>
               <span class="kv__date">{{ shortDate(entry.updatedAt) }}</span>
             </span>
           </button>

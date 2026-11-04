@@ -299,12 +299,6 @@ p {
   color: rgb(var(--v-theme-on-surface));
 }
 
-// Notices (info alerts) are neutral: a lightness step with ink text, not a tinted box.
-.v-alert.v-alert--variant-tonal.text-info,
-.v-alert.v-alert--variant-tonal.bg-info {
-  color: rgb(var(--v-theme-on-surface)) !important;
-}
-
 // Inline code reads in the UI face on a tinted inset, never as a monospace label.
 .v-application code {
   font-family: inherit;

@@ -7,11 +7,11 @@ import type { GapAnalysis, GapItem } from '#shared/types/pipeline'
 // showSummary: false where a section header above already prints the summary (the review card).
 withDefaults(defineProps<{ gap: GapAnalysis | null; showSummary?: boolean }>(), { showSummary: true })
 
-const DECISION: Record<GapItem['decision'], { label: string; icon: string }> = {
-  demo: { label: 'Demo idea', icon: 'mdi-flask-outline' },
-  ask: { label: 'Asked you', icon: 'mdi-chat-question-outline' },
-  reframe: { label: 'Use existing experience', icon: 'mdi-swap-horizontal' },
-  skip: { label: 'Left as a gap', icon: 'mdi-minus-circle-outline' },
+const DECISION: Record<GapItem['decision'], { label: string; icon: string; color: string }> = {
+  demo: { label: 'Demo idea', icon: 'mdi-flask-outline', color: 'secondary' },
+  ask: { label: 'Asked you', icon: 'mdi-chat-question-outline', color: 'warning' },
+  reframe: { label: 'Use existing experience', icon: 'mdi-swap-horizontal', color: 'info' },
+  skip: { label: 'Left as a gap', icon: 'mdi-minus-circle-outline', color: 'grey' },
 }
 </script>
 
@@ -29,7 +29,7 @@ const DECISION: Record<GapItem['decision'], { label: string; icon: string }> = {
           {{ item.requirement }}
         </div>
         <div class="gap-analysis__row text-body-2">
-          <span class="gap-analysis__decision">
+          <span class="gap-analysis__decision" :class="`text-${DECISION[item.decision].color}`">
             <v-icon :icon="DECISION[item.decision].icon" size="16" />
             {{ DECISION[item.decision].label }}
           </span>

@@ -39,8 +39,8 @@ export default defineNuxtConfig({
       // True-black flat (design-taste-frontend app style, seed 815537509): one true black ground,
       // elevation by lightness alone (#000 page, #111 card, #222 nested panel), no borders or
       // shadows on cards. The primary action is made primary by inversion (white fill, black
-      // label), never by a hue. Color is for data and status only: `score` is the one data hue and
-      // marks the match score wherever it shows; warning (amber) marks only what blocks an approval.
+      // label), never by a hue. Status keeps its colors (Devin, 2026-11-04: success, warning, error, info on
+      // every state, as before the restyle), and the match score takes its band through scoreColor().
       // Rationale in .claude/context/design-system.md.
       theme: {
         defaultTheme: 'dark',
@@ -66,9 +66,6 @@ export default defineNuxtConfig({
               'on-secondary': '#000000',
               'accent': '#b4b4b4',
               'on-accent': '#000000',
-              // The one data hue: the match score (number, ring, ledger total) on every screen.
-              'score': '#4cb3f0',
-              'on-score': '#00131f',
               // Neutral: running, preparing and notices are not a signal.
               'info': '#c8c8c8',
               'on-info': '#000000',

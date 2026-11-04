@@ -93,7 +93,8 @@ function sourceLine(s: RecordSource): string {
     margin: 0 0 8px;
     padding: 6px 8px;
     border-radius: 6px;
-    background: rgb(var(--v-theme-surface-bright));
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
 
     .v-icon {
       margin-top: 1px;

@@ -331,13 +331,13 @@ watch(() => props.pick?.nonce, () => {
 </script>
 
 <template>
-  <v-card variant="outlined" class="question-card" :class="{ 'question-card--blocking': mode === 'pending' && question.blocking }">
+  <v-card variant="outlined" class="question-card" :class="{ 'question-card--blocking': mode === 'pending' && question.blocking, 'question-card--waiting': mode === 'pending' && waiting > 0 }">
     <v-card-text class="pa-4 pa-sm-5">
       <!-- What it is about, in gray text: no pill above the heading. Amber only on one that blocks an approval. -->
       <div class="question-card__top">
         <span class="question-card__kind">{{ kindLabel }}</span>
         <span v-if="mode === 'pending' && question.blocking" class="question-card__blocks">Blocks an approval</span>
-        <span v-else-if="mode === 'pending' && waiting > 0" class="question-card__kind">{{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}</span>
+        <span v-else-if="mode === 'pending' && waiting > 0" class="question-card__blocks">{{ waiting === 1 ? 'An application waits on this' : `${waiting} applications wait on this` }}</span>
         <NuxtLink
           v-if="question.job && !(mode === 'pending' && waiters.length)"
           :to="`/jobs/${question.job.id}`"
@@ -642,6 +642,12 @@ watch(() => props.pick?.nonce, () => {
   transition: background-color 0.15s ease;
 
   // The one that blocks an approval keeps a quiet amber edge; every other card is the plain surface.
+  // A card any application waits on has an amber edge, as before; one that blocks an approval also
+  // carries the 3px amber left edge.
+  &.question-card--waiting {
+    border: 1px solid rgba(var(--v-theme-warning), 0.45);
+  }
+
   &.question-card--blocking {
     border-left: 3px solid rgb(var(--v-theme-warning));
   }
@@ -827,7 +833,8 @@ watch(() => props.pick?.nonce, () => {
     margin-top: 12px;
     padding: 10px 12px;
     border-radius: 8px;
-    background: rgb(var(--v-theme-surface-bright));
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
   }
 
   &__records-actions {

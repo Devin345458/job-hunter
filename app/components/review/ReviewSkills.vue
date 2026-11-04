@@ -21,9 +21,8 @@ const emit = defineEmits<{
 }>()
 
 const STATUS: Record<Requirement['status'], { label: string; icon: string; color: string }> = {
-  // Signs, not color: a check, a half circle, a cross. Only a missing requirement keeps a hue.
-  have: { label: 'Have', icon: 'mdi-check', color: 'on-surface' },
-  partial: { label: 'Partly', icon: 'mdi-circle-half-full', color: 'secondary' },
+  have: { label: 'Have', icon: 'mdi-check', color: 'success' },
+  partial: { label: 'Partly', icon: 'mdi-circle-half-full', color: 'warning' },
   lack: { label: 'Missing', icon: 'mdi-close', color: 'error' },
   unknown: { label: 'Not in profile', icon: 'mdi-help', color: 'secondary' },
 }
@@ -47,7 +46,7 @@ const tappable = (r: Requirement) => r.status !== 'have' && !isProfileFact(r.tex
       <div class="skills__set">
         <div class="skills__set-label">Matched <span class="tabular">{{ sets.matched.length }}</span></div>
         <div class="skills__chips">
-          <v-chip v-for="c in sets.matched" :key="c.text" size="small" variant="tonal" :prepend-icon="c.status === 'partial' ? 'mdi-circle-half-full' : 'mdi-check'" :title="c.text !== c.label ? c.text : undefined">{{ c.label }}</v-chip>
+          <v-chip v-for="c in sets.matched" :key="c.text" size="small" color="success" variant="tonal" :prepend-icon="c.status === 'partial' ? 'mdi-circle-half-full' : 'mdi-check'" :title="c.text !== c.label ? c.text : undefined">{{ c.label }}</v-chip>
           <span v-if="!sets.matched.length" class="skills__none">None</span>
         </div>
       </div>
@@ -60,7 +59,8 @@ const tappable = (r: Requirement) => r.status !== 'have' && !isProfileFact(r.tex
             tag="button"
             type="button"
             size="small"
-            variant="outlined"
+            color="error"
+            variant="tonal"
             prepend-icon="mdi-minus"
             append-icon="mdi-chevron-right"
             class="skills__claim-chip"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ApplicationWithJob } from '~/composables/useApplications'
 import { timeAgo } from '~/composables/review/format'
+import { scoreColor } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
 import { formatDay, isOutcome } from '#shared/utils/outcomes'
 
@@ -35,7 +36,7 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
         </div>
       </div>
       <div class="arow__side">
-        <span v-if="application.job?.matchScore != null" class="arow__score tabular" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
+        <span v-if="application.job?.matchScore != null" class="arow__score tabular" :class="`text-${scoreColor(application.job.matchScore)}`" :aria-label="`Match score ${application.job.matchScore}`">{{ application.job.matchScore }}</span>
         <span class="arow__when">{{ when }}</span>
       </div>
     </NuxtLink>
@@ -98,8 +99,8 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
     font-weight: 500;
     padding: 0 6px;
     border-radius: 6px;
-    color: rgb(var(--v-theme-on-surface));
-    background: rgb(var(--v-theme-surface-light));
+    color: rgb(var(--v-theme-info));
+    border: 1px dashed rgba(var(--v-theme-info), 0.6);
   }
 
   &__title {
@@ -142,7 +143,6 @@ const detail = computed(() => plainError(props.application.statusDetail).replace
   &__score {
     font-size: 1.0625rem;
     font-weight: 600;
-    color: rgb(var(--v-theme-score));
     min-width: 30px;
     text-align: right;
   }

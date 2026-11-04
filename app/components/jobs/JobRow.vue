@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { JobListItem } from '~/composables/useJobs'
-import { jobStateMeta, postingLocations } from './format'
+import { jobStateMeta, postingLocations, scoreColor } from './format'
 import { properName } from '#shared/utils/names'
 import { countText, payRange } from '#shared/utils/pay-format'
 
@@ -41,18 +41,18 @@ const meta = computed(() => {
 
 <template>
   <NuxtLink :to="`/jobs/${job.id}`" class="jr" :title="`${job.title} at ${job.company}`">
-    <span class="jr__score" :class="{ 'jr__score--none': job.matchScore == null }">
+    <span class="jr__score" :class="job.matchScore == null ? 'jr__score--none' : `text-${scoreColor(job.matchScore)}`">
       <template v-if="job.matchScore != null"><span class="jr__sr">Match </span>{{ job.matchScore }}</template>
       <span v-else class="jr__dash" role="img" aria-label="Not scored yet" />
     </span>
 
     <span class="jr__role">
       <span class="jr__title">{{ job.title }}</span>
-      <span class="jr__meta"><span v-if="showState || job.isSandbox" class="jr__meta-state" :class="`jr__meta-state--${job.isSandbox ? 'neutral' : state.color}`">{{ job.isSandbox ? 'Sandbox' : state.label }} · </span>{{ meta }}</span>
+      <span class="jr__meta"><span v-if="showState || job.isSandbox" class="jr__meta-state" :class="`jr__meta-state--${job.isSandbox ? 'sandbox' : state.color}`">{{ job.isSandbox ? 'Sandbox' : state.label }} · </span>{{ meta }}</span>
     </span>
 
     <span class="jr__state">
-      <span v-if="job.isSandbox" class="jr__pill jr__pill--neutral">Sandbox</span>
+      <span v-if="job.isSandbox" class="jr__pill jr__pill--sandbox">Sandbox</span>
       <span v-else-if="showState" class="jr__pill" :class="`jr__pill--${state.color}`">{{ state.label }}</span>
     </span>
 
@@ -103,12 +103,11 @@ const meta = computed(() => {
     white-space: nowrap;
   }
 
-  // The match score: the one data hue, right-aligned.
+  // The match score in its band (scoreColor), right-aligned.
   &__score {
     text-align: right;
     font-size: 1.0625rem;
     font-weight: 600;
-    color: rgb(var(--v-theme-score));
   }
 
   &__role {
@@ -145,9 +144,11 @@ const meta = computed(() => {
     display: none;
     font-weight: 500;
 
-    &--warning { color: rgb(var(--v-theme-warning)); }
-    &--error { color: rgb(var(--v-theme-error)); }
-    &--success { color: rgb(var(--v-theme-success)); }
+    @each $c in primary, info, warning, error, success, secondary {
+      &--#{$c} { color: rgb(var(--v-theme-#{$c})); }
+    }
+
+    &--sandbox { color: rgb(var(--v-theme-warning)); }
   }
 
   // Status as a pale pair: the hue's text on a 14% tint of itself. Neutral states read in ink.
@@ -164,16 +165,18 @@ const meta = computed(() => {
     text-overflow: ellipsis;
     vertical-align: middle;
 
-    @each $c in warning, error, success {
+    @each $c in primary, info, warning, error, success, secondary {
       &--#{$c} {
         color: rgb(var(--v-theme-#{$c}));
         background: rgba(var(--v-theme-#{$c}), 0.14);
       }
     }
 
-    &--primary,
-    &--info,
-    &--secondary,
+    &--sandbox {
+      color: rgb(var(--v-theme-warning));
+      background: rgba(var(--v-theme-warning), 0.14);
+    }
+
     &--grey,
     &--neutral {
       color: rgb(var(--v-theme-on-surface));

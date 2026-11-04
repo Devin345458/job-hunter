@@ -40,13 +40,13 @@ const parsed = computed(() => {
     <template v-else>
       <div v-for="c in parsed.checks" :key="c.title" class="ev__check">
         <div class="ev__check-head">
-          <v-icon :icon="c.dropped.length ? 'mdi-shield-alert-outline' : 'mdi-shield-check-outline'" size="18" :color="c.dropped.length ? 'secondary' : 'success'" />
+          <v-icon :icon="c.dropped.length ? 'mdi-shield-alert-outline' : 'mdi-shield-check-outline'" size="18" :color="c.dropped.length ? 'warning' : 'success'" />
           <span class="ev__check-title">{{ c.title }}</span>
         </div>
         <p class="ev__summary">{{ c.summary }}</p>
         <ul v-if="c.rewritten.length || c.dropped.length" class="ev__list">
           <li v-for="(r, i) in c.rewritten" :key="`r${i}`" class="ev__item">
-            <span class="ev__tag ev__tag--neutral">Rewritten</span><span>{{ r }}</span>
+            <span class="ev__tag ev__tag--warning">Rewritten</span><span>{{ r }}</span>
           </li>
           <li v-for="(d, i) in c.dropped" :key="`d${i}`" class="ev__item">
             <span class="ev__tag ev__tag--error">Dropped</span><span>{{ d }}</span>
@@ -99,7 +99,6 @@ const parsed = computed(() => {
     border-radius: 6px;
 
     &--warning { color: rgb(var(--v-theme-warning)); background: rgba(var(--v-theme-warning), 0.12); }
-    &--neutral { color: rgb(var(--v-theme-on-surface)); background: rgb(var(--v-theme-surface-light)); }
     &--error { color: rgb(var(--v-theme-error)); background: rgba(var(--v-theme-error), 0.12); }
   }
 

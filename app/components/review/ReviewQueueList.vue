@@ -2,6 +2,7 @@
 import type { ReviewItem } from '#shared/types/pipeline'
 import type { QueueGroups } from '~/composables/useReviewQueue'
 import { GROUP_LABEL, clockTime, formQuestionIds, itemStatusMeta, moneyRange } from '~/composables/review/format'
+import { scoreColor } from '~/components/jobs/format'
 
 // The queue, grouped by what each application needs from Devin. To decide (stage 1: Apply or
 // Reject) comes first, then what Apply is preparing, then what is ready to send (stage 2: Approve
@@ -85,7 +86,7 @@ const DECISION_GROUPS = ['decide', 'send']
             :aria-current="item.applicationId === selectedId ? 'true' : undefined"
             @click="emit('select', item.applicationId)"
           >
-            <span class="ql__score tabular" :class="{ 'ql__score--dim': !DECISION_GROUPS.includes(s.key) }">{{ item.score?.final ?? '?' }}</span>
+            <span class="ql__score tabular" :class="DECISION_GROUPS.includes(s.key) ? `text-${scoreColor(item.score?.final)}` : 'ql__score--dim'">{{ item.score?.final ?? '?' }}</span>
             <span class="ql__main">
               <span class="ql__title">{{ item.job.title }}</span>
               <span class="ql__sub">
@@ -180,7 +181,6 @@ const DECISION_GROUPS = ['decide', 'send']
     font-weight: 600;
     line-height: 1.3;
     letter-spacing: -0.01em;
-    color: rgb(var(--v-theme-score));
 
     &--dim {
       color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
@@ -224,7 +224,7 @@ const DECISION_GROUPS = ['decide', 'send']
     margin-top: 1px;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
-    @each $c in warning, error, success {
+    @each $c in primary, info, warning, error, success, secondary {
       &--#{$c} { color: rgb(var(--v-theme-#{$c})); }
     }
   }
@@ -238,8 +238,8 @@ const DECISION_GROUPS = ['decide', 'send']
     place-items: center;
     font-size: 0.75rem;
     font-weight: 600;
-    color: rgb(var(--v-theme-on-surface));
-    background: rgb(var(--v-theme-surface-light));
+    color: rgb(var(--v-theme-info));
+    border: 1px dashed rgba(var(--v-theme-info), 0.6);
     margin-top: 2px;
   }
 }

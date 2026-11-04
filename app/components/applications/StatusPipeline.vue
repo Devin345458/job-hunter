@@ -114,7 +114,12 @@ const visible = computed(() => STAGES.filter(s => s.key === 'all' || (props.coun
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
 
     // Needs you: the applications held up on Devin, in amber.
-    &--alert { color: rgb(var(--v-theme-warning)); }
+    &--alert {
+      padding: 0 6px;
+      border-radius: 6px;
+      color: rgb(var(--v-theme-warning));
+      background: rgba(var(--v-theme-warning), 0.12);
+    }
   }
 }
 

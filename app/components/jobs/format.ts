@@ -42,9 +42,12 @@ export function formatRange(min: number | null | undefined, max: number | null |
   return payRange(min, max, currency)
 }
 
-/** The match score has one hue on every screen (theme color `score`); a missing score is gray. */
+/** The match score by band on every screen: green 80 and up, amber 60 to 79, red under 60. */
 export function scoreColor(score: number | null | undefined): string {
-  return score == null ? 'grey' : 'score'
+  if (score == null) return 'grey'
+  if (score >= 80) return 'success'
+  if (score >= 60) return 'warning'
+  return 'error'
 }
 
 export const RECOMMENDATION_LABELS: Record<string, string> = {

@@ -393,16 +393,17 @@ const chatBoxText = computed(() => {
   flex-direction: column;
   gap: 10px;
 
-  // A question is a raised panel. One that blocks approve keeps a 3px amber left edge and its
-  // amber label, the same mark as on the Questions page, not an amber box and tint on every one.
+  // A question is a raised panel; one that blocks approve has the amber border and tint it had
+  // before the restyle (Devin, 2026-11-04: status keeps its color).
   &__item {
     padding: 14px 16px;
     border-radius: 10px;
+    border: 1px solid transparent;
     background: rgb(var(--v-theme-surface-bright));
 
     &--blocking {
-      border-left: 3px solid rgb(var(--v-theme-warning));
-      padding-left: 13px;
+      border-color: rgba(var(--v-theme-warning), 0.4);
+      background: rgba(var(--v-theme-warning), 0.05);
     }
   }
 

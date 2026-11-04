@@ -90,8 +90,9 @@ watch(() => props.boxText, () => {
 .repo-evidence {
   margin-top: 12px;
   padding: 12px 14px;
-  border-radius: 10px;
-  background: rgb(var(--v-theme-surface-bright));
+  border-radius: 8px;
+  border: 1px solid rgba(var(--v-theme-success), 0.3);
+  background: rgba(var(--v-theme-success), 0.05);
 
   &__head {
     display: flex;

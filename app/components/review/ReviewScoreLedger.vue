@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ScoreBreakdown } from '#shared/types/pipeline'
+import { scoreColor } from '~/components/jobs/format'
 
 // The match score as an itemized ledger: what the skills and pay fits put in, then every
 // learned adjustment as its own line with the reason it exists. The bar above the lines draws
@@ -11,14 +12,16 @@ const props = defineProps<{
 }>()
 
 // The verdict reads in ink: the score's own hue carries the measure, and a weak match is not an error.
-const RECOMMENDATION: Record<ScoreBreakdown['recommendation'], { label: string }> = {
-  strong_match: { label: 'Strong match' },
-  good_match: { label: 'Good match' },
-  partial_match: { label: 'Partial match' },
-  weak_match: { label: 'Weak match' },
+const RECOMMENDATION: Record<ScoreBreakdown['recommendation'], { label: string; color: string }> = {
+  strong_match: { label: 'Strong match', color: 'success' },
+  good_match: { label: 'Good match', color: 'primary' },
+  partial_match: { label: 'Partial match', color: 'warning' },
+  weak_match: { label: 'Weak match', color: 'error' },
 }
 
 const rec = computed(() => RECOMMENDATION[props.score.recommendation] ?? RECOMMENDATION.partial_match)
+/** The score's band color (green 80 and up, amber 60 to 79, red under 60), on the total and the bar. */
+const band = computed(() => scoreColor(props.score.final))
 const learned = computed(() => props.score.learned?.components ?? [])
 const learnedTotal = computed(() => props.score.learned?.total ?? 0)
 const base = computed(() => Math.max(0, Math.min(100, props.score.final - learnedTotal.value)))
@@ -41,15 +44,18 @@ function pct(w: number) {
 <template>
   <div class="ledger">
     <div class="ledger__head">
-      <div class="ledger__total tabular" :aria-label="`Match score ${score.final} out of 100`">{{ score.final }}</div>
+      <div class="ledger__total tabular" :class="`text-${band}`" :aria-label="`Match score ${score.final} out of 100`">{{ score.final }}</div>
       <div class="ledger__verdict">
-        <div class="ledger__rec">{{ rec.label }}</div>
+        <div class="ledger__rec" :class="`text-${rec.color}`">
+          <span class="ledger__dot" :class="`bg-${rec.color}`" />
+          {{ rec.label }}
+        </div>
         <div class="ledger__of">match score, out of 100</div>
       </div>
     </div>
 
     <div class="ledger__bar" role="img" :aria-label="`Base ${base}, learned ${signed(learnedTotal)}`">
-      <span class="ledger__seg ledger__seg--base" :style="{ width: `${barBase}%` }" />
+      <span class="ledger__seg ledger__seg--base" :class="`bg-${band}`" :style="{ width: `${barBase}%` }" />
       <span v-if="barMinus > 0" class="ledger__seg ledger__seg--minus" :style="{ width: `${barMinus}%` }" />
       <span v-if="barPlus > 0" class="ledger__seg ledger__seg--plus" :style="{ width: `${barPlus}%` }" />
     </div>
@@ -105,7 +111,6 @@ function pct(w: number) {
     line-height: 1;
     font-weight: 600;
     letter-spacing: -0.02em;
-    color: rgb(var(--v-theme-score));
   }
 
   &__rec {
@@ -114,6 +119,12 @@ function pct(w: number) {
     gap: 6px;
     font-weight: 600;
     font-size: 0.9375rem;
+  }
+
+  &__dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
   }
 
   &__of {
@@ -133,7 +144,6 @@ function pct(w: number) {
   &__seg {
     height: 100%;
 
-    &--base { background: rgb(var(--v-theme-score)); }
     // Points learning took off: the negative color, flat and dimmer than a fill, so it reads as removed.
     &--minus { background: rgba(var(--v-theme-error), 0.55); }
     &--plus { background: rgb(var(--v-theme-success)); }

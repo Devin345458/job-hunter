@@ -264,7 +264,7 @@ onMounted(load)
                   <div class="move__scores text-no-wrap" :aria-label="`Score ${m.oldScore ?? 'unknown'} to ${m.newScore}`">
                     <span class="text-medium-emphasis">{{ m.oldScore ?? '?' }}</span>
                     <v-icon icon="mdi-arrow-right" size="16" class="mx-1 text-medium-emphasis" />
-                    <span class="text-body-1 learning-page__score">{{ m.newScore }}</span>
+                    <span class="text-body-1 learning-page__score" :class="`text-${scoreColor(m.newScore)}`">{{ m.newScore }}</span>
                     <v-chip
                       v-if="m.oldScore != null && m.newScore !== m.oldScore"
                       size="x-small"
@@ -338,7 +338,6 @@ onMounted(load)
 
   &__score {
     font-weight: 600;
-    color: rgb(var(--v-theme-score));
   }
 
   &__note,

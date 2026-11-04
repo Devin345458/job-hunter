@@ -142,7 +142,7 @@ const resumeLine = computed(() => {
 
       <!-- The resume line follows whether a resume was really written. -->
       <div v-if="application?.hasResume" class="ja__resume">
-        <span>Tailored resume ready</span>
+        <span class="text-success"><v-icon icon="mdi-check-circle-outline" size="16" class="mr-1" />Tailored resume ready</span>
         <v-btn
           variant="text"
           size="small"

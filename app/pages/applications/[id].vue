@@ -3,6 +3,7 @@ import type { InferSelectModel } from 'drizzle-orm'
 import type { applications, jobs } from '~~/server/db/schema'
 import type { OutcomeEntry, ReviewItem } from '#shared/types/pipeline'
 import { CAN_APPROVE, CAN_REJECT, clockTime, hostOf, properName, timeAgo } from '~/composables/review/format'
+import { scoreColor } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
 import { approveSentence } from '~/components/applications/approve-text'
 import { SENT_STATUSES, formatDay, outcomeLabel } from '#shared/utils/outcomes'
@@ -248,7 +249,7 @@ const submissionSummary = computed(() => {
           <ApplicationsStatusTag :status="app.status" :form-error="app.formError" />
           <span v-if="app.job?.location"><v-icon icon="mdi-map-marker-outline" size="15" />{{ app.job.location }}</span>
           <span v-if="formFact"><v-icon icon="mdi-form-select" size="15" />{{ formFact }}</span>
-          <span v-if="app.job?.matchScore != null">Match <span class="ad__score">{{ app.job.matchScore }}</span></span>
+          <span v-if="app.job?.matchScore != null">Match <span class="ad__score" :class="`text-${scoreColor(app.job.matchScore)}`">{{ app.job.matchScore }}</span></span>
           <span><v-icon icon="mdi-clock-outline" size="15" />Updated {{ timeAgo(app.updatedAt) }}</span>
         </div>
         <!-- One primary (the review card, where the decision is made); the rest are text links. -->
@@ -434,8 +435,8 @@ const submissionSummary = computed(() => {
     font-weight: 500;
     padding: 1px 8px;
     border-radius: 6px;
-    color: rgb(var(--v-theme-on-surface));
-    background: rgb(var(--v-theme-surface-light));
+    color: rgb(var(--v-theme-info));
+    border: 1px dashed rgba(var(--v-theme-info), 0.6);
   }
 
   &__title {
@@ -471,7 +472,7 @@ const submissionSummary = computed(() => {
 
   &__links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin-top: 14px; }
 
-  &__score { color: rgb(var(--v-theme-score)); font-weight: 600; }
+  &__score { font-weight: 600; }
 
   // A text link in ink, 44px tall on a phone.
   &__link {
@@ -496,7 +497,8 @@ const submissionSummary = computed(() => {
     padding: 12px 14px;
     border-radius: 10px;
     color: rgb(var(--v-theme-error));
-    background: rgba(var(--v-theme-error), 0.1);
+    background: rgba(var(--v-theme-error), 0.08);
+    border: 1px solid rgba(var(--v-theme-error), 0.3);
   }
 
   &__alert-title { font-weight: 600; font-size: 0.875rem; }

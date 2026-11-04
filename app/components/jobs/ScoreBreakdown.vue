@@ -87,7 +87,7 @@ function signed(n: number) {
           <span class="text-h5 font-weight-bold">{{ score.final }}</span>
         </v-progress-circular>
         <div>
-          <div class="text-body-1 font-weight-medium">
+          <div class="text-body-1 font-weight-medium" :class="`text-${scoreColor(score.final)}`">
             {{ RECOMMENDATION_LABELS[score.recommendation] }}
           </div>
           <div class="text-caption text-medium-emphasis">
@@ -119,7 +119,7 @@ function signed(n: number) {
         </p>
         <!-- Matched is a count: every requirement is listed once, under Requirements, with its status. -->
         <p v-if="sets.matched.length" class="text-body-2 score-breakdown__matched">
-          Matched {{ sets.matched.length }} of {{ sets.matched.length + sets.missing.length }}<span class="text-medium-emphasis">, each listed under Requirements</span>
+          <v-icon icon="mdi-check" size="16" color="success" class="mr-1" /><span class="text-success">Matched {{ sets.matched.length }}</span> of {{ sets.matched.length + sets.missing.length }}<span class="text-medium-emphasis">, each listed under Requirements</span>
         </p>
         <div v-if="sets.missing.length" class="score-breakdown__chips">
           <span class="text-caption text-medium-emphasis score-breakdown__chips-label">Missing {{ sets.missing.length }}</span>
@@ -129,7 +129,8 @@ function signed(n: number) {
             tag="button"
             type="button"
             size="x-small"
-            variant="outlined"
+            color="error"
+            variant="tonal"
             prepend-icon="mdi-minus"
             append-icon="mdi-chevron-right"
             class="score-breakdown__claim-chip"

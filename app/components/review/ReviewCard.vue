@@ -328,7 +328,8 @@ const letterPreview = computed(() => {
               tag="button"
               type="button"
               size="small"
-              variant="outlined"
+              color="error"
+              variant="tonal"
               prepend-icon="mdi-minus"
               append-icon="mdi-chevron-right"
               class="rc__strip-chip"
@@ -552,8 +553,8 @@ const letterPreview = computed(() => {
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 6px;
-    color: rgb(var(--v-theme-on-surface));
-    background: rgb(var(--v-theme-surface-light));
+    color: rgb(var(--v-theme-info));
+    border: 1px dashed rgba(var(--v-theme-info), 0.6);
   }
 
   &__title {

@@ -320,7 +320,7 @@ onMounted(async () => {
         <div>
           <h1 class="text-h4 page-header__title">Questions</h1>
           <p v-if="!loading" class="page-header__subtitle">
-            {{ countText(pending.length) }} open<template v-if="blockingCount">, <span class="questions-page__blocking">{{ countText(blockingCount) }} {{ blockingCount === 1 ? 'blocks' : 'block' }} an approval</span></template>
+            <span class="questions-page__blocking">{{ countText(pending.length) }} open</span><template v-if="blockingCount">, <span class="questions-page__blocking">{{ countText(blockingCount) }} {{ blockingCount === 1 ? 'blocks' : 'block' }} an approval</span></template>
           </p>
         </div>
         <v-btn

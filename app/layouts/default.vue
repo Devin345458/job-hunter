@@ -348,7 +348,7 @@ function badgeLabel(item: NavItem): string {
   }
 
   &__mark-arc {
-    stroke: rgb(var(--v-theme-score));
+    stroke: rgb(var(--v-theme-primary));
     stroke-linecap: round;
   }
 

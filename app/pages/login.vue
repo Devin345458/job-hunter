@@ -91,7 +91,7 @@ async function submit() {
   &__brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; margin-bottom: 28px; }
   &__mark { width: 28px; height: 28px; fill: none; stroke-width: 4; }
   &__mark-track { stroke: rgb(var(--v-theme-surface-light)); }
-  &__mark-arc { stroke: rgb(var(--v-theme-score)); stroke-linecap: round; }
+  &__mark-arc { stroke: rgb(var(--v-theme-primary)); stroke-linecap: round; }
   &__title { font-size: 24px; font-weight: 600; letter-spacing: -0.015em; margin: 0 0 4px; }
   &__sub { color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); font-size: 14px; margin: 0 0 24px; }
   &__eye { margin-inline-end: -4px; }

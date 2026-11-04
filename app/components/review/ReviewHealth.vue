@@ -395,7 +395,8 @@ const queueLine = computed<{ title: string; sub: string | null; tone: string } |
     gap: 6px;
     padding: 8px 10px;
     border-radius: 8px;
-    background: rgba(var(--v-theme-warning), 0.12);
+    border: 1px solid rgba(var(--v-theme-warning), 0.45);
+    background: rgba(var(--v-theme-warning), 0.08);
     color: rgb(var(--v-theme-warning));
     font-size: 0.8125rem;
     font-weight: 500;

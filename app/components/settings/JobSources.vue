@@ -50,7 +50,7 @@ const n = (v: number | undefined) => (v ?? 0).toLocaleString('en-US')
 
 const STATUS: Record<string, { text: string; color: string }> = {
   ok: { text: 'Working', color: 'success' },
-  partial: { text: 'Partly failed', color: 'secondary' },
+  partial: { text: 'Partly failed', color: 'warning' },
   failed: { text: 'Failed', color: 'error' },
   unavailable: { text: 'Unavailable', color: 'default' },
   waiting: { text: 'Waiting', color: 'default' },
