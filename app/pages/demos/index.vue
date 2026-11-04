@@ -89,8 +89,8 @@ onBeforeUnmount(() => {
       <h1 class="page-header__title text-h4">
         Demo projects
       </h1>
-      <p class="page-header__subtitle text-body-1">
-        Small projects built when a posting asks for something your record lacks. Each stays private until you approve its application.
+      <p class="page-header__subtitle">
+        <template v-if="!loading">{{ demos.length.toLocaleString('en-US') }} {{ demos.length === 1 ? 'project' : 'projects' }}, </template>each private until you approve its application
       </p>
     </div>
 
@@ -134,10 +134,12 @@ onBeforeUnmount(() => {
 
 <style scoped lang="scss">
 .demos-page {
+  // Sized to the demos there are: one demo takes the column, never half a row beside a void.
   &__grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
+    max-width: 920px;
   }
 
   &__empty {

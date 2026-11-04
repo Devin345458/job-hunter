@@ -158,12 +158,7 @@ onBeforeUnmount(() => {
     <template v-else-if="demo">
       <v-card variant="outlined" class="mb-5">
         <v-card-item>
-          <template #prepend>
-            <v-avatar color="secondary" variant="tonal" size="48" rounded="lg">
-              <v-icon icon="mdi-flask-outline" />
-            </v-avatar>
-          </template>
-          <v-card-title class="demo-detail__title text-h5">
+          <v-card-title tag="h1" class="demo-detail__title text-h5">
             {{ demo.title }}
           </v-card-title>
           <v-card-subtitle class="demo-detail__subtitle">

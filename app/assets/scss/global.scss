@@ -172,6 +172,19 @@ p {
   background: rgb(var(--v-theme-surface-bright));
 }
 
+// Vuetify draws dividers and expansion-panel rules in the text color at --v-border-opacity. The
+// theme sets that opacity to 1 (solid #262626 lines), so these take the border color itself.
+.v-divider {
+  color: rgb(var(--v-border-color));
+  border-color: rgb(var(--v-border-color));
+  opacity: 1;
+}
+
+.v-expansion-panel:not(:first-child)::after {
+  border-color: rgb(var(--v-border-color));
+  opacity: 1;
+}
+
 // Outlined controls keep a visible edge (an interactive outline is brighter than a structural
 // line, so an outlined button reads as clickable without a fill).
 .v-btn.v-btn--variant-outlined,

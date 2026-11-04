@@ -54,12 +54,7 @@ const testFacts = computed(() => {
 <template>
   <v-card variant="outlined" class="demo-card">
     <v-card-item class="demo-card__head">
-      <template #prepend>
-        <v-avatar color="secondary" variant="tonal" size="40" rounded="lg">
-          <v-icon icon="mdi-flask-outline" />
-        </v-avatar>
-      </template>
-      <v-card-title class="demo-card__title">
+      <v-card-title tag="h2" class="demo-card__title">
         {{ demo.title }}
       </v-card-title>
       <v-card-subtitle class="demo-card__subtitle">

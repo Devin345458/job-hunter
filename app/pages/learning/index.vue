@@ -126,13 +126,9 @@ onMounted(load)
 
 <template>
   <div class="fade-in learning-page">
-    <div class="d-flex flex-wrap align-start justify-space-between ga-4 mb-8">
+    <div class="d-flex flex-wrap align-start justify-space-between ga-4 mb-6">
       <div class="page-header mb-0">
         <h1 class="text-h4 page-header__title">Learning</h1>
-        <p class="text-body-2 page-header__subtitle">
-          What your Apply and Reject decisions taught the pipeline, and how that changes scores and search.
-          Turn off any rule that looks wrong. Below the rules: what employers did with the applications that went out.
-        </p>
       </div>
       <div class="d-flex flex-column align-end ga-1 learning-page__run">
         <v-btn color="primary" prepend-icon="mdi-refresh" :loading="running" @click="runNow">Run learning now</v-btn>
@@ -167,7 +163,7 @@ onMounted(load)
 
       <!-- Rules for real jobs -->
       <section class="mb-8">
-        <div class="section-label">Rules for your real search</div>
+        <h2 class="section-label">Rules for your real search</h2>
         <v-card v-if="realRules.length === 0" variant="outlined" class="pa-6">
           <p class="text-body-2 text-medium-emphasis mb-0 learning-page__note">
             No rules from real decisions yet. Each approve and reject on the review dashboard adds evidence.
@@ -184,7 +180,7 @@ onMounted(load)
 
       <!-- Sandbox rules -->
       <section v-if="sandboxRules.length" class="mb-8">
-        <div class="section-label">Sandbox rules</div>
+        <h2 class="section-label">Sandbox rules</h2>
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
           Learned from test decisions on sandbox jobs. They score sandbox jobs only and never touch your real search.
         </p>
@@ -198,7 +194,7 @@ onMounted(load)
 
       <!-- What employers did with the applications that went out -->
       <section v-if="outcomes" class="mb-8">
-        <div class="section-label">What employers did</div>
+        <h2 class="section-label">What employers did</h2>
         <p class="text-body-2 text-medium-emphasis mb-3 learning-page__note">
           Rates over real applications that went out. Heard back counts any reply, rejections included.
           Interviews count every application that reached one, so an offer counts there too.
@@ -250,7 +246,7 @@ onMounted(load)
       <v-row class="mb-2">
         <!-- Score moves -->
         <v-col cols="12" lg="8">
-          <div class="section-label">Recent score moves</div>
+          <h2 class="section-label">Recent score moves</h2>
           <v-card v-if="moves.length === 0" variant="outlined" class="pa-6">
             <p class="text-body-2 text-medium-emphasis mb-0">No scores have moved yet. They move when a rule changes and learning runs.</p>
           </v-card>
@@ -301,7 +297,7 @@ onMounted(load)
 
         <!-- Search adjustments -->
         <v-col cols="12" lg="4">
-          <div class="section-label">Search changes</div>
+          <h2 class="section-label">Search changes</h2>
           <v-card variant="outlined" class="pa-4">
             <template v-if="searchEmpty">
               <p class="text-body-2 text-medium-emphasis mb-0">
