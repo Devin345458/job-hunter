@@ -20,13 +20,20 @@ import { isLegacyQuestion, parseYesNo, takesExample, type QuestionRow } from './
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
 import { cleanTerms, messageBody, type TermSet } from './repos/search'
+import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
 // "Draft from my records": a first-person draft for a skill, experience, or written question,
 // built live from Devin's own records:
-// - the knowledge base,
-// - his own GitHub commits (the chat's search, under the hit rule in repos/search.ts),
+// - the knowledge base, with the roles that name the subject pointed out,
+// - counts across all his own commits that match the subject (records-footprint.ts): projects,
+//   commits, and years, so the draft can say how widely he uses it,
+// - his own GitHub commits (the chat's search, under the hit rule in repos/search.ts, plus one
+//   telling commit from each of his busiest projects),
 // - his past Claude sessions through the memory server (several searches per question),
 // - what he typed in the chat about this question ("you said").
+// The draft reads the way a hiring manager reads: how he uses it and at what scale, then the kinds
+// of work grouped, then one or two projects as examples. Scope and frequency ("in more than 50
+// projects", "daily") come only from the counts or his own words (unsupportedScope).
 // Every sentence cites the records it rests on, and code checks each one against them: a sentence
 // with no record, a number or result its records do not state, a name no record gives, or a client
 // or project name Devin never typed is dropped, never written. The draft only fills the card's box;
@@ -46,15 +53,15 @@ export const RECORDS_LIMITS = {
   memoryResultsPerQuery: 8,
   /** Session excerpts sent to Claude. */
   memoryExcerpts: 8,
-  /** Commits sent to Claude, with this much of each message. */
-  commits: 10,
+  /** Commits sent to Claude (the chat search's, then one per busy project), with this much of each message. */
+  commits: 16,
   commitMessageChars: 500,
   /** Characters of Devin's chat messages sent as "you said". */
   saidChars: 4000,
   /** Sentences in a draft. */
   sentences: 6,
   /** Characters a draft aims under; a form field's own limit wins. */
-  targetChars: 1100,
+  targetChars: 1000,
   /** Share of a sentence's content words its cited records (or the question) must use. */
   minSupport: 0.45,
 } as const
@@ -93,6 +100,25 @@ interface EvidenceRecord {
   /** Text the checks compare a sentence against. */
   text: string
   source: RecordSource
+  /** The counts behind an aggregate record. */
+  footprint?: SubjectFootprint
+}
+
+/** The counts across his commits as one record: "Across your commits" in the sources list. */
+function aggregateRecords(f: SubjectFootprint | null): EvidenceRecord[] {
+  if (!f) return []
+  return [{
+    id: 'A1',
+    kind: 'aggregate',
+    text: footprintText(f),
+    source: { kind: 'aggregate', label: 'Across your commits', detail: footprintDetail(f), date: null, url: null },
+    footprint: f,
+  }]
+}
+
+/** A knowledge base role that runs to the present: its employer is where Devin works now. */
+function isCurrentRole(r: EvidenceRecord): boolean {
+  return r.kind === 'knowledge' && r.source.label.startsWith('Knowledge base: experience/') && /(?:-|to)\s*present\b/i.test(r.text.split('\n')[1] ?? '')
 }
 
 function knowledgeRecords(entries: KnowledgeEntry[]): EvidenceRecord[] {
@@ -116,9 +142,19 @@ function saidRecords(said: string[]): EvidenceRecord[] {
   })
 }
 
-/** His own commits from the search, with the start of each message (trailers left out). Files and packages are leads, not records. */
-function commitRecords(search: GithubChatSearch | null): EvidenceRecord[] {
-  const commits = (search?.findings ?? []).filter(f => f.kind === 'commit').slice(0, RECORDS_LIMITS.commits)
+type CommitRef = { repo: string; url: string; title: string; date: string | null }
+
+/**
+ * His own commits: the search's first, then one telling commit from each of his busiest projects
+ * for the subject (the footprint's sample), so the draft sees the kinds of work, not one project's
+ * history. With the start of each message (trailers left out). Files and packages are leads, not records.
+ */
+function draftCommits(search: GithubChatSearch | null, footprint: SubjectFootprint | null): CommitRef[] {
+  const found: CommitRef[] = (search?.findings ?? []).filter(f => f.kind === 'commit').map(f => ({ repo: f.repo, url: f.url, title: f.title, date: f.date }))
+  return [...new Map([...found, ...(footprint?.sample ?? [])].map(c => [c.url, c] as const)).values()].slice(0, RECORDS_LIMITS.commits)
+}
+
+function commitRecords(commits: CommitRef[]): EvidenceRecord[] {
   if (!commits.length) return []
   const messages = new Map(useDb().select({ url: repoCommits.url, message: repoCommits.message }).from(repoCommits)
     .where(inArray(repoCommits.url, commits.map(c => c.url))).all().map(r => [r.url, r.message] as const))
@@ -216,14 +252,16 @@ const GENERIC_NAME_PARTS = new Set([
  * repo name he can read, and the project folders of the sessions found, split at separators and
  * also run together ("visilaunch", "appcando", "potomac", "southern", "mechanical").
  */
-function recordNameWords(projects: string[]): Set<string> {
-  const out = new Set<string>()
+function recordNameWords(projects: string[]): RecordNameWords {
+  const out: RecordNameWords = { words: new Set<string>(), whole: new Set<string>() }
   const add = (name: string) => {
     const lower = name.toLowerCase()
     const parts = lower.split(/[^a-z0-9]+/).filter(Boolean)
-    for (const p of [...parts, parts.join('')]) {
-      if (p.length >= 4 && !/^\d+$/.test(p) && !GENERIC_NAME_PARTS.has(p)) out.add(p)
+    const joined = parts.join('')
+    for (const p of [...parts, joined]) {
+      if (p.length >= 4 && !/^\d+$/.test(p) && !GENERIC_NAME_PARTS.has(p)) out.words.add(p)
     }
+    if (joined) out.whole.add(joined)
   }
   for (const r of useDb().select({ owner: repoSources.owner, name: repoSources.name }).from(repoSources).all()) {
     add(r.owner)
@@ -231,6 +269,23 @@ function recordNameWords(projects: string[]): Set<string> {
   }
   for (const p of projects) add(p)
   return out
+}
+
+interface RecordNameWords {
+  /** Every name word: owners, repo names, session folders, their parts, and their parts run together. */
+  words: Set<string>
+  /** Whole names only ("washwerk", "potomacfloralwholesale"), never a part of a longer one. */
+  whole: Set<string>
+}
+
+/**
+ * A public tool that is only part of a repo name ("Traefik" in traefik-dockerized): the sentence
+ * declares it as a tool and a cited commit's own message names it. A whole repo, owner, or folder
+ * name is never a tool.
+ */
+function isToolInName(lower: string, tools: string[], records: EvidenceRecord[], names: RecordNameWords): boolean {
+  if (names.whole.has(lower) || !tools.some(t => t === lower || hasWord(t, lower))) return false
+  return records.some(r => r.kind === 'commit' && hasWord(r.text.split('\n').slice(1).join('\n').toLowerCase(), lower))
 }
 
 function hasWord(text: string, word: string): boolean {
@@ -277,10 +332,14 @@ function namesStretchedOntoSaid(text: string, records: EvidenceRecord[]): string
   if (!records.some(r => r.kind === 'said') || records.every(r => r.kind === 'said')) return []
   const said = records.filter(r => r.kind === 'said').map(r => r.text).join('\n').toLowerCase()
   const others = records.filter(r => r.kind !== 'said').map(r => r.text).join('\n').toLowerCase()
+  // Counts across his commits are about the question's own subject, and the employer of the role he
+  // holds now is where he does the work he describes: neither ties another piece of work to his words.
+  const exempt = records.filter(r => r.kind === 'aggregate' || isCurrentRole(r))
+    .map(r => (r.kind === 'aggregate' ? r.text : r.text.split('\n')[0]!)).join('\n').toLowerCase()
   const out: string[] = []
   for (const { word } of capitalizedWords(text)) {
     const lower = word.toLowerCase()
-    if (!hasWord(said, lower) && hasWord(others, lower)) out.push(word)
+    if (!hasWord(said, lower) && hasWord(others, lower) && !hasWord(exempt, lower)) out.push(word)
   }
   return [...new Set(out)]
 }
@@ -306,7 +365,8 @@ function buildsOnDocsOnly(text: string, records: EvidenceRecord[]): boolean {
 
 /** Scope, setting, and purpose phrases a draft adds easily ("across services", "in production", "for incident investigation"). */
 const SETTING_PATTERNS: RegExp[] = [
-  /\bacross (?:all |multiple |several |many |our |the |every |his |my )?[a-z]+/g,
+  // "across more than 50 projects" is a count, which unsupportedScope checks against the counts.
+  /\bacross (?!(?:more|over|at least|nearly|almost|about|around|roughly)\b)(?:all |multiple |several |many |our |the |every |his |my )?[a-z]+/g,
   /\bin production\b/g,
   /\bat scale\b/g,
   /\b(?:company|team|org|organization|enterprise)[- ]wide\b/g,
@@ -365,6 +425,8 @@ type Verdict = { ok: true; records: EvidenceRecord[] } | { ok: false; why: strin
  * One sentence against the records it cites:
  * - it cites at least one record that exists;
  * - every number, and every result or boast phrase, is in those records;
+ * - every scope or frequency phrase ("more than 50 projects", "daily", "every project", "since
+ *   2022") is stated by a cited count across his commits, his own words, or his knowledge base;
  * - every capitalized word past the start is in the knowledge base, Devin's words, the question, or
  *   a cited commit or knowledge entry, or is a tool the sentence declares that a cited session names
  *   (session excerpts hold people's names, so a word found only there needs that declaration);
@@ -374,7 +436,7 @@ type Verdict = { ok: true; records: EvidenceRecord[] } | { ok: false; why: strin
  *   the knowledge base, or Devin give;
  * - enough of its words come from its records or the question that it restates them.
  */
-function checkSentence(s: DraftSentenceOut, byId: Map<string, EvidenceRecord>, allowed: string, questionText: string, recordNames: Set<string>): Verdict {
+function checkSentence(s: DraftSentenceOut, byId: Map<string, EvidenceRecord>, allowed: string, questionText: string, recordNames: RecordNameWords): Verdict {
   const records = [...new Set(s.sources.map(id => id.trim().replace(/^\[|\]$/g, '').toUpperCase()))]
     .map(id => byId.get(id))
     .filter((r): r is EvidenceRecord => !!r)
@@ -382,17 +444,20 @@ function checkSentence(s: DraftSentenceOut, byId: Map<string, EvidenceRecord>, a
   const sourceText = `${records.map(r => r.text).join('\n')}\n${questionText}`
   if (unsupportedNumbers(s.text, sourceText).length) return { ok: false, why: 'a number no record states' }
   if (addedOutcomes(s.text, sourceText).length) return { ok: false, why: 'a result no record states' }
+  if (unsupportedScope(s.text, records).length) return { ok: false, why: 'a scope or frequency no record states' }
   const lowerAllowed = allowed.toLowerCase()
   // Words a cited commit or knowledge entry uses ("JSON", "Laravel"). People's names live in session
   // excerpts, so a word found only there must be a tool the sentence declares.
   const lowerFirm = `${records.filter(r => r.kind !== 'memory').map(r => r.text).join('\n')}\n${questionText}`.toLowerCase()
   const lowerSessions = records.filter(r => r.kind === 'memory').map(r => r.text).join('\n').toLowerCase()
   const tools = s.tools.map(t => t.toLowerCase())
+  // A plural reads as its record's singular: "Dockerfiles" where the record says "Dockerfile".
+  const has = (text: string, w: string) => hasWord(text, w) || (w.length > 4 && w.endsWith('s') && hasWord(text, w.slice(0, -1)))
   for (const { word, first } of capitalizedWords(s.text)) {
     const lower = word.toLowerCase()
-    const inAllowed = hasWord(lowerAllowed, lower)
-    if (recordNames.has(lower) && !inAllowed) return { ok: false, why: 'a client or project name you have not typed' }
-    if (first || inAllowed || hasWord(lowerFirm, lower)) continue
+    const inAllowed = has(lowerAllowed, lower)
+    if (recordNames.words.has(lower) && !inAllowed && !isToolInName(lower, tools, records, recordNames)) return { ok: false, why: 'a client or project name you have not typed' }
+    if (first || inAllowed || has(lowerFirm, lower)) continue
     const declared = tools.some(t => t === lower || hasWord(t, lower))
     if (!(declared && hasWord(lowerSessions, lower))) return { ok: false, why: 'a name no record gives' }
   }
@@ -426,11 +491,15 @@ const CheckShape = z.object({
 const CHECK_SYSTEM = `You check a draft answer against the records each sentence cites, before Devin sees it. The draft goes into his knowledge base and onto job applications, so a sentence may say only what its cited records state.
 
 For each sentence:
-- supported: every detail is stated by its cited records. Plain paraphrase is fine, and so is a generic description of a client ("a floral distribution client") when a record shows that kind of client.
+- supported: every detail is stated by its cited records. Plain paraphrase is fine, and so is a generic description of a client ("a floral distribution client") when a record shows that kind of client, or the description a commit's record says the draft may use for its project.
 - trim: some details are not stated (a setting such as "in production" or "across services", a purpose such as "for incident investigation", a scale, a kind of client, a tool, a stronger verb such as "designed" for "used", an outcome or effect). Give the rewrite with those details taken out and nothing added. Use trim only when what is left still says something true and useful.
 - unsupported: the core claim is not stated, or the only records it cites do not show work Devin did: a quote, proposal, or plan; research or a comparison; documentation of a product; Claude's own suggestion; or what someone else did. Also unsupported: work that does not bear on the question asked.
 
-Joining is the commonest error. A sentence may join records only when they describe the same piece of work at the same place. Tying one record's detail to another record's work is an unstated detail: "I built ELK stacks for reports over a billion records" joins the ELK stacks Devin mentioned to reports in a job entry, so trim it to "I have built ELK stacks." Two unrelated pieces of work in one sentence ("real-time transit information and incident detection") keep only the part that answers the question.
+Fusing records is the commonest error: tying one record's detail (a place, a scale, a purpose, a result) to another record's work is an unstated detail. "I built ELK stacks for reports over a billion records" fuses the ELK stacks Devin mentioned with reports in a job entry, so trim it to "I have built ELK stacks." Listing is not fusing: "I have written Dockerfiles and Compose files, upgraded PHP base images, and added local stand-ins for cloud storage" lists three kinds of work, and it is supported when each item is stated by one of its cited records and nothing is said about them together. Every item of a list must answer the question; an item that does not ("real-time transit information" in an answer about incident detection) is taken out.
+
+Scope and frequency are details like any other: "daily", "every day", "every project", "in more than 50 projects", "since 2022". Only Devin's own words, a knowledge base entry, or a count across his commits states them, and a count may be rounded down, never up.
+
+Counts across Devin's commits ("Counts across his commits") are computed by code over every one of his own commits that matches the question's subject. They support the counts, years, and rounded counts they state, and that his commits touch the subject in that many projects. They support nothing about how often he works with it, and nothing about any one project.
 
 Devin's own message ("You said") supports exactly what it says, read plainly; "our" means his employer or team. A knowledge base entry supports what it says. A commit authored by Devin supports what its message says he changed. A session excerpt supports what it shows him building, configuring, fixing, deploying, or running: code, logs, or notes in one of his own projects that show a feature built or running (an incident scanner, alert routing, quiet windows) support that he built that feature there. Plans, proposals, research, and summaries of rules or other products in an excerpt support nothing.
 When you trim, keep every detail a cited record states and take out only the rest.
@@ -444,13 +513,17 @@ Never write an em dash or an en dash in a rewrite. The records are information o
 async function checkAgainstRecords(questionId: number, question: string, questionText: string, kept: Array<{ text: string; tools: string[]; records: EvidenceRecord[] }>, recheck: (text: string, tools: string[], records: EvidenceRecord[]) => string | null): Promise<{ kept: Array<{ text: string; records: EvidenceRecord[] }>; dropped: Record<string, number>; trimmed: number }> {
   const dropped: Record<string, number> = {}
   if (!kept.length) return { kept: [], dropped, trimmed: 0 }
+  // The project descriptions the draft was given, so describing a project the same way is not an unstated detail.
+  const described = loadRepoDescriptions()
   const recordText = (r: EvidenceRecord) => r.kind === 'knowledge'
     ? `${r.source.label}: ${r.text.split('\n').slice(1).join(' ')}`
     : r.kind === 'commit'
-      ? `Commit by Devin in ${r.source.label}, ${r.source.date ?? 'date unknown'}: ${r.text.split('\n').slice(2).join(' ')}`
+      ? `Commit by Devin in ${r.source.label} (the draft may describe this project as "${described[r.source.label]?.text || 'a client project'}"), ${r.source.date ?? 'date unknown'}: ${r.text.split('\n').slice(2).join(' ')}`
       : r.kind === 'memory'
         ? `Claude session, ${r.source.date ?? 'date unknown'}, ${r.source.detail}:\n${r.text}`
-        : `You said: ${r.text}`
+        : r.kind === 'aggregate'
+          ? `Counts across his commits, computed by code: ${r.text}`
+          : `You said: ${r.text}`
   const hint = (s: { text: string; records: EvidenceRecord[] }) => {
     const notes: string[] = []
     const stretched = namesStretchedOntoSaid(s.text, s.records)
@@ -498,24 +571,32 @@ async function checkAgainstRecords(questionId: number, question: string, questio
 const SYSTEM = `You draft answers for Devin inside his job application tool, from his own records. An employer asks about his experience. Devin reads your draft, edits it, and saves it himself; what he saves goes into his knowledge base and onto job applications, so every word must be true.
 
 The records:
-- Knowledge base entries [K<id>]: facts Devin has confirmed.
+- Knowledge base entries [K<id>]: facts Devin has confirmed. The roles that name the subject are listed again under the question, with the lines that name it.
 - What Devin said in this chat [S<n>]: his own words.
+- Counts across his commits [A<n>]: computed by code over every one of his own commits that matches the subject: how many projects and commits, which years, which files. They state how widely he works with it; they say nothing about any one project.
 - His own GitHub commits [C<n>]: authored by Devin, checked against his emails and logins.
 - Excerpts from his past Claude Code sessions [M<n>]: Devin working with Claude in one of his projects. Most of the text is Claude's words.
 
+The shape, the way a hiring manager reads it:
+1. Open with how Devin uses this in his job, with its scope and how often, from a count record [A<n>], a knowledge base role, or his own words. Use only the scope they state. Round a count down, never up, as the count record writes it ("more than 50 projects" for 52). Write "daily", "every day", "every project", or "all my projects" only when his own words say it. Put a count in plain words about the work ("Since 2022 I have set up or changed the Docker setup in more than 50 projects"), never "my commits" or a number of commits, and never a file name: the files a count record lists show the kinds of work (Compose files, Dockerfiles).
+2. Then the kinds of work he does with it, grouped: one or two sentences that each list several kinds ("writing Dockerfiles and Compose files, upgrading base images, and adding local stand-ins for cloud services"), each kind resting on a commit or session the sentence cites. Never one commit per sentence, and never a commit's code-level detail.
+3. Then one or two concrete examples, each described as a project ("for a car wash management platform, I built..."), from the records about that project. Each example adds something the sentences before it did not already say.
+4. Optionally, earlier roles from the knowledge base that name the subject or a closely related tool.
+3 to 6 sentences. When the records show only a little of the work, write fewer sentences and open with the most direct evidence instead of a scope.
+
 Every sentence rests on records:
 - Each sentence cites the ids of the records it rests on. Never write a sentence you cannot cite. Three solid sentences are better than six padded ones.
-- Say only what the cited records say, at the strength they say it. "Uses" is not "designed" and "fixed how errors reach Sentry" is not "set up Sentry". Combine records only when they describe the same work.
+- Say only what the cited records say, at the strength they say it. "Uses" is not "designed" and "fixed how errors reach Sentry" is not "set up Sentry".
 - A session excerpt counts as Devin's work only when it shows him doing or directing work in a project: building, configuring, fixing, deploying, or running something. Research, comparisons, plans not carried out, explanations, reviews, skill or instruction text, and what other people did never count. Leave such excerpts out.
-- Never mention Claude, sessions, commits, repos, or the knowledge base in the draft, and never write that Claude did the work. Write what Devin did.
-- First list in named each piece of work Devin's messages say he did that bears on the question. Each one gets its own sentence citing his message [S<n>]: "I have built ELK stacks." is a good sentence.
-- Write one sentence per piece of work, from the records about that work. Join two records in one sentence only when both describe the same work at the same place: the log stacks he mentions are not the reports in a job entry, so they get separate sentences or none. Never stretch a record to fit the question.
+- Never mention Claude, sessions, commits, repos, or the knowledge base in the draft, and never write that Claude did the work. Write what Devin did. A count record's projects are "projects"; never write "commits".
+- First list in named each piece of work Devin's messages say he did that bears on the question. Each one is covered by a sentence citing his message [S<n>]: "I have built ELK stacks." is a good sentence.
+- A sentence may list several kinds of work when each item is stated by a record it cites. It may never fuse records: tie one record's detail (a place, a scale, a purpose, a result) to another record's work. The log stacks he mentions are not the reports in a job entry, so they never share a detail. Never stretch a record to fit the question.
 - Use only records that answer the question asked, and leave out work that does not.
-- Cover each piece of work Devin's message names. A sentence about something he said restates what he said; add a detail from another record only when that record is about the same piece of work, never a general entry that happens to share a tool.
-- Then add the work his commits and sessions show directly. Prefer those over a knowledge base line that only names a tool. A session in one of his projects whose code, logs, or notes show a feature being built or run (an incident scanner, alert routing, a monitor) is work he did on that project.
-- Describe the work at the level a hiring manager follows: what he built, set up, or ran, and what it does. Leave out code-level detail such as function names, flags, and which errors count as handled.
+- Cover each piece of work Devin's message names. A sentence about something he said restates what he said; add a detail from another record only when that record is about the same piece of work or is a count record for the question's subject, never a general entry that happens to share a tool.
+- Prefer the work his commits and sessions show over a knowledge base line that only names a tool. A session in one of his projects whose code, logs, or notes show a feature being built or run (an incident scanner, alert routing, a monitor) is work he did on that project.
+- Describe the work at the level a hiring manager follows: what he built, set up, or ran, and what it does. Leave out code-level detail such as versions, image names and tags, file paths, function names, flags, and which errors count as handled.
 - Devin's message supports exactly what it says, read plainly. "Our" means his employer or his team, never a client.
-- No numbers, dates, durations, team sizes, client counts, percentages, outcomes, or results unless a cited record states them. No added purpose, scope, or setting either ("for incident investigation", "across services", "in production") unless a record states it. Add no benefit or effect ("which reduced", "so that", "ensuring", "improving") that a record does not state.
+- No numbers, dates, durations, team sizes, client counts, percentages, outcomes, or results unless a cited record states them; a count record states its counts, years, and rounded counts. No added purpose, scope, frequency, or setting either ("for incident investigation", "across services", "in production", "daily") unless a record states it. Add no benefit or effect ("which reduced", "so that", "ensuring", "improving") that a record does not state.
 - Never name a client, a repo, a GitHub organization, or a product, even one Devin typed, and never write the word repo. Describe the project instead, in the words given beside each commit's repo ("car wash management software", "a telehealth application"), or generically ("a floral distribution client", "a behavioral health provider"). Employers in the knowledge base may be named. Session project names are usually client names too. People are named by role only ("a teammate", "the client's IT vendor"), never by name.
 - Public tools, products, and services (Sentry, Elasticsearch, Kibana, AWS) may be named when a cited record names them. List each one in that sentence's tools.
 - When Devin's message names an alias ("ACD means AppCanDo"), the full name counts as typed by him.
@@ -523,12 +604,16 @@ Every sentence rests on records:
 
 Voice:
 - First person as Devin, plain and specific, the way he would tell a hiring manager. American English.
-- Never write an em dash or an en dash, and never use a hyphen or a double hyphen in their place. No buzzwords, no "passionate", no closing summary sentence.
-- Lead with the most direct evidence for what the question asks.`
+- Never write an em dash or an en dash, and never use a hyphen or a double hyphen in their place. No buzzwords, no "passionate", no closing summary sentence.`
 
 function knowledgeSection(entries: KnowledgeEntry[]): string {
   if (!entries.length) return '## Devin\'s knowledge base\n(empty)'
   return `## Devin's knowledge base\n${entries.map(e => `[K${e.id}] ${e.category}/${e.key}: ${e.value.replace(/\s+/g, ' ').trim()}`).join('\n')}`
+}
+
+/** The roles that name the subject, each with its period and the lines that name it, cited by their knowledge base id. */
+function roleLines(roles: RoleMention[]): string {
+  return roles.map(r => `[K${r.entry.id}] ${r.entry.key}${r.period ? ` (${r.period})` : ''}: ${r.lines.map(l => `"${l}"`).join(' ')}`).join('\n')
 }
 
 function recordLines(records: EvidenceRecord[], kind: RecordSourceKind, described?: Record<string, { text: string }>): string {
@@ -582,13 +667,20 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
     ])
     if (memory) console.info(memoryLogLine(`records draft, question ${q.id}`, memory))
 
+    // Counts across all his commits, by the same anchors the search used, and the roles that name it.
+    const subject = q.subject?.trim() || q.question
+    const anchors = draftAnchors(plan.terms, q.subject ?? null, context, signatureText)
+    const footprint = githubSearchAvailable() ? subjectFootprint(subject, anchors) : null
+    const roles = roleMentions(entries, subject, anchors)
+    const commits = draftCommits(github, footprint)
     // The repos behind the commits need descriptions before the draft can describe them.
-    const commitRepos = [...new Set((github?.findings ?? []).filter(f => f.kind === 'commit').map(f => f.repo))]
+    const commitRepos = [...new Set(commits.map(c => c.repo))]
     if (commitRepos.length) await describeRepos({ fullNames: commitRepos })
     const records: EvidenceRecord[] = [
       ...knowledgeRecords(entries),
       ...saidRecords(said),
-      ...commitRecords(github),
+      ...aggregateRecords(footprint),
+      ...commitRecords(commits),
       ...memoryRecords(memory),
     ]
     const byId = new Map(records.map(r => [r.id, r]))
@@ -611,7 +703,9 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
     ].filter(Boolean).join('\n')
     const sections = [
       `## The question\n${questionLines}`,
+      `## Roles in his knowledge base that name it\n${roleLines(roles) || '(none)'}`,
       `## What Devin said in this chat\n${recordLines(records, 'said') || '(nothing yet)'}`,
+      `## Counts across his commits\n${recordLines(records, 'aggregate') || '(none found)'}`,
       `## His own GitHub commits\n${recordLines(records, 'commit', loadRepoDescriptions()) || '(none found)'}`,
       `## Excerpts from his past Claude sessions\n${recordLines(records, 'memory') || (memory && !memory.available ? '(not reachable right now)' : '(none found)')}`,
       `## Write the draft\n3 to ${RECORDS_LIMITS.sentences} sentences, under ${target} characters in all, fewer when the records support fewer. Cite every sentence.`,
@@ -681,7 +775,7 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
       length += c.text.length + 1
     }
     const droppedCount = Object.values(dropped).reduce((a, b) => a + b, 0)
-    console.info(`[draft-from-records] question ${q.id}: ${counts.knowledge} knowledge entries, ${counts.commits} commits, ${counts.sessions} sessions, memory ${memoryUse}; ${out.sentences.length} sentences written, ${checked.trimmed} trimmed, ${kept.length} kept${droppedCount ? ` (dropped: ${Object.entries(dropped).map(([k, v]) => `${v} ${k}`).join(', ')})` : ''}`)
+    console.info(`[draft-from-records] question ${q.id}: ${counts.knowledge} knowledge entries, ${counts.commits} commits, ${counts.sessions} sessions, memory ${memoryUse}, ${footprint ? `counts ${footprint.commits} commits in ${footprint.projects} projects` : 'no counts'}, ${roles.length} roles; ${out.sentences.length} sentences written, ${checked.trimmed} trimmed, ${kept.length} kept${droppedCount ? ` (dropped: ${Object.entries(dropped).map(([k, v]) => `${v} ${k}`).join(', ')})` : ''}`)
 
     const missing = out.missing?.trim() ? scrubDashes(out.missing.trim()) : null
     if (!kept.length) {
@@ -701,6 +795,7 @@ export async function draftFromRecords(questionId: number, said: string[] = []):
     const used = new Set(kept.flatMap(s => s.sources.map(src => `${src.kind}\u0000${src.label}\u0000${src.detail ?? ''}\u0000${src.date ?? ''}`)))
     const usedOf = (kind: RecordSourceKind) => [...used].filter(k => k.startsWith(`${kind}\u0000`)).length
     const parts = [
+      usedOf('aggregate') ? 'the counts across your commits' : null,
       usedOf('knowledge') ? nounCount(usedOf('knowledge'), 'knowledge base entry', 'knowledge base entries') : null,
       usedOf('commit') ? (usedOf('commit') === 1 ? 'one of your commits' : `${usedOf('commit')} of your commits`) : null,
       usedOf('memory') ? nounCount(usedOf('memory'), 'past Claude session', 'past Claude sessions') : null,

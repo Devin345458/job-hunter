@@ -2,8 +2,8 @@
 import type { RecordsDraft, RecordSource } from '#shared/types/question-chat'
 
 // The records under a draft from Devin's records: each sentence of the draft with the records it
-// rests on (a knowledge base entry, one of his commits with its link, a past Claude session by date
-// and project, or what he said in the chat). Shown in the chat and under the card's box, so he can
+// rests on (a knowledge base entry, one of his commits with its link, the counts across his commits,
+// a past Claude session by date and project, or what he said in the chat). Shown in the chat and under the card's box, so he can
 // check every sentence before he saves.
 
 defineProps<{
@@ -17,12 +17,13 @@ function icon(s: RecordSource) {
     case 'knowledge': return 'mdi-database-outline'
     case 'commit': return 'mdi-source-commit'
     case 'memory': return 'mdi-history'
+    case 'aggregate': return 'mdi-chart-bar'
     default: return 'mdi-format-quote-open'
   }
 }
 
 function sourceLine(s: RecordSource): string {
-  if (s.kind === 'knowledge') return s.label
+  if (s.kind === 'knowledge' || s.kind === 'aggregate') return s.label
   if (s.kind === 'commit') return `Commit in ${s.label}${s.date ? `, ${s.date}` : ''}`
   if (s.kind === 'memory') return `Claude session${s.date ? `, ${s.date}` : ''}${s.detail ? `, ${s.detail}` : ''}`
   return 'You said'

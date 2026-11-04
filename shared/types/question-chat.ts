@@ -66,14 +66,15 @@ export interface RecordsDraftRequest {
   said?: string[]
 }
 
-export type RecordSourceKind = 'knowledge' | 'commit' | 'memory' | 'said'
+/** aggregate: counts across all his commits that match the subject (projects, commits, years). */
+export type RecordSourceKind = 'knowledge' | 'commit' | 'memory' | 'said' | 'aggregate'
 
 /** One record a sentence rests on, as the panel and the card list it under the draft. */
 export interface RecordSource {
   kind: RecordSourceKind
-  /** "Knowledge base: skill/Sentry", "dev-applied/appcando commit", "Claude session", "You said". */
+  /** "Knowledge base: skill/Sentry", "dev-applied/appcando commit", "Claude session", "You said", "Across your commits". */
   label: string
-  /** The commit title, the session project, or the start of what he said. */
+  /** The commit title, the session project, the start of what he said, or the counts ("Docker, 377 commits in 52 projects, 2022 to 2026"). */
   detail: string | null
   /** YYYY-MM-DD for a commit or a session. */
   date: string | null
