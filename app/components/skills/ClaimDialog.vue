@@ -25,8 +25,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [open: boolean]
-  /** The answer was saved, or the score changed: the page re-reads the job or the card. */
-  'changed': []
+  /**
+   * The answer was saved, or the score changed: the page re-reads the job or the card. questionId
+   * is the question the answer settled: one question can sit on several review cards, and each
+   * of them is read again.
+   */
+  'changed': [questionId?: number | null]
   /** Prepare again for this application. */
   'prepare': [applicationId: number]
 }>()
@@ -176,7 +180,7 @@ async function save(answer: SkillClaimAnswer, example: string | undefined, actio
     savedAnswer.value = answer
     view.value = 'saved'
     if (res.written) {
-      emit('changed')
+      emit('changed', res.question?.id ?? null)
       runRescore(mine)
     }
   }
@@ -207,7 +211,7 @@ async function useKnownAnswer() {
     appliedKnown.value = true
     view.value = 'saved'
     if (res.written) {
-      emit('changed')
+      emit('changed', res.question?.id ?? null)
       runRescore(mine)
     }
   }

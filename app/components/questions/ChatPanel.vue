@@ -105,6 +105,17 @@ function canSuggest(value: string) {
 
 const canUseDraft = computed(() => !!props.question && props.question.status !== 'skipped' && !(exampleQuestion.value && answeredNo.value))
 
+/**
+ * One action at a time: while the newest message is a draft he has not used, its "Use this draft"
+ * is the action, and the "Draft from my records" bar waits. It comes back after he sends a new
+ * message or uses the draft, as "Draft again from my records" once a draft from his records exists.
+ */
+const draftWaiting = computed(() => {
+  const last = messages.value[messages.value.length - 1]
+  return !!last && last.role === 'assistant' && !!last.draft && canUseDraft.value && !last.used
+})
+const recordsBarLabel = computed(() => messages.value.some(m => m.role === 'assistant' && m.records) ? 'Draft again from my records' : 'Draft from my records')
+
 /** The draft message waiting on "Replace what you typed?". */
 const confirmingDraft = ref<string | null>(null)
 
@@ -132,6 +143,7 @@ function useDraft(id: string, draft: string, level: string | null = null) {
   confirmingDraft.value = null
   const m = messages.value.find(x => x.id === id)
   emit('useDraft', draft, level, m?.records ? { records: m.records, memoryNote: memoryNoteBefore(m) } : undefined)
+  chat.markDraftUsed(props.question?.id ?? null, id)
 }
 
 /** The memory line the app put just before a records draft, if any. */
@@ -316,7 +328,7 @@ defineExpose({ focus: () => input.value?.focus() })
       </div>
     </div>
 
-    <div v-if="recordsDraftable && messages.length" class="question-chat__records">
+    <div v-if="recordsDraftable && messages.length && !draftWaiting" class="question-chat__records">
       <v-btn
         variant="tonal"
         color="primary"
@@ -326,7 +338,7 @@ defineExpose({ focus: () => input.value?.focus() })
         :disabled="busy"
         @click="draftFromRecords()"
       >
-        Draft from my records
+        {{ recordsBarLabel }}
       </v-btn>
       <span class="text-caption text-medium-emphasis">Uses what you typed here too.</span>
     </div>

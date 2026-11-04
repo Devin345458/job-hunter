@@ -27,9 +27,12 @@ const emit = defineEmits<{
   skip: [questionId: number]
 }>()
 
-const drafts = reactive<Record<number, string>>({})
+// What Devin typed or picked, per question id, kept app-wide: an answered question leaves the list
+// at once (useReviewQueue), and a failed save puts it back with its box and text as they were,
+// even when its section closed meanwhile. The same question on another card shows the same draft.
+const drafts = useState<Record<number, string>>('review-question-drafts', () => ({})).value
 /** A draft from Devin's records now in a box, with the source of each sentence; shown while the box holds text. */
-const recordsFor = reactive<Record<number, { draft: RecordsDraft; note: string | null } | undefined>>({})
+const recordsFor = useState<Record<number, { draft: RecordsDraft; note: string | null } | undefined>>('review-question-records', () => ({})).value
 
 function shownRecords(q: QuestionView) {
   const r = recordsFor[q.id]
@@ -58,10 +61,10 @@ const YES_NO_ICONS: Record<string, string> = { 'Yes': 'mdi-check', 'Some experie
 // ── The example ("Where did you do it?") ──
 const isExampleLevel = (opt: string | null | undefined) => !!opt && (EXAMPLE_LEVELS as readonly string[]).includes(opt)
 /** Yes or Some experience picked per question, waiting on the example box. */
-const levels = reactive<Record<number, string | null>>({})
+const levels = useState<Record<number, string | null>>('review-question-levels', () => ({})).value
 /** Open example boxes and their text, per question. */
-const exampleOpen = reactive<Record<number, boolean>>({})
-const examples = reactive<Record<number, string>>({})
+const exampleOpen = useState<Record<number, boolean>>('review-question-example-open', () => ({})).value
+const examples = useState<Record<number, string>>('review-question-examples', () => ({})).value
 /** Which example button was pressed per question, so only it spins. */
 const exampleAction = reactive<Record<number, 'save' | 'without' | null>>({})
 

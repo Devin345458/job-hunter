@@ -222,25 +222,19 @@ async function prepareAgain() {
 }
 
 // ── Questions ──
-const savingQuestionId = ref<number | null>(null)
-
+/**
+ * The question leaves every card that shows it as soon as it is sent (useReviewQueue), so there is
+ * no spinner to hold; a failed save puts it back and says why.
+ */
 async function answer(questionId: number, value: string | null, skip = false) {
   const item = selected.value
   if (!item) return
-  savingQuestionId.value = questionId
   try {
-    const pending = queue.answerQuestion(item.applicationId, questionId, value, skip)
-    // The save itself is quick; the re-derive that follows shows its own progress line.
-    await new Promise(r => setTimeout(r, 350))
-    savingQuestionId.value = null
-    await pending
+    await queue.answerQuestion(item.applicationId, questionId, value, skip)
     health.refresh()
   }
   catch (e: any) {
     snackbar.notify(e?.message || 'Could not save the answer', 'error', { timeout: -1 })
-  }
-  finally {
-    savingQuestionId.value = null
   }
 }
 
@@ -320,7 +314,7 @@ const leftParts = computed(() => [
           :approving="approvingId === selected.applicationId"
           :applying="applyingId === selected.applicationId"
           :refreshing="queue.refreshing.value.has(selected.applicationId)"
-          :saving-question-id="savingQuestionId"
+          :saving-question-id="null"
           :preparing="preparingId === selected.applicationId"
           fill
           @approve="approve"
@@ -329,7 +323,7 @@ const leftParts = computed(() => [
           @answer="(id, a) => answer(id, a)"
           @skip="id => answer(id, null, true)"
           @prepare="prepareAgain"
-          @refresh="selected && queue.fetchOne(selected.applicationId)"
+          @refresh="qid => selected && queue.answeredElsewhere(selected.applicationId, qid)"
         >
           <template #nav>
             <span v-if="position" class="rv__cardpos">{{ position.label }} <span class="tabular">{{ position.count }}</span></span>
@@ -371,7 +365,7 @@ const leftParts = computed(() => [
         :approving="approvingId === selected.applicationId"
         :applying="applyingId === selected.applicationId"
         :refreshing="queue.refreshing.value.has(selected.applicationId)"
-        :saving-question-id="savingQuestionId"
+        :saving-question-id="null"
         :preparing="preparingId === selected.applicationId"
         @approve="approve"
         @apply="apply"
@@ -379,7 +373,7 @@ const leftParts = computed(() => [
         @answer="(id, a) => answer(id, a)"
         @skip="id => answer(id, null, true)"
         @prepare="prepareAgain"
-        @refresh="selected && queue.fetchOne(selected.applicationId)"
+        @refresh="qid => selected && queue.answeredElsewhere(selected.applicationId, qid)"
       />
       <div v-else class="rv__state rv__state--pane">
         <v-icon icon="mdi-check-all" size="28" color="success" />

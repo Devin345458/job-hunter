@@ -32,8 +32,8 @@ const emit = defineEmits<{
   answer: [questionId: number, answer: string]
   skip: [questionId: number]
   prepare: []
-  /** The skill panel saved an answer or the score changed: re-read this application. */
-  refresh: []
+  /** The skill panel saved an answer or the score changed: re-read this application, and every card showing the question it answered. */
+  refresh: [questionId?: number | null]
 }>()
 
 // ── The skill panel: a Missing chip or a requirement that is not Have, tapped in Skills fit ──
@@ -372,10 +372,11 @@ const letterPreview = computed(() => {
       <div v-if="formQs.length" class="rc__block rc__block--after">
         <h2 class="rc__h rc__h--plain">The form asks</h2>
         <p class="rc__help">Answer now or after you apply. Your answers are saved to your profile and fill every form that asks.</p>
+        <!-- The progress line shows once, under the last question section on the card. -->
         <ReviewQuestions
           :questions="formQs"
           :saving-id="savingQuestionId"
-          :refreshing="refreshing"
+          :refreshing="refreshing && !skillQs.length"
           @answer="(id, a) => emit('answer', id, a)"
           @skip="id => emit('skip', id)"
         />
@@ -486,7 +487,7 @@ const letterPreview = computed(() => {
       :target="claimTarget"
       :job="{ title: item.job.title, company: item.job.company }"
       :preparing="preparing"
-      @changed="emit('refresh')"
+      @changed="qid => emit('refresh', qid)"
       @prepare="emit('prepare')"
     />
 

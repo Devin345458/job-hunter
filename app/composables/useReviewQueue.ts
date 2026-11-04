@@ -1,5 +1,6 @@
 import type { ApplicationStatus, RejectReasonCode, RejectSkillsMode, ReviewItem } from '#shared/types/pipeline'
 import { IN_FLIGHT, PREPARING, statusMeta } from './review/format'
+import { useAnsweredQuestions } from './review/answered'
 
 const QUEUE_STATUSES: ApplicationStatus[] = ['to_decide', 'preparing', 'proposed', 'needs_input', 'approved', 'publishing', 'submitting', 'submit_failed', 'needs_manual', 'submitted']
 
@@ -35,11 +36,19 @@ export function useReviewQueue() {
   const error = ref<string | null>(null)
   /** Application ids whose answers are being re-derived after a question was answered. */
   const refreshing = ref<Set<number>>(new Set())
+  const answered = useAnsweredQuestions()
 
-  function replace(item: ReviewItem) {
+  /** The item as a read that started at readStartedAt may show it: no question whose save is in flight or came back after that read started. */
+  function shown(item: ReviewItem, readStartedAt: number): ReviewItem {
+    const openQuestions = answered.visible(item.openQuestions, readStartedAt)
+    return openQuestions.length === item.openQuestions.length ? item : { ...item, openQuestions }
+  }
+
+  function replace(item: ReviewItem, readStartedAt = Date.now()) {
+    const next = shown(item, readStartedAt)
     const i = items.value.findIndex(x => x.applicationId === item.applicationId)
-    if (i >= 0) items.value.splice(i, 1, item)
-    else items.value.push(item)
+    if (i >= 0) items.value.splice(i, 1, next)
+    else items.value.push(next)
   }
 
   function remove(id: number) {
@@ -49,8 +58,9 @@ export function useReviewQueue() {
   async function load() {
     loading.value = true
     try {
+      const startedAt = Date.now()
       const res = await $fetch<{ items: ReviewItem[] }>('/api/review/queue', { query: { status: QUEUE_STATUSES.join(',') } })
-      items.value = res.items
+      items.value = res.items.map(i => shown(i, startedAt))
       error.value = null
       loaded.value = true
       schedulePoll()
@@ -84,9 +94,10 @@ export function useReviewQueue() {
 
   async function fetchOne(id: number): Promise<ReviewItem | null> {
     try {
+      const startedAt = Date.now()
       const item = await $fetch<ReviewItem>(`/api/review/${id}`)
-      replace(item)
-      return item
+      replace(item, startedAt)
+      return find(id)
     }
     catch (e: any) {
       if (e?.statusCode === 404 || e?.response?.status === 404) remove(id)
@@ -145,8 +156,9 @@ export function useReviewQueue() {
   /** Stage 1: queue the preparation. The card moves to Preparing and is followed until it is ready to send. */
   async function apply(id: number): Promise<ReviewItem> {
     try {
+      const startedAt = Date.now()
       const item = await $fetch<ReviewItem>(`/api/review/${id}/apply`, { method: 'POST' })
-      replace(item)
+      replace(item, startedAt)
       pollStarted.set(id, Date.now())
       schedulePoll()
       return item
@@ -159,8 +171,9 @@ export function useReviewQueue() {
 
   async function approve(id: number): Promise<ReviewItem> {
     try {
+      const startedAt = Date.now()
       const item = await $fetch<ReviewItem>(`/api/review/${id}/approve`, { method: 'POST' })
-      replace(item)
+      replace(item, startedAt)
       pollStarted.set(id, Date.now())
       schedulePoll()
       return item
@@ -185,38 +198,94 @@ export function useReviewQueue() {
   }
 
   // ── Inline questions ──
-  async function answerQuestion(applicationId: number, questionId: number, answer: string | null, skip = false): Promise<void> {
-    try {
-      await $fetch(`/api/questions/${questionId}`, {
-        method: 'PATCH',
-        body: skip ? { status: 'skipped' } : { status: 'answered', answer },
-      })
-    }
-    catch (e: any) {
-      throw new Error(errorMessage(e, 'Could not save the answer'))
-    }
-    // Drop the question locally at once, then re-read the application while the server
-    // re-derives the form answers (and moves needs_input to proposed once nothing blocks).
-    const current = find(applicationId)
-    if (current) replace({ ...current, openQuestions: current.openQuestions.filter(q => q.id !== questionId) })
+  function setRefreshing(id: number, on: boolean) {
     const next = new Set(refreshing.value)
-    next.add(applicationId)
+    if (on) next.add(id)
+    else next.delete(id)
     refreshing.value = next
+  }
+
+  /**
+   * Reads these cards again in one request. A card the queue no longer returns (its status left
+   * the queue, or a rescore took a Decide card under the threshold) is read on its own instead:
+   * it keeps its place until the next full load, and one that no longer exists (404) leaves.
+   */
+  async function reread(ids: number[]) {
+    const want = [...new Set(ids)]
+    if (want.length === 0) return
+    const startedAt = Date.now()
+    const res = await $fetch<{ items: ReviewItem[] }>('/api/review/queue', { query: { status: QUEUE_STATUSES.join(','), ids: want.join(',') } })
+    for (const item of res.items) replace(item, startedAt)
+    const missing = want.filter(id => !res.items.some(i => i.applicationId === id))
+    await Promise.all(missing.map(id => fetchOne(id)))
+  }
+
+  /**
+   * Saves an answer (or a skip). The question leaves every card that shows it at once: askQuestion
+   * dedupes by subject, so one question can sit on many cards. The save then re-derives every
+   * application waiting on it before it returns (seconds when many share it), and the cards that
+   * showed it are read again after that. It comes back only where the server still lists it after
+   * the save, which means the field truly needs a different answer; that card says why. A failed
+   * save puts it back where it was.
+   */
+  async function answerQuestion(applicationId: number, questionId: number, answer: string | null, skip = false): Promise<void> {
+    const showedIt = items.value.flatMap((i) => {
+      const at = i.openQuestions.findIndex(q => q.id === questionId)
+      return at >= 0 ? [{ id: i.applicationId, at, question: i.openQuestions[at]! }] : []
+    })
+    answered.start(questionId)
+    for (const s of showedIt) {
+      const current = find(s.id)
+      if (current) replace(current)
+    }
+    // A Send card keeps its Answer first block, with the progress line, while the server works.
+    setRefreshing(applicationId, true)
     try {
-      for (const wait of [400, 1200, 2500, 4000]) {
-        await new Promise(r => setTimeout(r, wait))
-        const item = await fetchOne(applicationId)
-        if (!item) break
-        const stillWaiting = item.status === 'needs_input' && !item.openQuestions.some(q => q.blocking)
-        if (!stillWaiting) break
+      try {
+        await $fetch(`/api/questions/${questionId}`, {
+          method: 'PATCH',
+          body: skip ? { status: 'skipped' } : { status: 'answered', answer },
+        })
+      }
+      catch (e: any) {
+        answered.fail(questionId)
+        for (const s of showedIt) {
+          const current = find(s.id)
+          if (!current || current.openQuestions.some(q => q.id === questionId)) continue
+          const openQuestions = [...current.openQuestions]
+          openQuestions.splice(Math.min(s.at, openQuestions.length), 0, s.question)
+          replace({ ...current, openQuestions })
+        }
+        throw new Error(errorMessage(e, 'Could not save the answer'))
+      }
+      answered.finish(questionId)
+      try {
+        await reread([applicationId, ...showedIt.map(s => s.id)])
+      }
+      catch {
+        // The answer is saved; the cards catch up on the next read.
       }
     }
     finally {
-      const after = new Set(refreshing.value)
-      after.delete(applicationId)
-      refreshing.value = after
+      setRefreshing(applicationId, false)
       schedulePoll()
     }
+  }
+
+  /**
+   * Something other than answerQuestion() changed this card (the skill panel saved an answer, or
+   * a score changed): read it again, and when an answer settled a question, every other card that
+   * shows that question too. The server finished with the question before it answered.
+   */
+  async function answeredElsewhere(applicationId: number, questionId?: number | null) {
+    const showedIt = questionId ? items.value.filter(i => i.openQuestions.some(q => q.id === questionId)).map(i => i.applicationId) : []
+    try {
+      await reread([applicationId, ...showedIt])
+    }
+    catch {
+      await fetchOne(applicationId)
+    }
+    schedulePoll()
   }
 
   /** Add or refresh one item from outside the queue fetch, and follow it if it is in flight. */
@@ -244,6 +313,7 @@ export function useReviewQueue() {
     approve,
     reject,
     answerQuestion,
+    answeredElsewhere,
     whenSettled,
     stop,
   }
