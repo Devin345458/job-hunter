@@ -2,6 +2,7 @@
 import type { CompensationBreakdown } from '#shared/types/pipeline'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { formatMoney, formatRange } from './format'
+import { payExtraText } from '#shared/utils/pay-format'
 
 const props = defineProps<{
   compensation: CompensationBreakdown | null
@@ -111,7 +112,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
         <div v-if="c.bonus" class="comp-breakdown__item">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2 font-weight-medium">Bonus</span>
-            <span class="text-body-2">{{ c.bonus.estimatedAnnual != null ? `${formatMoney(c.bonus.estimatedAnnual)} a year` : 'No figure' }}</span>
+            <span class="text-body-2">{{ payExtraText(c.bonus, c.currency) }}</span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ c.bonus.description }}
@@ -125,7 +126,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
         <div v-if="c.equity" class="comp-breakdown__item">
           <div class="comp-breakdown__item-head">
             <span class="text-body-2 font-weight-medium">Equity</span>
-            <span class="text-body-2">{{ c.equity.estimatedAnnual != null ? `${formatMoney(c.equity.estimatedAnnual)} a year` : 'No figure' }}</span>
+            <span class="text-body-2">{{ payExtraText(c.equity, c.currency) }}</span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ c.equity.description }}

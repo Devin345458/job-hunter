@@ -4,6 +4,7 @@ import type { CompensationBreakdown, QuestionView, RejectReasonCode, RejectSkill
 import type { Job, JobApplicationDetail, JobApplicationRef, JobStatus } from '~/composables/useJobs'
 import { ATS_LABELS, jobStateMeta, scoreColor, uniqueTags } from '~/components/jobs/format'
 import { plainError } from '#shared/utils/plain-text'
+import { payRange } from '#shared/utils/pay-format'
 
 /** GET /api/jobs/:id adds the parsed pipeline fields to the row. */
 type JobDetail = Job & {
@@ -43,17 +44,7 @@ const state = computed(() => jobStateMeta(job.value?.status, job.value?.applicat
 
 const salaryDisplay = computed(() => {
   if (!job.value) return ''
-  const { salaryMin, salaryMax, salaryCurrency } = job.value
-  if (!salaryMin && !salaryMax) return ''
-
-  const c = salaryCurrency || 'USD'
-  const symbol = c === 'USD' ? '$' : c
-  const fmt = (val: number) => (val >= 1000 ? `${symbol}${Math.round(val / 1000)}K` : `${symbol}${val}`)
-
-  if (salaryMin && salaryMax) return `${fmt(salaryMin)} to ${fmt(salaryMax)}`
-  if (salaryMin) return `${fmt(salaryMin)}+`
-  if (salaryMax) return `Up to ${fmt(salaryMax)}`
-  return ''
+  return payRange(job.value.salaryMin, job.value.salaryMax, job.value.salaryCurrency || 'USD')
 })
 
 const atsLabel = computed(() => ATS_LABELS[job.value?.atsType ?? 'unknown'] ?? job.value?.atsType ?? '')

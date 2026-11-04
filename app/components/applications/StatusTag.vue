@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ApplicationStatus } from '#shared/types/pipeline'
 import { REVIEW_STATUS, type StatusMeta } from '~/composables/review/format'
+import { APP_STATE_LABEL, PREPARE_FAILED_LABEL } from '#shared/utils/app-state'
 
 // Status tag for every ApplicationStatus: the review vocabulary for pipeline states, plus the
 // states only this page shows (preparing, and the original manual-tracking states).
@@ -10,19 +11,20 @@ const props = defineProps<{
   formError?: string | null
 }>()
 
+const L = APP_STATE_LABEL
 const EXTRA: Record<string, Omit<StatusMeta, 'group'>> = {
-  preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock' },
-  draft: { label: 'Draft', color: 'secondary', icon: 'mdi-file-outline' },
-  ready: { label: 'Ready', color: 'secondary', icon: 'mdi-file-check-outline' },
-  response_received: { label: 'Heard back', color: 'success', icon: 'mdi-email-open-outline' },
-  interviewing: { label: 'Interviewing', color: 'success', icon: 'mdi-account-voice' },
-  rejected: { label: 'Rejected by employer', color: 'error', icon: 'mdi-close-circle-outline' },
-  offer: { label: 'Offer', color: 'success', icon: 'mdi-trophy-outline' },
-  no_response: { label: 'No response', color: 'secondary', icon: 'mdi-email-off-outline' },
+  preparing: { label: L.preparing!, color: 'info', icon: 'mdi-progress-clock' },
+  draft: { label: L.draft!, color: 'secondary', icon: 'mdi-file-outline' },
+  ready: { label: L.ready!, color: 'secondary', icon: 'mdi-file-check-outline' },
+  response_received: { label: L.response_received!, color: 'success', icon: 'mdi-email-open-outline' },
+  interviewing: { label: L.interviewing!, color: 'success', icon: 'mdi-account-voice' },
+  rejected: { label: L.rejected!, color: 'error', icon: 'mdi-close-circle-outline' },
+  offer: { label: L.offer!, color: 'success', icon: 'mdi-trophy-outline' },
+  no_response: { label: L.no_response!, color: 'secondary', icon: 'mdi-email-off-outline' },
 }
 
 const meta = computed(() => {
-  if (props.status === 'needs_manual' && /^prepare_failed/.test(props.formError ?? '')) return { label: 'Preparation failed', color: 'error', icon: 'mdi-alert-octagon-outline' }
+  if (props.status === 'needs_manual' && /^prepare_failed/.test(props.formError ?? '')) return { label: PREPARE_FAILED_LABEL, color: 'error', icon: 'mdi-alert-octagon-outline' }
   return REVIEW_STATUS[props.status as ApplicationStatus] ?? EXTRA[props.status] ?? { label: String(props.status).replace(/_/g, ' '), color: 'secondary', icon: 'mdi-circle-small' }
 })
 </script>

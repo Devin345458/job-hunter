@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CompensationBreakdown, ScoreBreakdown } from '#shared/types/pipeline'
 import { money, moneyRange } from '~/composables/review/format'
+import { payExtraText } from '#shared/utils/pay-format'
 import { plainQuestionRefs, secondPerson } from '#shared/utils/plain-text'
 
 // Total compensation against Devin's floor. The scale draws base pay as a solid band, the
@@ -127,10 +128,10 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
     </div>
 
     <dl v-if="compact" class="comp__brief" :class="{ 'comp__brief--dense': dense }">
-      <div><dt>Base</dt><dd>{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'not stated' }}</dd></div>
-      <div><dt>Bonus</dt><dd>{{ comp?.bonus ? (comp.bonus.estimatedAnnual !== null ? money(comp.bonus.estimatedAnnual, currency) : 'yes, amount not stated') : 'not stated' }}</dd></div>
-      <div><dt>Equity</dt><dd>{{ comp?.equity ? (comp.equity.estimatedAnnual !== null ? money(comp.equity.estimatedAnnual, currency) : 'yes, amount not stated') : 'not stated' }}</dd></div>
-      <div><dt>Benefits</dt><dd>{{ benefits.length ? `${benefits.length} quoted from the posting` : 'none stated' }}</dd></div>
+      <div><dt>Base</dt><dd>{{ hasFigures ? moneyRange(baseMin, baseMax, currency) : 'Not stated' }}</dd></div>
+      <div><dt>Bonus</dt><dd>{{ payExtraText(comp?.bonus, currency) }}</dd></div>
+      <div><dt>Equity</dt><dd>{{ payExtraText(comp?.equity, currency) }}</dd></div>
+      <div><dt>Benefits</dt><dd>{{ benefits.length ? `${benefits.length} quoted from the posting` : 'Not stated' }}</dd></div>
     </dl>
 
     <template v-if="!compact">
@@ -143,7 +144,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
           <dt>Bonus</dt>
           <dd>
             <template v-if="comp?.bonus">
-              <span>{{ comp.bonus.estimatedAnnual !== null ? money(comp.bonus.estimatedAnnual, currency) : 'Amount not stated' }}</span>
+              <span>{{ payExtraText(comp.bonus, currency) }}</span>
               <span class="comp__desc">{{ comp.bonus.description }}</span>
               <q class="comp__quote">{{ comp.bonus.quote }}</q>
             </template>
@@ -154,7 +155,7 @@ const CONFIDENCE: Record<CompensationBreakdown['confidence'], string> = {
           <dt>Equity</dt>
           <dd>
             <template v-if="comp?.equity">
-              <span>{{ comp.equity.estimatedAnnual !== null ? money(comp.equity.estimatedAnnual, currency) : 'Amount not stated' }}</span>
+              <span>{{ payExtraText(comp.equity, currency) }}</span>
               <span class="comp__desc">{{ comp.equity.description }}</span>
               <q class="comp__quote">{{ comp.equity.quote }}</q>
             </template>

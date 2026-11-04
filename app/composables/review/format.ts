@@ -1,6 +1,8 @@
 import type { AnswerSource, ApplicationStatus, FormAnswer, PipelineRunView, ReviewItem } from '#shared/types/pipeline'
 import { capitalize, plainKnowledgeRefs, plainQuestionRefs } from '#shared/utils/plain-text'
 import { properName } from '#shared/utils/names'
+import { APP_STATE_LABEL } from '#shared/utils/app-state'
+import { payAmount, payRange } from '#shared/utils/pay-format'
 
 // Status vocabulary and formatting shared by every review component. Lives in a nested folder
 // so Nuxt does not auto-import these generic names app-wide; import them explicitly.
@@ -20,18 +22,21 @@ export interface StatusMeta {
   group: ReviewGroup
 }
 
+// Labels come from shared/utils/app-state.ts: one name per state on every screen. Colors are the
+// pale pairs: primary and info read neutral in this theme, warning marks what blocks an approval.
+const L = APP_STATE_LABEL
 export const REVIEW_STATUS: Partial<Record<ApplicationStatus, StatusMeta>> = {
-  to_decide: { label: 'Apply or reject', color: 'primary', icon: 'mdi-help-rhombus-outline', group: 'decide' },
-  preparing: { label: 'Preparing', color: 'info', icon: 'mdi-progress-clock', group: 'preparing' },
-  proposed: { label: 'Ready to send', color: 'primary', icon: 'mdi-inbox-arrow-down-outline', group: 'send' },
-  needs_input: { label: 'Needs your answer', color: 'warning', icon: 'mdi-comment-question-outline', group: 'send' },
-  approved: { label: 'Approved', color: 'primary', icon: 'mdi-check', group: 'sending' },
-  publishing: { label: 'Publishing demo', color: 'primary', icon: 'mdi-source-branch', group: 'sending' },
-  submitting: { label: 'Submitting', color: 'primary', icon: 'mdi-send-outline', group: 'sending' },
-  submitted: { label: 'Submitted', color: 'success', icon: 'mdi-check-circle-outline', group: 'sent' },
-  submit_failed: { label: 'Submit failed', color: 'error', icon: 'mdi-alert-octagon-outline', group: 'attention' },
-  needs_manual: { label: 'Submit by hand', color: 'warning', icon: 'mdi-hand-pointing-right', group: 'attention' },
-  declined: { label: 'Rejected', color: 'secondary', icon: 'mdi-close', group: 'closed' },
+  to_decide: { label: L.to_decide!, color: 'primary', icon: 'mdi-help-rhombus-outline', group: 'decide' },
+  preparing: { label: L.preparing!, color: 'info', icon: 'mdi-progress-clock', group: 'preparing' },
+  proposed: { label: L.proposed!, color: 'primary', icon: 'mdi-inbox-arrow-down-outline', group: 'send' },
+  needs_input: { label: L.needs_input!, color: 'warning', icon: 'mdi-comment-question-outline', group: 'send' },
+  approved: { label: L.approved!, color: 'primary', icon: 'mdi-check', group: 'sending' },
+  publishing: { label: L.publishing!, color: 'primary', icon: 'mdi-source-branch', group: 'sending' },
+  submitting: { label: L.submitting!, color: 'primary', icon: 'mdi-send-outline', group: 'sending' },
+  submitted: { label: L.submitted!, color: 'success', icon: 'mdi-check-circle-outline', group: 'sent' },
+  submit_failed: { label: L.submit_failed!, color: 'error', icon: 'mdi-alert-octagon-outline', group: 'attention' },
+  needs_manual: { label: L.needs_manual!, color: 'warning', icon: 'mdi-hand-pointing-right', group: 'attention' },
+  declined: { label: L.declined!, color: 'secondary', icon: 'mdi-close', group: 'closed' },
 }
 
 /** Group names, the same on the review queue and the Applications page. */
@@ -120,18 +125,13 @@ export function clockTime(value: string | null | undefined): string {
   return sameDay ? `today ${time}` : `${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${time}`
 }
 
+/** Pay figures print through shared/utils/pay-format.ts so every screen says them the same way. */
 export function money(n: number | null | undefined, currency = 'USD'): string {
-  if (n === null || n === undefined) return ''
-  const symbol = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : `${currency} `
-  // Uppercase K, as the job card and job page write it.
-  if (Math.abs(n) >= 10000) return `${symbol}${Math.round(n / 1000)}K`
-  return `${symbol}${Math.round(n).toLocaleString('en-US')}`
+  return payAmount(n, currency)
 }
 
 export function moneyRange(min: number | null | undefined, max: number | null | undefined, currency = 'USD'): string {
-  if (min == null && max == null) return ''
-  if (min != null && max != null && min !== max) return `${money(min, currency)} to ${money(max, currency)}`
-  return money(min ?? max, currency)
+  return payRange(min, max, currency)
 }
 
 export function hostOf(url: string | null | undefined): string {
