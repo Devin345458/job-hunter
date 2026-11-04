@@ -62,10 +62,10 @@ const visible = computed(() => STAGES.filter(s => s.key === 'all' || (props.coun
 
   &::-webkit-scrollbar { display: none; }
 
-  // A narrow phone wraps the tabs to a second line rather than hiding one past the edge.
+  // A narrow phone keeps one row that scrolls inside itself (app-screens.md 12); tighter padding
+  // shows more of it, and the tab cut at the edge says there is more.
   @media (max-width: 599.98px) {
-    flex-wrap: wrap;
-    overflow-x: visible;
+    gap: 0;
   }
 
   &__tab {
@@ -77,6 +77,10 @@ const visible = computed(() => STAGES.filter(s => s.key === 'all' || (props.coun
     min-height: 40px;
     padding: 0 10px;
     font-size: 0.875rem;
+
+    @media (max-width: 599.98px) {
+      padding: 0 8px;
+    }
     font-weight: 500;
     white-space: nowrap;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));

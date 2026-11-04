@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { plainQuestionRefs, plainScoreFigures, secondPerson } from '#shared/utils/plain-text'
+import { payFiguresInText } from '#shared/utils/pay-format'
 import { questionsAbout, skillSets, softSkillsCount } from '#shared/utils/skill-sets'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import type { QuestionView, Requirement, ScoreBreakdown, SkillClaimSource } from '#shared/types/pipeline'
@@ -157,7 +158,7 @@ function signed(n: number) {
         </div>
         <dl class="score-breakdown__facts text-body-2">
           <template v-if="score.compensation.estimate != null">
-            <dt>Estimated total</dt>
+            <dt>Midpoint scored</dt>
             <dd>{{ formatMoney(score.compensation.estimate) }} a year</dd>
           </template>
           <dt>Target</dt>
@@ -171,7 +172,7 @@ function signed(n: number) {
           </dd>
         </dl>
         <p class="text-body-2 score-breakdown__reasoning">
-          {{ secondPerson(plainQuestionRefs(score.compensation.reasoning)) }}
+          {{ secondPerson(plainQuestionRefs(payFiguresInText(score.compensation.reasoning))) }}
         </p>
       </section>
 

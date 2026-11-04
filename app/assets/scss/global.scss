@@ -15,16 +15,32 @@ body {
   background: rgb(var(--v-theme-background));
 }
 
-// Tabular figures on every number in the app: columns line up digit for digit and a figure that
-// changes (a count, a timer, a score) does not shift its neighbors. Inter keeps the comma and the
-// period at their own width under tnum, so "$164,400" reads normally.
-:root,
-.v-application {
+// Tabular figures only where figures line up in a column or change in place (a count, a score, a
+// money column). Never on running text: Inter's tnum gives the hyphen a figure-width slot, so
+// "full-stack" read "full - stack". Put .tabular on any new figure that needs it.
+.tabular,
+.v-badge__badge,
+.v-progress-circular__content,
+.jr__score,
+.jr__num,
+.comp__figure,
+.comp__line dd,
+.comp__count,
+.comp__benefit-value,
+.comp__ticks,
+.comp__floor-label,
+.comp-breakdown__total,
+.comp-breakdown__item-head,
+.score-breakdown__part,
+.score-breakdown__facts dd,
+.asp__count {
   font-variant-numeric: tabular-nums;
 }
 
-.tabular {
-  font-variant-numeric: tabular-nums;
+// Written text inside those figure blocks stays proportional.
+.comp__desc,
+.comp__quote {
+  font-variant-numeric: normal;
 }
 
 h1, h2, h3, .text-h4, .text-h5, .text-h6 {

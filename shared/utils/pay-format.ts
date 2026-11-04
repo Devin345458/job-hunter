@@ -46,6 +46,15 @@ export function payRange(min: number | null | undefined, max: number | null | un
   return `Up to ${payAmount(hi, currency)}`
 }
 
+/**
+ * Dollar figures inside written text ("$192,400", "$164,400 to $220,400") in the app's one pay
+ * form ("$192K", "$164K to $220K"), so a sentence agrees with the figures beside it.
+ */
+export function payFiguresInText(text: string | null | undefined): string {
+  if (!text) return ''
+  return text.replace(/\$\s?(\d{1,3}(?:,\d{3})+|\d{4,})(?:\.\d{1,2})?(?![\d,]*K\b)/g, (_, digits: string) => payAmount(Number(digits.replace(/,/g, ''))))
+}
+
 /** Bonus or equity as one phrase everywhere: a yearly figure, "Yes, amount not stated", or "Not stated". */
 export function payExtraText(extra: { estimatedAnnual: number | null } | null | undefined, currency: string | null | undefined = 'USD'): string {
   if (!extra) return 'Not stated'

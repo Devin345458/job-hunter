@@ -47,6 +47,12 @@ const salaryDisplay = computed(() => {
   return payRange(job.value.salaryMin, job.value.salaryMax, job.value.salaryCurrency || 'USD')
 })
 
+/** The work type chip, only when the location does not already say it ("Remote, United States"). */
+const showWorkType = computed(() => {
+  const type = job.value?.remoteType
+  return !!type && !new RegExp(`\\b${type}\\b`, 'i').test(job.value?.location ?? '')
+})
+
 const atsLabel = computed(() => ATS_LABELS[job.value?.atsType ?? 'unknown'] ?? job.value?.atsType ?? '')
 
 /** Listing HTML when the source gave one; otherwise the posting text the enrichment fetched. */
@@ -308,7 +314,7 @@ onMounted(() => {
                 </v-chip>
 
                 <v-chip
-                  v-if="salaryDisplay"
+                  v-if="salaryDisplay && !job.compensation"
                   variant="outlined"
                   prepend-icon="mdi-currency-usd"
                   size="small"
@@ -317,7 +323,7 @@ onMounted(() => {
                 </v-chip>
 
                 <v-chip
-                  v-if="job.remoteType"
+                  v-if="showWorkType"
                   variant="outlined"
                   :prepend-icon="job.remoteType === 'remote' ? 'mdi-earth' : job.remoteType === 'hybrid' ? 'mdi-home-city' : 'mdi-office-building'"
                   size="small"
@@ -474,9 +480,7 @@ onMounted(() => {
 
         <!-- Right Column: Match Analysis + Actions -->
         <v-col cols="12" md="5" lg="4">
-          <!-- Match Score -->
-          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-4 d-none d-md-block" @claim="openClaim" />
-
+          <!-- Actions first, on the first screen; then the match score -->
           <JobsJobActions
             class="mb-4 d-none d-md-block"
             :job="job"
@@ -489,6 +493,8 @@ onMounted(() => {
             @mark-applied="onMarkApplied"
             @dismiss-error="actionError = null"
           />
+          <JobsScoreBreakdown :score="job.score" :history="job.scoreHistory" :questions="job.openQuestions" :requirements="job.requirements" class="mb-4 d-none d-md-block" @claim="openClaim" />
+
         </v-col>
       </v-row>
 

@@ -2,6 +2,7 @@
 import type { CompensationBreakdown } from '#shared/types/pipeline'
 import { PIPELINE_SCHEDULE_TEXT } from '#shared/utils/schedule'
 import { formatMoney, formatRange } from './format'
+import { payFiguresInText } from '#shared/utils/pay-format'
 import { payExtraText } from '#shared/utils/pay-format'
 
 const props = defineProps<{
@@ -172,7 +173,7 @@ const visibleBenefits = computed(() => (showAllBenefits.value ? benefitRows.valu
       </div>
 
       <div v-if="c.notes" class="comp-breakdown__notes text-caption">
-        <v-icon icon="mdi-information-outline" size="14" class="mr-1" />{{ c.notes }}
+        <v-icon icon="mdi-information-outline" size="14" class="mr-1" />{{ payFiguresInText(c.notes) }}
       </div>
     </v-card-text>
   </v-card>
