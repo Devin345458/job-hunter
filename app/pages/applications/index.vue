@@ -101,7 +101,8 @@ onMounted(load)
       <p class="al__sub">{{ dataLine || '\u00a0' }}</p>
     </header>
 
-    <ApplicationsStatusPipeline v-model="stage" :counts="counts" class="al__stages" />
+    <!-- Hidden until the first load: counts of 0 while loading would state a number the page does not have yet. -->
+    <ApplicationsStatusPipeline v-show="!(loading && !applications.length)" v-model="stage" :counts="counts" class="al__stages" />
 
     <section v-if="anySent" class="al__after" aria-labelledby="al-after-title">
       <p class="al__after-line">
