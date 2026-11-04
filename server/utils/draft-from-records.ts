@@ -23,7 +23,7 @@ import { findKnowledgeEntry, isLegacyQuestion, isNegativeKnowledge, knowledgeCov
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
 import { appRepoLevel, appRepoScope, cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
-import { APP_REPO_FACT, APP_REPO_HOW_TO_SAY, isAppRepo } from './repos/settings'
+import { APP_REPO_FACT, APP_REPO_FRAMING_SENTENCE, APP_REPO_HOW_TO_SAY, isAppRepo, saysDirected } from './repos/settings'
 import { repoSuggestionsFor } from './repos/suggest-store'
 import { draftAnchors, footprintDetail, footprintText, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
 
@@ -1014,6 +1014,18 @@ export function devinSaidNo(q: QuestionRow, entries: KnowledgeEntry[], said: str
   }))
 }
 
+/**
+ * A draft that cites this app's own commits says he designed the system and directed Claude Code
+ * agents to build it. When no sentence says so, one plain sentence does, right after the first one
+ * that cites them, resting on the same commits.
+ */
+function withAppRepoFraming(kept: RecordsDraftSentence[]): RecordsDraftSentence[] {
+  const i = kept.findIndex(s => s.sources.some(src => src.kind === 'commit' && isAppRepo(src.label)))
+  if (i < 0 || saysDirected(kept.map(s => s.text).join(' '))) return kept
+  const sources = kept[i]!.sources.filter(src => src.kind === 'commit' && isAppRepo(src.label))
+  return [...kept.slice(0, i + 1), { text: APP_REPO_FRAMING_SENTENCE, sources }, ...kept.slice(i + 1)]
+}
+
 /** How many of his commits the counts read: switched-on, indexed repos, this app's repo only for a subject that names one of its topics. */
 function searchedCommitCount(subject: string): number {
   const db = useDb()
@@ -1257,7 +1269,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
 
     const dropped = draft.dropped
     const droppedCount = Object.values(dropped).reduce((a, b) => a + b, 0)
-    const kept: RecordsDraftSentence[] = draft.kept.map(({ part: _part, ...k }) => k)
+    const kept: RecordsDraftSentence[] = withAppRepoFraming(draft.kept.map(({ part: _part, ...k }) => k))
     const missing = draft.out.missing?.trim() ? scrubDashes(draft.out.missing.trim()) : null
     if (absent(draft)) {
       // Nothing about the subject in what the app can see: say what was searched, pick no level,

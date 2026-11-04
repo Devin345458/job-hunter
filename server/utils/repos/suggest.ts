@@ -7,7 +7,7 @@ import { scrubDashes, unsupportedNumbers } from '../apply/text'
 import { SEARCH_RULES, appRepoLevel, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
-import { APP_REPO_FRAMING, isAppRepo } from './settings'
+import { APP_REPO_FRAMING, APP_REPO_FRAMING_SENTENCE, isAppRepo, saysDirected } from './settings'
 
 // repos:suggest. For each pending knows or has_done question: one cheap Claude call turns the
 // subject into search terms (cached per subject), the search runs over Devin's own commits, and
@@ -314,7 +314,10 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         if (evidence.length >= 5) break
       }
       // Last guard: a repo, owner, or organization name left in the draft reads as its description.
-      const draft = withoutRecordNames(scrubDashes(verdict.draft.trim()), names).slice(0, DRAFT_MAX)
+      const named = withoutRecordNames(scrubDashes(verdict.draft.trim()), names)
+      // A draft resting on this app's own commits says how it was built (agents he directed).
+      const framed = evidence.some(e => isAppRepo(e.repo)) && named && !saysDirected(named) ? `${named} ${APP_REPO_FRAMING_SENTENCE}` : named
+      const draft = (framed.length <= DRAFT_MAX ? framed : named).slice(0, DRAFT_MAX)
       const invented = unsupportedNumbers(draft, sourceText(found))
       if (verdict.level === 'None' || !evidence.length || !draft || invented.length) {
         const why = invented.length ? `draft named numbers the commits do not show: ${invented.join(', ')}` : verdict.reason

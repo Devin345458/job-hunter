@@ -30,6 +30,13 @@ export const APP_REPO_FACT = 'Devin designed this system and directed Claude Cod
 /** The honest framing every prompt that shows its commits carries. */
 export const APP_REPO_HOW_TO_SAY = 'Say he designed it and directed agents to build it, never that he wrote or coded it by hand.'
 export const APP_REPO_FRAMING = `${APP_REPO_FACT} ${APP_REPO_HOW_TO_SAY}`
+/** The sentence answer text gains when it cites its commits without saying how it was built. */
+export const APP_REPO_FRAMING_SENTENCE = 'I designed the personal AI job-search system and built it by directing Claude Code agents, which wrote most of its code.'
+
+/** The text already says he directed agents to build it ("directed Claude Code agents to build it"). */
+export function saysDirected(text: string): boolean {
+  return /\bdirect(?:ed|ing)\b[^.]{0,80}\bagents?\b/i.test(text)
+}
 
 export function isAppRepo(fullName: string | null | undefined): boolean {
   return String(fullName ?? '').toLowerCase() === APP_REPO.toLowerCase()

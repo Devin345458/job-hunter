@@ -76,14 +76,38 @@ for (const [subject, level, only, want] of levels) {
   console.log(`${got === want ? 'ok  ' : 'FAIL'} level ${subject}, ${level}, ${only ? 'only this repo' : 'other records too'}: ${got}${got === want ? '' : ` (expected ${want})`}`)
 }
 
+// The honest framing: what counts as saying he directed agents, and the name guard over the wording.
+const framing: Array<[string, boolean]> = [
+  ['I limited the subscription token to the child process and redacted it from logs.', false],
+  ['In November 2026 I designed a personal AI job-search system and directed Claude Code agents to build it.', true],
+  [settings.APP_REPO_FRAMING_SENTENCE, true],
+]
+for (const [text, want] of framing) {
+  const got = settings.saysDirected(text)
+  if (got !== want) bad++
+  console.log(`${got === want ? 'ok  ' : 'FAIL'} says directed (${want}): ${text.slice(0, 70)}`)
+}
+
 const sqlite = useDb().$client
+const on = sqlite.prepare('SELECT included, indexed_at AS indexedAt FROM repo_sources WHERE full_name = ?').get(settings.APP_REPO) as { included: number; indexedAt: string | null } | undefined
+if (on?.included) {
+  const describe = await import('../../server/utils/repos/describe')
+  for (const text of [settings.APP_REPO_DESCRIPTION, settings.APP_REPO_FRAMING_SENTENCE]) {
+    const out = describe.withoutRecordNames(text)
+    if (out !== text) bad++
+    console.log(`${out === text ? 'ok  ' : 'FAIL'} name guard keeps: ${text.slice(0, 70)}${out === text ? '' : ` (became: ${out})`}`)
+  }
+  const named = 'I built job-hunter with Nuxt.'
+  const out = describe.withoutRecordNames(named)
+  if (out === named || /job.?hunter/i.test(out)) bad++
+  console.log(`${out !== named && !/job.?hunter/i.test(out) ? 'ok  ' : 'FAIL'} name guard rewrites "${named}" as "${out}"`)
+}
 const rows = sqlite.prepare(`SELECT id, status, subject, question FROM questions WHERE kind IN ('knows', 'has_done') ORDER BY id`).all() as Array<{ id: number; status: string; subject: string | null; question: string }>
 const open = rows.map(r => ({ r, scope: search.appRepoScope((r.subject ?? r.question).trim(), topics) })).filter(x => x.scope)
 console.log(`\n${open.length} of ${rows.length} knows and has_done questions name a topic:`)
 for (const { r, scope } of open) console.log(`  #${r.id} ${r.status} "${r.subject ?? r.question}": ${scope!.topics.map(t => `${t.name} (${t.cap})`).join(', ')}`)
 
 const indexed = sqlite.prepare('SELECT count(*) AS n FROM repo_commits WHERE repo = ?').get(settings.APP_REPO) as { n: number }
-const on = sqlite.prepare('SELECT included, indexed_at AS indexedAt FROM repo_sources WHERE full_name = ?').get(settings.APP_REPO) as { included: number; indexedAt: string | null } | undefined
 if (indexed.n && on?.included && on.indexedAt) {
   console.log(`\nThis app's repo: ${indexed.n} commits indexed. Its hits by subject (no diffs, as the chat searches):`)
   for (const word of ['graphql', 'shopify']) {
