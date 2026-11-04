@@ -2,6 +2,7 @@
 import type { ApplicationWithJob } from '~/composables/useApplications'
 import { STAGES, type StageKey } from '~/components/applications/StatusPipeline.vue'
 import { HEARD_BACK_STATUSES, SENT_STATUSES } from '#shared/utils/outcomes'
+import { countText } from '#shared/utils/pay-format'
 
 // Every application the pipeline prepared or Devin tracked, newest first, filtered by stage.
 // Deciding happens on the review queue; this list is the record.
@@ -59,6 +60,15 @@ const sentLine = computed(() => {
   ].join(', ')
 })
 const sandboxSent = computed(() => applications.value.filter(a => a.isSandbox && SENT_STATUSES.includes(a.status as any)).length)
+/** Something real was sent: only then does the After sending row have anything to filter. */
+const anySent = computed(() => applications.value.some(a => !a.isSandbox && SENT_STATUSES.includes(a.status as any)))
+/** The page's one line about the data. */
+const dataLine = computed(() => {
+  const n = applications.value.length
+  if (!n) return ''
+  const sent = applications.value.filter(a => !a.isSandbox && SENT_STATUSES.includes(a.status as any)).length
+  return `${countText(n)} application${n === 1 ? '' : 's'}, ${sent ? `${countText(sent)} sent` : 'none sent yet'}`
+})
 
 const shown = computed(() => {
   const q = (search.value ?? '').trim().toLowerCase()
@@ -88,17 +98,12 @@ onMounted(load)
   <div class="al">
     <header class="al__head">
       <h1 class="al__title">Applications</h1>
-      <p class="al__sub">
-        Everything the pipeline prepared: tailored resume, cover letter, and the employer form, filled but not sent.
-        Nothing goes out until you approve it on the review queue. Approving a sandbox application submits it to the test form.
-        <template v-if="realSubmit">Approving one for a real employer submits it on their site, unless the form needs an account or has a captcha. Those are marked for you to submit by hand.</template>
-        <template v-else-if="realSubmit === false">Approving one for a real employer marks it for you to submit by hand on their site, because automated submits to real employers are switched off.</template>
-      </p>
+      <p class="al__sub">{{ dataLine || '\u00a0' }}</p>
     </header>
 
     <ApplicationsStatusPipeline v-model="stage" :counts="counts" class="al__stages" />
 
-    <section class="al__after" aria-labelledby="al-after-title">
+    <section v-if="anySent" class="al__after" aria-labelledby="al-after-title">
       <p class="al__after-line">
         <span id="al-after-title" class="al__after-title">After sending:</span> {{ sentLine }}.
         <span v-if="sandboxSent" class="al__after-muted">{{ sandboxSent }} sandbox {{ sandboxSent === 1 ? 'test is' : 'tests are' }} left out of these counts and filters.</span>
@@ -115,14 +120,15 @@ onMounted(load)
           @click="filter = filter === o.key ? 'all' : o.key"
         >
           {{ o.label }}
-          <span class="al__chip-count tabular">{{ outcomeCounts[o.key] }}</span>
+          <span class="al__chip-count">{{ countText(outcomeCounts[o.key]) }}</span>
         </button>
       </div>
     </section>
 
     <v-text-field
       v-model="search"
-      label="Search by company or role"
+      placeholder="Search by company or role"
+      aria-label="Search by company or role"
       prepend-inner-icon="mdi-magnify"
       clearable
       hide-details
@@ -156,16 +162,15 @@ onMounted(load)
   padding: 8px 0 32px;
 
   &__head { margin-bottom: 16px; }
-  &__title { font-size: 1.75rem; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 6px; }
+  &__title { font-size: 1.5rem; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; margin: 0 0 4px; }
   &__sub { margin: 0; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); max-width: 640px; }
   &__stages { margin-bottom: 12px; }
 
   &__after {
     margin-bottom: 12px;
     padding: 12px 14px;
-    border-radius: 12px;
+    border-radius: 10px;
     background: rgb(var(--v-theme-surface));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 
   &__after-line { margin: 0 0 10px; font-size: 0.875rem; }
@@ -181,18 +186,17 @@ onMounted(load)
     padding: 0 12px;
     border-radius: 8px;
     font-size: 0.8125rem;
-    font-weight: 600;
+    font-weight: 500;
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-    background: rgb(var(--v-theme-background));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    transition: border-color 150ms cubic-bezier(0.23, 1, 0.32, 1), color 150ms cubic-bezier(0.23, 1, 0.32, 1);
+    background: rgb(var(--v-theme-surface-bright));
+    transition: background-color 150ms cubic-bezier(0.23, 1, 0.32, 1), color 150ms cubic-bezier(0.23, 1, 0.32, 1);
 
     &:hover { color: rgb(var(--v-theme-on-surface)); }
     &:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
 
     &--on {
       color: rgb(var(--v-theme-on-surface));
-      border-color: rgba(var(--v-theme-primary), 0.6);
+      background: rgb(var(--v-theme-surface-light));
     }
   }
 
@@ -222,10 +226,9 @@ onMounted(load)
   }
 
   &__skel, &__list {
-    border-radius: 12px;
+    border-radius: 16px;
     overflow: hidden;
     background: rgb(var(--v-theme-surface));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 
   &__list > :last-child { border-bottom: 0; }
@@ -235,9 +238,8 @@ onMounted(load)
     justify-items: start;
     gap: 8px;
     padding: 24px;
-    border-radius: 12px;
+    border-radius: 16px;
     background: rgb(var(--v-theme-surface));
-    border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
     color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 

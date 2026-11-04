@@ -41,9 +41,9 @@ const meta = computed(() => {
   align-items: center;
   gap: 4px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.4;
-  padding: 2px 8px;
+  padding: 1px 8px;
   border-radius: 6px;
   white-space: nowrap;
 
