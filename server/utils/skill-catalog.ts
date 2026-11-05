@@ -336,6 +336,7 @@ const RULES = `How to find the skill behind a requirement:
 - "Using AI in unsupervised processes" is a different skill: agents or LLM steps that run without a person in the loop, inside a product or an operational process. Using AI to write his own code is never that skill, and running AI inside a product is never supervised coding.
 - One tool written different ways is one skill: "Python3", "Expert-level Python", and "Python"; "Docker" and "Docker containerization"; "IaC" and "Infrastructure-as-code". Two general wordings of one kind of work are one skill: "Startup experience" and "Fast-paced startups"; "ML frameworks" and "modern ML libraries"; "Emerging AI frameworks" and "Modern AI frameworks".
 - A requirement that names one specific tool, protocol, or pattern checks that one, not the broad skill around it: "Terraform" is not infrastructure as code in general, "PyTorch" is not machine learning in general, "Temporal" is not workflow orchestration in general, "Anthropic Claude" is not AI coding in general, and "used AI to drive a large code migration" or "run several agent workflows at once" are narrower than the AI skills. A Yes to the broad skill would not answer them.
+- Ordinary work with one tool checks that tool: "Writing reusable Terraform modules" is Terraform, "Building React components" is React. Only a part of a tool that is a specialty of its own ("Spring WebFlux", "React Native") is a skill of its own.
 - Two tools that are related or alternatives are two skills: React and Vue, Docker and Kubernetes, PostgreSQL and MySQL, LangChain and LangGraph.
 - Lists of different width are different skills. A requirement that lists alternatives ("X, Y, or Z") is met by any one of them, and one that names two things together ("X and Y") needs both, so two of them are one skill only when they name the same things. "Accessible UI and product instincts" is not "Accessibility"; "FastAPI or Flask" is not "Python FastAPI". "AI tools like Claude, ChatGPT, or Copilot" is the exception: its list only gives examples of one skill.
 - Interest in something ("Interest in fintech") is never the skill of having done it.
@@ -442,7 +443,8 @@ async function distillCall(items: DistillItem[], catalog: Array<Pick<SkillEntry,
     purpose: DISTILL_PURPOSE,
     model: opts.model ?? stepModel(DISTILL_PURPOSE) ?? DISTILL_DEFAULT_MODEL,
     effort: 'low',
-    maxTokens: 6000,
+    // Room for a new skill's name, question, and scope per requirement (a bootstrap batch is 25).
+    maxTokens: Math.min(20000, 3000 + items.length * 600),
     ref: opts.ref,
     system: DISTILL_SYSTEM,
     // The catalog first (a cached prefix, in the order skills were added), then the requirements.
