@@ -117,6 +117,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [ ] 2026-11-05 `semantic-dedupe`: the question deduplicator decides by meaning with a Claude call (Devin: "We should make the deduplicator run using an AI model not a procedural match"). About 45 open AI questions ("AI-assisted", "AI-first", "AI coding", "AI-powered coding"...) are three claims: using AI to build software, building AI into products, building agents and agent tooling. One-time merge repair ships only after Devin reads the proposed groups.
+
 - [x] 2026-11-05 `form-context` live at e90788e: form fields keep the instruction text they point at (Veeva's Lever checkbox now shows no-reply@hire.lever.co on its card), Cloudflare-hidden emails decoded, forms whose labels say "above" re-read once in read-forms.
 - [x] 2026-11-05 `draft-style` live at 8bc155a: Draft from my records, repos:suggest, chat drafts, and written form answers write short, skill-forward, conversational answers (subject first, one idea a sentence, contractions); rubric dimensions Direct answer, Scope, Skills shown, Short and spoken, Calibration; eval 4.54 vs 3.04 before. Production check: GraphQL #116 drafted in 37 seconds, Some experience, 3 sentences.
 - [ ] 2026-11-05 test:agent fails 3 of 31 in the main checkout (ReferenceError appLimitStopNow in server/utils/queue.ts queueSnapshot) but passes 31 of 31 in a worktree whose .env has NUXT_CLAUDE_CODE_OAUTH_TOKEN: queue.ts relies on Nitro's auto-import, which the tsx test runner does not have. Production is unaffected. Fix: import appLimitStopNow explicitly in queue.ts (and check its other auto-imported calls) so the tests do not depend on the env.
