@@ -117,6 +117,8 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 
 ## Found during the run
 
+- [ ] 2026-11-05 `form-context`: form questions lose the instruction text they refer to (Devin: "I can't see what email I need to whitelist" on Veeva's Lever checkbox; the address, no-reply@hire.lever.co, is in the card text above the option, and Cloudflare hides it in raw HTML). The form reader keeps each field's description, the question card shows it, and fields that say "above" are re-read once.
+
 - [ ] 2026-11-05 Answer style changed (Devin: "not sooo nitty gritty but more yes, and here are the skills I had to use in real world scenarios"): answer, scope, skills shown, one supporting project; no dates, no definitions, no debugging narrative; 2 to 4 sentences. Answer Drafts: 138 drafts with text being shortened (61 to review, 77 already approved, which go back to review for one re-approval). App: `draft-style` unit changes Draft from my records, repos:suggest, chat drafts, and written form answers.
 
 - [x] 2026-11-04 `pay-benefits` live at f87c83a (Devin: "Where is your estimate number coming from?"): the pay card and job page name what the estimated total counts ("401(k) match, 4% of base: $6,280 to $8,520 counted", "7 quoted, no dollar value, See all 8"); a percent match counts at each end of the base range. The one-time repair on production changed 50 jobs (38 totals moved, 10 bonus percents recovered, 49 rescored by code, no final score changed). Checked on production /jobs/2556: $163K to $222K with the 401(k) line counted. Open: the inline pay summary mode has no caller; jobs the repair did not touch keep their old score sentence until their next rescore.
