@@ -109,7 +109,7 @@ lines.push(`- ${kept.length} grouped questions stay as they are (reason in the t
 lines.push(`- ${conflicts.length} groups hold two answers of yours that differ; nothing in them is merged.`)
 lines.push(`- ${plan.removed.length} questions the second reading took out of a proposed group (listed below).`)
 lines.push(`- ${plan.standalone.length} questions are in no group.`, '')
-lines.push('Production plans again from its live questions when the repair runs (one call, the same prompt and rules), so its groups can differ in places from these.', '')
+lines.push('Production plans again from its live questions when the repair runs (two calls, the grouping and the second reading, with the same prompts and rules), so its groups can differ in places from these.', '')
 lines.push('| Group | Id | Subject | Status | Canonical | Action |', '|---|---|---|---|---|---|')
 for (const g of plan.groups) {
   for (const m of g.members) {
