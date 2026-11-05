@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { applications, appSettings, jobs, knowledgeEntries, questions } from '../db/schema'
-import type { FormAnswer, GapAnalysis, Requirement } from '#shared/types/pipeline'
+import type { FormAnswer, FormField, GapAnalysis, Requirement } from '#shared/types/pipeline'
 import type { AnswerOutcome, QuestionListItem } from '#shared/types/learning'
 import { aiStructured, cachedPrompt, fallbackModel } from './ai'
 import {
@@ -27,6 +27,7 @@ import { loadKnowledge, setKnowledgeIfChanged, upsertKnowledge, type KnowledgeEn
 import { dataPath } from './paths'
 import { ruleTerm, ruleWordMatch } from './learned-score'
 import { nowSql, parseJson, referencedQuestionIds } from './review'
+import { formTextForQuestion } from './apply/field-text'
 import { queueSkillRescore, rescoreJobs } from './scoring'
 import { applyAnswerToOpenJobs } from './skill-claims'
 import { NOT_A_GAP } from '#shared/utils/requirement-kinds'
@@ -656,6 +657,7 @@ export function toQuestionListItem(
   waitingApplications?: Array<{ id: number; company: string; title: string }>,
   example: string | null = null,
   repoSuggestion: QuestionListItem['repoSuggestion'] = null,
+  formText: string | null = null,
 ): QuestionListItem {
   return {
     id: q.id,
@@ -685,6 +687,7 @@ export function toQuestionListItem(
     skipNote: appSkipNote(q),
     answeredFrom: inferredFromId(q),
     answeredFromNote: inferredFromId(q) != null ? inferredNoteOf(q.context!) : null,
+    formText: q.kind === 'form_field' ? formText : null,
   }
 }
 
@@ -716,11 +719,24 @@ export function listQuestionItems(filter: { status?: string; applicationId?: num
   })
   const knowledge = rows.some(q => q.status === 'answered' && takesExample(q)) ? loadKnowledge() : []
   const suggestions = repoSuggestionsFor(rows.filter(q => q.status === 'pending' && takesExample(q)).map(q => q.id))
+  // A form_field question shows the form's own text for its field: from the asking application's
+  // snapshot first, then from the applications waiting on it. Each snapshot is parsed once.
+  const askerIds = [...new Set(rows.filter(q => q.kind === 'form_field' && q.applicationId != null).map(q => q.applicationId as number))]
+  const askers = new Map(askerIds.length
+    ? db.select({ id: applications.id, answersJson: applications.answersJson, formSnapshotJson: applications.formSnapshotJson }).from(applications).where(inArray(applications.id, askerIds)).all().map(a => [a.id, a] as const)
+    : [])
+  const formCache = new Map<number, { answers: FormAnswer[]; fields: FormField[] }>()
+  const formTextOf = (q: QuestionRow, waitingIds: number[]): string | null => {
+    if (q.kind !== 'form_field') return null
+    const asker = q.applicationId != null ? askers.get(q.applicationId) : undefined
+    const apps = [...(asker ? [asker] : []), ...waiting.filter(a => waitingIds.includes(a.id) && a.id !== asker?.id)]
+    return formTextForQuestion(q.id, apps, formCache)
+  }
   return rows
     .map((q) => {
       const jobId = q.jobId ?? (q.applicationId ? appJob.get(q.applicationId) : undefined)
       const waitingIds = q.status === 'pending' ? waitingApplicationIds(q, waiting) : []
-      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds), questionExample(q, knowledge), suggestions.get(q.id) ?? null)
+      return toQuestionListItem(q, jobId != null ? jobById.get(jobId) ?? null : null, waitingIds, named(waitingIds), questionExample(q, knowledge), suggestions.get(q.id) ?? null, formTextOf(q, waitingIds))
     })
     .sort((a, b) => Number(b.blocking || b.waitingApplicationIds.length > 0) - Number(a.blocking || a.waitingApplicationIds.length > 0)
       || Number(a.legacy) - Number(b.legacy)

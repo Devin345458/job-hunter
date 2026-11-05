@@ -216,6 +216,7 @@ const chatBoxText = computed(() => {
         </v-btn>
       </div>
       <h4 class="qs__question">{{ q.question }}</h4>
+      <QuestionsFormFieldText v-if="q.formText" :text="q.formText" />
       <p v-if="q.context" class="qs__context">{{ plainKnowledgeRefs(plainQuestionContext(q.context)) }}</p>
       <QuestionsMemoryLeads :question-id="q.id" :takes-example="takesExample(q)" @ask="askAbout(q)" />
 

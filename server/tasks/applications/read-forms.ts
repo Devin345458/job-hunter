@@ -2,6 +2,7 @@ import { AiBudgetExceeded } from '~~/server/utils/ai'
 import { refreshAllNeedsInput } from '~~/server/utils/apply/prepare'
 import { createDecideRow, DECIDE_THRESHOLD, MAX_FORM_READS_PER_RUN, pickJobsToDecide, readForDecision, stoppedPreparations, unfinishedDecideRows, type DecideOutcome } from '~~/server/utils/apply/decide'
 import { loadKnowledge } from '~~/server/utils/knowledge'
+import { rereadFieldTextOnce } from '~~/server/utils/apply/field-text-reread'
 
 // Stage 1 of decide-first, in the scheduled run where applications:prepare used to be. For every
 // job scoring at or above the threshold: a Decide card with its gap plan and its employer form read
@@ -9,7 +10,11 @@ import { loadKnowledge } from '~~/server/utils/knowledge'
 // decides. It writes no resume, letter, or form answer; those wait for Apply. It also continues
 // preparations Devin already chose that stopped (budget, credit, restart, or a failed attempt),
 // each queued as its own applications:prepare-one item, and refreshes waiting answers.
-// Payload (manual runs only): { threshold?: number, limit?: number }
+// Once after the 2026-11-05 deploy it first reads again the open forms whose labels point at text
+// the stored form lacks, to keep each field's own text (server/utils/apply/field-text-reread.ts;
+// Chromium only, no Claude call).
+// Payload (manual runs only): { threshold?: number, limit?: number, fieldTextOnly?: boolean }
+// fieldTextOnly stops after that re-read, so it can run without any Claude call.
 export default defineTask({
   meta: {
     name: 'applications:read-forms',
@@ -19,6 +24,16 @@ export default defineTask({
     const outcome = await withRun('applications:read-forms', triggerOf(payload), async (log) => {
       const threshold = Number(payload?.threshold) || DECIDE_THRESHOLD
       const limit = Math.min(Number(payload?.limit) || MAX_FORM_READS_PER_RUN, 40)
+
+      // Once: forms read before the reader kept each field's own text (no Claude call). A failure
+      // here is logged and never stops the step: the forms below are read as before.
+      const fieldText = await rereadFieldTextOnce(log).catch((e: any) => {
+        log(`form field text: the one-time re-read stopped (${String(e?.message || e).split('\n')[0]}); it continues next run`)
+        return { ran: false, candidates: 0, reread: 0, fieldsGained: 0, failed: [] as Array<{ applicationId: number; error: string }> }
+      })
+      if (payload?.fieldTextOnly) {
+        return { fieldTextReread: fieldText.reread, fieldTextCandidates: fieldText.candidates, fieldsGainedText: fieldText.fieldsGained, fieldTextFailed: fieldText.failed.length }
+      }
 
       // Answers may have arrived since the last run; unblock every application they free.
       const refresh = await refreshAllNeedsInput(log)
@@ -62,6 +77,7 @@ export default defineTask({
         refreshed: refresh.refreshed,
         unblocked: refresh.flipped,
         budgetStop,
+        ...(fieldText.ran ? { fieldTextReread: fieldText.reread, fieldsGainedText: fieldText.fieldsGained } : {}),
         errors: results.filter(r => 'error' in r && r.error).map(r => `#${r.applicationId}: ${(r as any).error}`).slice(0, 10),
       }
     })

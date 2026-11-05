@@ -1,7 +1,7 @@
 import { eq, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { applications, jobs, questions } from '../db/schema'
-import type { FormAnswer, FormSnapshot, GapAnalysis, Requirement } from '#shared/types/pipeline'
+import type { FormAnswer, GapAnalysis, Requirement } from '#shared/types/pipeline'
 import type { QuestionChatResponse, QuestionChatStop, QuestionChatTurn } from '#shared/types/question-chat'
 import type { ChatMemoryUse } from '#shared/types/memory'
 import type { GithubChatSearch } from '#shared/types/repos'
@@ -31,6 +31,7 @@ import { LEAD_LIMITS, memoryQueries, storedLeads } from './memory-leads'
 import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { isLegacyQuestion, parseYesNo, questionExample, takesExample, waitingApplicationIds, type QuestionRow } from './questions'
 import { parseJson } from './review'
+import { fieldForQuestion } from './apply/field-text'
 import { githubChatSearch, githubPromptSection, githubSearchAvailable } from './repos/chat-search'
 import { cleanTerms, type TermSet } from './repos/search'
 import { withoutRecordNames } from './repos/describe'
@@ -76,6 +77,8 @@ interface ChatFormField {
   type: string
   required: boolean
   maxLength: number | null
+  /** The form's own text for the field (FormField.description): the instruction or note beside it. */
+  description: string | null
 }
 
 interface QuestionChatContext {
@@ -174,16 +177,20 @@ function requirementFor(q: QuestionRow, apps: Array<typeof applications.$inferSe
 
 /** The employer form field a form question fills, from the application that asked it. */
 function formFieldFor(q: QuestionRow, apps: Array<typeof applications.$inferSelect>): ChatFormField | null {
+  // The field whose answer waits on the question, was filled from it, or asked it as an optional field.
+  const hit = fieldForQuestion(q.id, apps)
+  if (hit) {
+    return {
+      label: hit.field.label,
+      type: hit.field.type,
+      required: hit.field.required,
+      maxLength: hit.field.maxLength ?? null,
+      description: hit.field.description ?? null,
+    }
+  }
   for (const a of apps) {
     const answer = parseJson<FormAnswer[]>(a.answersJson, []).find(x => x.needsQuestionId === q.id)
-    if (!answer) continue
-    const field = parseJson<FormSnapshot | null>(a.formSnapshotJson, null)?.fields?.find(f => f.id === answer.fieldId)
-    return {
-      label: field?.label ?? answer.label,
-      type: field?.type ?? 'text',
-      required: field?.required ?? false,
-      maxLength: field?.maxLength ?? null,
-    }
+    if (answer) return { label: answer.label, type: 'text', required: false, maxLength: null, description: null }
   }
   return null
 }
@@ -618,6 +625,8 @@ function questionSection(ctx: QuestionChatContext): string {
     ctx.formField
       ? `Application form field: "${ctx.formField.label}" (${ctx.formField.required ? 'required' : 'optional'}, ${ctx.formField.type === 'textarea' ? 'multi-line text box' : 'text field'}, ${ctx.formField.maxLength ? `${ctx.formField.maxLength} characters at most` : 'no length limit stated'})`
       : null,
+    // What the form says beside the field: the label may point at it ("the sender address above").
+    ctx.formField?.description ? `The form's own text for this field: "${ctx.formField.description}"` : null,
     ctx.otherEmployers.length ? `Other applications waiting on this answer: ${ctx.otherEmployers.map(e => `${e.title} at ${e.company}`).join('; ')}` : null,
   ]
   return lines.filter(Boolean).join('\n')
