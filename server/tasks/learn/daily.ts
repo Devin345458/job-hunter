@@ -17,10 +17,10 @@ export default defineTask({
       // Once after the deploy: labels the skips made before reasons were recorded, and gives every
       // subject one open or answered question again.
       const repair = await repairQuestionSkipsOnce(log)
-      // Once after the deploy: groups the skill and experience questions asked before the meaning
-      // check by what they ask ("AI-assisted", "AI-first", and "AI coding" are one claim) and merges
-      // each group into one question. A failed call waits for the next run.
-      const meaning = await mergeSameMeaningOnce(log)
+      // Once, after Devin approves the skill catalog (skill-catalog-approved.ts): every skill and
+      // experience question asked before it is filed under the skill it checks, and each skill's
+      // other questions are merged into its one question. Nothing happens until it is approved.
+      const catalog = applyApprovedCatalogOnce(APPROVED_SKILL_CATALOG, log)
       const tidy = await tidyFactQuestions(log)
       const released = await releaseMisreadFactFields(log)
       const learned = await runDailyLearning(log)
@@ -28,8 +28,7 @@ export default defineTask({
         ...learned,
         ...(sections.ran ? { sectionEntriesMoved: sections.entries.length, sectionQuestionsRefiled: sections.questions.length, sectionAnswersCarried: sections.answered.length } : {}),
         ...(repair.ran ? { skipRepairLabeled: repair.labeled.length, skipRepairMerged: repair.merged.length, skipRepairReopened: repair.reopened.length } : {}),
-        ...(meaning.ran ? { meaningRepairMerged: meaning.merged.length, meaningRepairConflicts: meaning.conflicts.length } : {}),
-        ...(meaning.error ? { meaningRepairError: meaning.error } : {}),
+        ...(catalog.applied ? { catalogSkills: catalog.applied.entries, catalogMerged: catalog.applied.merged.length, catalogReworded: catalog.applied.reworded.length, catalogSkipped: catalog.applied.skipped.length } : {}),
         misreadFieldsReleased: released.length,
         factQuestionsMerged: tidy.merged.length,
         factQuestionsAnswered: tidy.derived.length,

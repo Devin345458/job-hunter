@@ -380,9 +380,9 @@ export async function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: nu
       blocking: false,
     })
   })
-  // One meaning check for the plan's open questions: an existing question that asks the same
-  // claim in other words is reused instead of asking again.
-  if (inputs.size) await checkSameMeaning([...inputs.values()].map(meaningAskOf), { type: 'application', id: ctx.applicationId })
+  // One distill for the plan's open questions: each is asked as the catalog skill it checks, so an
+  // existing question on that skill is reused instead of asking again.
+  if (inputs.size) await distillSkills([...inputs.values()].map(skillAskOf), { type: 'application', id: ctx.applicationId })
   const items = carried.map((i, n) => {
     const input = inputs.get(n)
     if (!input) return i

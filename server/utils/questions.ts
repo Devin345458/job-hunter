@@ -33,7 +33,7 @@ import { applyAnswerToOpenJobs } from './skill-claims'
 import { NOT_A_GAP } from '#shared/utils/requirement-kinds'
 import { sameSubject } from './skills-judge'
 import { queueRepoSuggest, repoSuggestionsFor } from './repos/suggest-store'
-import { checkSameMeaning, meaningGuard, meaningMatch, postingPhrase, type MeaningAsk } from './question-meaning'
+import { distillSkills, linkSkillQuestion, meaningGuard, notePhrasing, postingPhrase, skillAskFor, skillMatch, skillQuestion, type SkillAsk, type SkillEntry } from './skill-catalog'
 
 export type QuestionRow = InferSelectModel<typeof questions>
 
@@ -90,15 +90,15 @@ export function exactQuestionFor(kind: string, subject: string): QuestionRow | n
  * Ask Devin a question, at most once per (kind, subject).
  * - Already answered: returns the existing row (status 'answered'), so the caller can use the answer.
  * - Already pending: returns it, and marks it blocking if this caller needs it to block.
- * - A skill or experience the meaning check (question-meaning.ts) tied to an existing question:
- *   returns that one. Callers that can wait run the check first (askSkillQuestion); here only its
- *   stored decision is read. With no decision (the check failed, or never ran) the word match
- *   decides, as before.
+ * - A skill or experience the catalog (skill-catalog.ts) knows the skill of: returns the skill's
+ *   question, or asks the skill's generic question (subject the skill's name, the posting wording
+ *   kept as "Asked as: ..." in the context). Callers that can wait distill first
+ *   (askSkillQuestion); here only the stored mapping is read. With none (the catalog is empty, or
+ *   the distill failed) the word match decides, as before.
  * - Otherwise inserts a new pending question.
  */
 export function askQuestion(input: AskInput): QuestionRow {
   const db = useDb()
-  const dedupeKey = dedupeKeyOf(input.kind, input.subject)
   const reuse = (q: QuestionRow): QuestionRow => {
     if (input.blocking && !q.blocking && q.status === 'pending') {
       db.update(questions).set({ blocking: true }).where(eq(questions.id, q.id)).run()
@@ -108,56 +108,61 @@ export function askQuestion(input: AskInput): QuestionRow {
   }
   const exact = exactQuestionFor(input.kind, input.subject)
   if (exact) return reuse(exact)
+  let ask: AskInput = input
+  let skillOf: SkillEntry | null = null
   if (input.kind === 'knows' || input.kind === 'has_done') {
-    // The same claim in other words ("AI-first" and "AI-assisted"), as Claude judged it.
-    const meant = meaningMatch(input.subject)
-    if (meant.decided) {
-      if (meant.row) return reuse(meant.row)
+    // The skill this requirement checks ("AI-first" checks "Using AI for supervised coding").
+    const skill = skillAskFor(input)
+    if (skill && 'reuse' in skill) return reuse(skill.reuse)
+    if (skill) {
+      ask = skill.input
+      skillOf = skill.entry
     }
     else {
-      // No decision: the word match ("Payments and reconciliation" in other words).
+      // No mapping: the word match ("Payments and reconciliation" in other words).
       const same = sameSkillQuestion(input.subject)
       if (same) return reuse(same)
     }
   }
   // A skill or experience answer is filed by what the subject is, decided here once for the
   // question, whatever key the caller suggested: Docker under Skills, fintech under Experience.
-  const skillTarget = input.kind === 'knows' || input.kind === 'has_done'
-    ? subjectTarget(input.subject, input.kind, input.codeShowable ?? codeFlagOf(input.context))
+  const skillTarget = ask.kind === 'knows' || ask.kind === 'has_done'
+    ? subjectTarget(ask.subject, ask.kind, ask.codeShowable ?? codeFlagOf(ask.context))
     : null
   const row = db.insert(questions).values({
-    question: input.question,
-    context: input.context ?? null,
-    category: input.category ?? (input.kind === 'preference' ? 'preference' : 'technical'),
-    kind: input.kind,
-    subject: input.subject,
-    answerType: input.answerType ?? (input.kind === 'has_done' || input.kind === 'knows' ? 'yes_no' : 'text'),
-    choicesJson: input.choices ? JSON.stringify(input.choices) : null,
-    knowledgeKey: skillTarget ? `${skillTarget.category}:${skillTarget.key}` : (input.knowledgeKey ?? null),
-    applicationId: input.applicationId ?? null,
-    jobId: input.jobId ?? null,
-    blocking: input.blocking ?? false,
-    dedupeKey,
+    question: ask.question,
+    context: ask.context ?? null,
+    category: ask.category ?? (ask.kind === 'preference' ? 'preference' : 'technical'),
+    kind: ask.kind,
+    subject: ask.subject,
+    answerType: ask.answerType ?? (ask.kind === 'has_done' || ask.kind === 'knows' ? 'yes_no' : 'text'),
+    choicesJson: ask.choices ? JSON.stringify(ask.choices) : null,
+    knowledgeKey: skillTarget ? `${skillTarget.category}:${skillTarget.key}` : (ask.knowledgeKey ?? null),
+    applicationId: ask.applicationId ?? null,
+    jobId: ask.jobId ?? null,
+    blocking: ask.blocking ?? false,
+    dedupeKey: dedupeKeyOf(ask.kind, ask.subject),
     status: 'pending',
   }).returning().get()
+  if (skillOf) linkSkillQuestion(skillOf, row.id)
   // A new skill or experience question gets checked against Devin's own GitHub commits.
   if (row.kind === 'knows' || row.kind === 'has_done') queueRepoSuggest(row.id)
   return row
 }
 
 /**
- * askQuestion() for a skill or experience, after the meaning check: one Claude call decides
- * whether an existing question already asks the same claim, unless the exact checks or a stored
- * decision settle it. A failed or budget-stopped check never blocks asking: askQuestion() then
- * uses the word match.
+ * askQuestion() for a skill or experience, after the distill: unless an exact check or a stored
+ * mapping settles it, Claude names the catalog skill the requirement checks (or the review adds a
+ * new one). A failed or budget-stopped distill never blocks asking: askQuestion() then uses the
+ * word match.
  */
 export async function askSkillQuestion(input: AskInput, ref?: { type: string; id: number }): Promise<QuestionRow> {
-  if (input.kind === 'knows' || input.kind === 'has_done') await checkSameMeaning([meaningAskOf(input)], ref)
+  if (input.kind === 'knows' || input.kind === 'has_done') await distillSkills([skillAskOf(input)], ref)
   return askQuestion(input)
 }
 
-/** The meaning check's view of a question about to be asked. */
-export function meaningAskOf(input: AskInput): MeaningAsk {
+/** The distill's view of a question about to be asked. */
+export function skillAskOf(input: AskInput): SkillAsk {
   return { subject: input.subject, kind: input.kind, question: input.question, phrase: input.phrase ?? postingPhrase(input.context), context: input.context ?? null }
 }
 
@@ -1226,9 +1231,9 @@ export async function tidyKnowsQuestions(): Promise<{ reworded: number; skipped:
     plan.set(q.id, { subject: verdict.subject })
   }
 
-  // One Claude call (or a few) for the open questions no stored decision covers: does an older
-  // question, or an answered one, ask the same claim? Stored per subject, so the next tidy asks nothing.
-  const meaning = await checkSameMeaning(open.flatMap((q) => {
+  // The open questions no stored mapping covers go through the distill: which catalog skill does
+  // each check? Stored per subject, so the next tidy asks nothing.
+  const meaning = await distillSkills(open.flatMap((q) => {
     const p = plan.get(q.id)!
     return 'subject' in p && !undone.has(q.id) ? [{ subject: p.subject, kind: q.kind!, question: q.question, context: q.context, phrase: postingPhrase(q.context), selfId: q.id }] : []
   }))
@@ -1249,13 +1254,20 @@ export async function tidyKnowsQuestions(): Promise<{ reworded: number; skipped:
     // A question whose carried answer he undid stands on its own: it is not merged into the answer.
     let into = undone.has(q.id) ? undefined : canon.find(c => sameCoreSkill(subjectOf.get(c.id)!, subject))
     if (!into && !undone.has(q.id)) {
-      const meant = meaningMatch(subject)
+      const meant = skillMatch(subject)
       if (meant.decided) {
-        const id = meant.row ? (intoOf.get(meant.row.id) ?? meant.row.id) : null
+        // Merged into the skill's question when that one is older or answered; the first open
+        // question of a skill without one becomes its question.
+        const own = skillQuestion(meant.entry)
+        const id = own ? (intoOf.get(own.id) ?? own.id) : null
         const target = id != null && id !== q.id ? canon.find(c => c.id === id) : undefined
         if (target && !meaningGuard({ subject, question: q.question, context: q.context }, { subject: subjectOf.get(target.id)!, question: target.question, context: target.context })) {
           into = target
           byMeaning.add(q.id)
+          notePhrasing(meant.entry, subject, target)
+        }
+        else if (!own) {
+          linkSkillQuestion(meant.entry, q.id)
         }
       }
       else {
@@ -1452,10 +1464,10 @@ export async function askDailyQuestions(): Promise<QuestionRow[]> {
     .sort((a, b) => b.value - a.value || b.jobs.size - a.jobs.size)
   const asked = new Set(db.select({ subject: questions.subject }).from(questions).where(eq(questions.kind, 'knows')).all().map(r => r.subject).filter(Boolean).map(x => ruleTerm(x!)))
   const fresh = candidates.filter(c => !(asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))))
-  // The meaning check for the subjects about to be asked, in one call: "AI-first" today and
-  // "AI-assisted" last week are one question. Subjects past the first 60 wait for the next run's
-  // check, or fall back to the word match if they are asked before it.
-  await checkSameMeaning(fresh.slice(0, 60).flatMap((c) => {
+  // The distill for the subjects about to be asked, 20 to a call: "AI-first" today and "AI-assisted"
+  // last week check one skill. Subjects past the first 60 wait for the next run, or fall back to the
+  // word match if they are asked before it.
+  await distillSkills(fresh.slice(0, 60).flatMap((c) => {
     const subject = cleanSkillSubject(c.subject)
     return subject && !knowledgeCovers(subject) ? [{ subject, kind: 'knows', question: knowsQuestionText(subject), phrase: c.phrase }] : []
   }))
@@ -1547,12 +1559,12 @@ export function skipForApp(id: number, reason: string) {
   if (q) appSkip(q, reason)
 }
 
-/** mergeInto() for the meaning repair (question-meaning.ts). */
+/** mergeInto() for the catalog (skill-catalog.ts). */
 export function mergeQuestionInto(dup: QuestionRow, into: QuestionRow) {
   mergeInto(dup, into)
 }
 
-/** repointMerged() for the meaning repair (question-meaning.ts). */
+/** repointMerged() for the catalog (skill-catalog.ts). */
 export function repointMergedQuestions(mergeMap: Map<number, number>): number[] {
   return repointMerged(mergeMap)
 }
@@ -2094,10 +2106,10 @@ export async function askOrReuse(requests: AskRequest[], ref?: { type: string; i
   const db = useDb()
   const outcomes: Array<AskOutcome | null> = requests.map(() => null)
   const semantic: number[] = []
-  // A skill or experience question goes through the meaning check first, as askSkillQuestion() does.
+  // A skill or experience question goes through the distill first, as askSkillQuestion() does.
   // Form fields ask facts and form_field questions; their own check is matchLabelsToExisting() below.
-  const skillAsks = requests.filter(r => r.input.kind === 'knows' || r.input.kind === 'has_done').map(r => meaningAskOf(r.input))
-  if (skillAsks.length) await checkSameMeaning(skillAsks, ref)
+  const skillAsks = requests.filter(r => r.input.kind === 'knows' || r.input.kind === 'has_done').map(r => skillAskOf(r.input))
+  if (skillAsks.length) await distillSkills(skillAsks, ref)
   requests.forEach((r, i) => {
     const dedupeKey = dedupeKeyOf(r.input.kind, r.input.subject)
     const exact = db.select().from(questions).where(and(eq(questions.dedupeKey, dedupeKey), inArray(questions.status, ['pending', 'answered']))).all()
