@@ -25,8 +25,12 @@ export default defineTask({
       const threshold = Number(payload?.threshold) || DECIDE_THRESHOLD
       const limit = Math.min(Number(payload?.limit) || MAX_FORM_READS_PER_RUN, 40)
 
-      // Once: forms read before the reader kept each field's own text (no Claude call).
-      const fieldText = await rereadFieldTextOnce(log)
+      // Once: forms read before the reader kept each field's own text (no Claude call). A failure
+      // here is logged and never stops the step: the forms below are read as before.
+      const fieldText = await rereadFieldTextOnce(log).catch((e: any) => {
+        log(`form field text: the one-time re-read stopped (${String(e?.message || e).split('\n')[0]}); it continues next run`)
+        return { ran: false, candidates: 0, reread: 0, fieldsGained: 0, failed: [] as Array<{ applicationId: number; error: string }> }
+      })
       if (payload?.fieldTextOnly) {
         return { fieldTextReread: fieldText.reread, fieldTextCandidates: fieldText.candidates, fieldsGainedText: fieldText.fieldsGained, fieldTextFailed: fieldText.failed.length }
       }
