@@ -36,7 +36,7 @@ export default defineEventHandler(async (event) => {
     .where(and(eq(questions.status, 'pending'), or(eq(questions.jobId, id), eq(questions.kind, 'preference'))))
     .all()
     .filter(q => q.subject !== HEALTH_SUBJECT || needsHealthValue)
-    .map(toQuestionView)
+    .map(q => toQuestionView(q))
 
   const meta = parseJson<Record<string, unknown>>(job.atsMeta, {})
 

@@ -23,6 +23,8 @@ const later = computed(() => props.answers.filter(a => a.atApply || isDocument(a
 const blank = computed(() => props.answers.filter(a => !answerText(a.value) && !a.atApply && typeof a.needsQuestionId !== 'number'))
 const fieldsById = computed(() => new Map((props.snapshot?.fields ?? []).map(f => [f.id, f])))
 const required = (a: FormAnswer) => fieldsById.value.get(a.fieldId)?.required !== false
+/** The form's own text for a field that is not a document upload (FormField.description). */
+const descriptionOf = (a: FormAnswer) => isDocument(a) ? null : fieldsById.value.get(a.fieldId)?.description ?? null
 const blockers = computed(() => (props.snapshot?.blockers ?? []).map(blockerText))
 const errorText = computed(() => plainError(props.formError))
 </script>
@@ -57,7 +59,11 @@ const errorText = computed(() => plainError(props.formError))
         <p class="frd__help">These need the resume and letter Apply writes, so nothing is written for them unless you apply.</p>
         <ul class="frd__list">
           <li v-for="a in later" :key="a.fieldId" class="frd__row">
-            <span class="frd__label">{{ cleanFieldLabel(a.label) }}</span>
+            <span class="frd__label">
+              {{ cleanFieldLabel(a.label) }}
+              <!-- The form's own text for the field: "Tell us more" says nothing without it. -->
+              <span v-if="descriptionOf(a)" class="frd__desc" :title="descriptionOf(a) ?? undefined">{{ descriptionOf(a) }}</span>
+            </span>
             <span class="frd__value frd__value--muted">{{ isDocument(a) ? `${a.source === 'resume' ? 'Your tailored resume' : 'Your cover letter'}, attached only after you approve` : required(a) ? 'Required' : 'Optional' }}</span>
           </li>
         </ul>
@@ -144,6 +150,18 @@ const errorText = computed(() => plainError(props.formError))
 
   &__label {
     overflow-wrap: anywhere;
+  }
+
+  &__desc {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-top: 2px;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
   }
 
   &__value {

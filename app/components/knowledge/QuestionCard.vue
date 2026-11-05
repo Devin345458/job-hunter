@@ -351,6 +351,8 @@ watch(() => props.pick?.nonce, () => {
       <h3 class="question-card__question text-subtitle-1 font-weight-medium">
         {{ question.question }}
       </h3>
+      <!-- The form's own text for the field (what "the address above" points at). Shown on a shared question too. -->
+      <QuestionsFormFieldText v-if="question.formText" :text="question.formText" />
       <p v-if="question.context && !shared && (mode === 'pending' || editing)" class="question-card__context text-body-2 text-medium-emphasis mt-1">
         {{ plainQuestionContext(question.context) }}
       </p>

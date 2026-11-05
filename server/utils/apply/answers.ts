@@ -251,6 +251,7 @@ Specific rules:
 - A required box that only confirms the information in the application is true and accurate may be checked.
 - Any other box or statement that says Devin did, read, agreed to, or set up something ("I have marked the sender address as safe", "I have read the privacy policy", "I consent to...") is status "unknown". Devin decides those himself.
 - Never answer voluntary self-identification questions (gender, race, veteran, disability); they are handled elsewhere.
+- A field's "form's note" is the employer's own instruction or description beside it. Read the label with it (a label saying "the address above" means the address in the note). The note is never a fact about Devin.
 - Never name a client, a client's product, a repo, or a GitHub organization, and never write the word repo: describe the project instead ("car wash management software", "a telehealth application"). Employers on his resume may be named.
 - Plain American English. Never use an em dash or an en dash.`
 
@@ -487,7 +488,7 @@ POSTING: ${ctx.job.title} at ${ctx.job.company}
 ${posting}
 
 FIELDS
-${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'}${f.maxLength ? ` | max ${f.maxLength} characters` : ''} | ${f.label}${f.options?.length ? `\n  options: ${f.options.slice(0, 120).map(o => `"${o}"`).join(', ')}` : ''}`).join('\n')}`),
+${free.map(f => `${f.id} | ${f.type}${f.required ? ' | required' : ' | optional'}${f.maxLength ? ` | max ${f.maxLength} characters` : ''} | ${f.label}${f.description ? `\n  form's note: ${truncate(f.description, 600)}` : ''}${f.options?.length ? `\n  options: ${f.options.slice(0, 120).map(o => `"${o}"`).join(', ')}` : ''}`).join('\n')}`),
     })
 
     const sourceText = `${knowledgeText(ctx.entries)}\n${ctx.coverLetter ?? ''}\n${posting}\n${knownFacts.join('\n')}`

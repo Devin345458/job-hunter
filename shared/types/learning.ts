@@ -148,6 +148,12 @@ export interface QuestionListItem {
   answeredFrom?: number | null
   /** The note on a carried answer: 'Answered from your answer to #N ("<question>").' */
   answeredFromNote?: string | null
+  /**
+   * A form_field question: the form's own text for the field it came from (FormField.description),
+   * such as the address a confirmation box asks him to mark as safe. Read from the asking
+   * application's form first, then from the others waiting on it. Null when the form has none.
+   */
+  formText?: string | null
 }
 
 export interface AnswerOutcome {

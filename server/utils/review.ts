@@ -19,6 +19,7 @@ import type {
   TailoredResume,
 } from '#shared/types/pipeline'
 import { approveEffect } from './apply/approve-effect'
+import { formTextForQuestion } from './apply/field-text'
 import { decideCardVisible } from './apply/decide'
 import { cleanFieldLabel, plainError } from '#shared/utils/plain-text'
 import { negativeSkillTerms, rejectSkillOptions } from './reject-skills'
@@ -63,7 +64,7 @@ export function htmlToText(html: string | null | undefined): string | null {
     .trim()
 }
 
-export function toQuestionView(q: QuestionRow, repoSuggestion: QuestionView['repoSuggestion'] = null): QuestionView {
+export function toQuestionView(q: QuestionRow, repoSuggestion: QuestionView['repoSuggestion'] = null, formText: string | null = null): QuestionView {
   return {
     id: q.id,
     question: q.question,
@@ -76,6 +77,7 @@ export function toQuestionView(q: QuestionRow, repoSuggestion: QuestionView['rep
     status: q.status,
     answer: q.answer,
     repoSuggestion: q.status === 'pending' ? repoSuggestion : null,
+    formText: q.kind === 'form_field' ? formText : null,
   }
 }
 
@@ -148,7 +150,8 @@ export function toReviewItem(app: AppRow, job: JobRow, demo: DemoRow | null, ope
     // Switched off (NUXT_DEMOS_ENABLED=false), the card shows no demo: approve will not publish one.
     demo: demosEnabled() && demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? toDemoView(demo) : null,
     approveEffect: approveEffect(app, job, demosEnabled() && demo && !demoNoLongerPlanned(demo, app.gapAnalysisJson) ? demo.status : undefined),
-    openQuestions: openQuestions.map(q => toQuestionView(q, suggestions.get(q.id) ?? null)),
+    // A form_field question shows this employer's own text for the field (FormField.description).
+    openQuestions: openQuestions.map(q => toQuestionView(q, suggestions.get(q.id) ?? null, q.kind === 'form_field' ? formTextForQuestion(q.id, [app]) : null)),
     submission: parseJson<SubmissionResult | null>(app.submissionJson, null),
     submitError: app.submitError,
   }

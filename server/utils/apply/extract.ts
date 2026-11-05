@@ -17,6 +17,8 @@ export interface RawField {
   section: string | null
   isEeo: boolean
   control: 'native' | 'combobox' | 'buttons'
+  /** The field's instruction or description text beyond its label (FormField.description). */
+  description: string | null
 }
 
 export function extractFieldsInPage(): RawField[] {
@@ -158,11 +160,180 @@ export function extractFieldsInPage(): RawField[] {
     (el as HTMLInputElement).required === true
     || el.getAttribute('aria-required') === 'true'
     || starred(label)
-  const push = (f: RawField) => {
+
+  // ── The field's own text beyond its label ──
+  // A Lever card puts the instruction above a checkbox whose label is only the statement ("I have
+  // marked the sender address above as safe"); Greenhouse and Ashby keep a question description
+  // beside the label; others use aria-describedby or a paragraph right above the field. Read here
+  // so the question Devin sees says what the label points at. Kept apart from the label, so label
+  // matching (facts, dedupe keys, EEO) never reads it.
+  const CONTROLS = 'input:not([type="hidden"]), select, textarea, [role="combobox"], [contenteditable="true"]'
+  // Nodes whose text is never a description: controls and their options, buttons, headings (the
+  // section line), status, error, and loading messages, upload drop zones, placeholders, and text
+  // kept only for screen readers.
+  const NOT_DESC = 'select, option, textarea, button, input, h1, h2, h3, h4, legend, [class*="section-title" i], [class*="sectionTitle"], [role="listbox"], [role="option"], [role="status"], [role="alert"], [role="log"], [aria-live], [class*="error" i], [class*="loading" i], [class*="spinner" i], [class*="success" i], [class*="dropzone" i], [class*="no-results" i], [class*="noresults" i], [class*="placeholder" i], [class*="a11y" i], [class*="visually-hidden" i], [class*="sr-only" i], [class*="counter" i]'
+  // Cloudflare hides an address as "[email protected]" with the real one hex-encoded in
+  // data-cfemail (the first byte is the key each later byte is XORed with). Chromium usually runs
+  // the decoder before the read; this covers a page where it did not.
+  const cfDecode = (hex: string): string => {
+    if (!/^[0-9a-f]{4,}$/i.test(hex) || hex.length % 2) return ''
+    const key = parseInt(hex.slice(0, 2), 16)
+    let s = ''
+    for (let i = 2; i < hex.length; i += 2) s += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key)
+    return /^[^\s@]+@[^\s@]+$/.test(s) ? s : ''
+  }
+  const cfHex = (el: Element): string => el.getAttribute('data-cfemail')
+    || (/\/cdn-cgi\/l\/email-protection#([0-9a-f]+)/i.exec(el.getAttribute('href') || '')?.[1] ?? '')
+  /**
+   * Where a link in the text goes, written after its caption: "Applicant Privacy Statement
+   * (https://...)" or "contact us (jobs@example.com)". Nothing when the caption already shows it,
+   * or for a link within the page.
+   */
+  const linkTarget = (a: Element): string => {
+    const raw = a.getAttribute('href') || ''
+    if (!raw || raw.startsWith('#') || /^javascript:/i.test(raw) || /\/cdn-cgi\/l\/email-protection/i.test(raw)) return ''
+    const caption = clean(textOf(a)).toLowerCase()
+    if (/^mailto:/i.test(raw)) {
+      const address = decodeURIComponent(raw.replace(/^mailto:/i, '').split('?')[0] || '')
+      return address && !caption.includes(address.toLowerCase()) ? `(${address})` : ''
+    }
+    const href = (a as HTMLAnchorElement).href || raw
+    if (!/^https?:\/\//i.test(href)) return ''
+    return caption.includes(href.toLowerCase().replace(/\/$/, '')) ? '' : `(${href})`
+  }
+  /** An element's visible text without the nodes in `skip` and NOT_DESC, with hidden addresses decoded and link targets kept. */
+  const textWithout = (root: Element, skip: Element[]): string => {
+    const parts: string[] = []
+    const decoded = new Set<Element>()
+    let openLink: Element | null = null
+    const closeLink = () => {
+      if (openLink) {
+        const target = linkTarget(openLink)
+        if (target) parts.push(target)
+      }
+      openLink = null
+    }
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement
+      if (!parent) continue
+      if (skip.some(s => s === parent || s.contains(parent))) continue
+      const bad = parent.closest(NOT_DESC)
+      if (bad && bad !== root && root.contains(bad)) continue
+      const cf = parent.closest('[data-cfemail], a[href*="/cdn-cgi/l/email-protection"]')
+      if (cf && root.contains(cf)) {
+        closeLink()
+        if (!decoded.has(cf)) {
+          decoded.add(cf)
+          const email = cfDecode(cfHex(cf))
+          parts.push(email || (node.textContent || '').replace(/\[email\s*protected\]/i, ''))
+        }
+        continue
+      }
+      if (!parent.getClientRects().length || getComputedStyle(parent).visibility === 'hidden') continue
+      const link = parent.closest('a[href]')
+      const inLink = link && root.contains(link) ? link : null
+      if (inLink !== openLink) {
+        closeLink()
+        openLink = inLink
+      }
+      parts.push(node.textContent || '')
+    }
+    closeLink()
+    return parts.join(' ').replace(/\s+/g, ' ').replace(/\s+([.,;:!?)])/g, '$1').trim()
+  }
+  const norm = (s: string): string => clean(s).toLowerCase().replace(/[\s.:?!]+$/, '')
+  /**
+   * Text with the label cut off where it starts or ends it, then any option texts left at its
+   * end. Never from the middle: "Please provide your GitHub username" keeps "GitHub" though the
+   * label is "GitHub", and an option "No" never cuts into "now".
+   */
+  const without = (text: string, label: string, options: string[]): string => {
+    let out = clean(text)
+    const l = clean(label)
+    if (l && out.toLowerCase().startsWith(l.toLowerCase())) out = out.slice(l.length)
+    else if (l && out.toLowerCase().endsWith(l.toLowerCase())) out = out.slice(0, out.length - l.length)
+    out = out.trim()
+    const opts = options.map(o => clean(o)).filter(Boolean).sort((a, b) => b.length - a.length)
+    for (let changed = true; changed && out;) {
+      changed = false
+      for (const o of opts) {
+        if (out.length > o.length && out.toLowerCase().endsWith(o.toLowerCase()) && /[^A-Za-z0-9]$/.test(out.slice(0, out.length - o.length))) {
+          out = out.slice(0, out.length - o.length).trim()
+          changed = true
+        }
+      }
+    }
+    return out.replace(/^[\s|:.,;-]+/, '').trim()
+  }
+  /** At least two words with letters: drops "Required", "Select...", "0/500", a lone asterisk. */
+  const saysSomething = (t: string): boolean => !GENERIC.test(t) && !/^(required|optional)$/i.test(t)
+    && t.split(/\s+/).filter(w => /[a-z]{2,}/i.test(w)).length >= 2
+  /** The largest ancestor that holds this field's controls and no other field's. */
+  const ownBlock = (members: Element[]): Element | null => {
+    let block: Element | null = null
+    let cur: Element | null = members[0]?.parentElement ?? null
+    for (let d = 0; cur && d < 12 && cur !== document.body && cur.tagName !== 'FORM'; d++, cur = cur.parentElement) {
+      const foreign = Array.from(cur.querySelectorAll(CONTROLS)).some(c => !members.some(m => m === c || m.contains(c) || c.contains(m))
+        && c.getAttribute('aria-hidden') !== 'true'
+        && (visible(c) || c.getAttribute('type') === 'file'))
+      if (foreign) break
+      block = cur
+    }
+    return block
+  }
+  const descriptionOf = (members: Element[], label: string, options: string[]): string | null => {
+    const parts: string[] = []
+    const add = (raw: string) => {
+      const t = without(raw, label, options)
+      if (!t || !saysSomething(t)) return
+      if (norm(label).includes(norm(t)) || parts.some(p => p.toLowerCase().includes(t.toLowerCase()))) return
+      for (let i = parts.length - 1; i >= 0; i--) if (t.toLowerCase().includes(parts[i]!.toLowerCase())) parts.splice(i, 1)
+      parts.push(t)
+    }
+    // 1. aria-describedby, minus error, placeholder, and status targets.
+    for (const m of members) {
+      for (const id of (m.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean)) {
+        if (/error|placeholder|live|status|count/i.test(id)) continue
+        const n = document.getElementById(id)
+        if (n && !members.includes(n)) add(textWithout(n, []))
+      }
+    }
+    // 2. The field's own block, less its label elements and option labels.
+    const labelEls: Element[] = []
+    for (const m of members) {
+      const l = labelElFor(m)
+      if (l) labelEls.push(l)
+      const wrap = m.closest('label')
+      if (wrap) labelEls.push(wrap)
+      for (const id of (m.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+        const n = document.getElementById(id)
+        if (n) labelEls.push(n)
+      }
+    }
+    const block = ownBlock(members)
+    if (block) add(textWithout(block, [...members, ...labelEls]))
+    // 3. Nothing yet: a paragraph directly above the field in the same group (no controls, not a heading).
+    if (!parts.length && block) {
+      const prev = block.previousElementSibling
+      if (prev && visible(prev) && !prev.matches('h1, h2, h3, h4, h5, h6, legend, hr') && !prev.querySelector(`${CONTROLS}, h1, h2, h3, h4, legend`)) add(textWithout(prev, []))
+    }
+    const out = parts.join(' ').replace(/\s+/g, ' ').trim()
+    return out ? out.slice(0, 1500) : null
+  }
+
+  const push = (f: Omit<RawField, 'description'>, members: Element[]) => {
     if (!f.selector || seen.has(f.selector)) return
     seen.add(f.selector)
+    // The section and label decide EEO; the description never does (a consent box naming the
+    // demographic survey is not a self-identification question).
     f.isEeo = EEO.test(`${f.label} ${f.section || ''}`) || /voluntary self|equal employment/i.test(f.section || '')
-    out.push(f)
+    let description: string | null = null
+    if (f.type !== 'file') {
+      try { description = descriptionOf(members, f.label, f.options) }
+      catch { description = null }
+    }
+    out.push({ ...f, description })
   }
 
   const controls = Array.from(document.querySelectorAll('input, select, textarea, [role="combobox"], [contenteditable="true"]'))
@@ -202,7 +373,7 @@ export function extractFieldsInPage(): RawField[] {
           section: sectionOf(el),
           isEeo: false,
           control: 'native',
-        })
+        }, members)
         continue
       }
     }
@@ -227,14 +398,14 @@ export function extractFieldsInPage(): RawField[] {
           section: sectionOf(el),
           isEeo: false,
           control: 'buttons',
-        })
+        }, [el])
         continue
       }
       // A visually hidden checkbox whose label is visible is a styled checkbox.
       const lab = labelElFor(el) || el.closest('label')
       if (lab && visible(lab)) {
         const label = textOf(lab)
-        push({ selector: selectorOf(el), label: clean(label), type: 'checkbox', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' })
+        push({ selector: selectorOf(el), label: clean(label), type: 'checkbox', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' }, [el])
       }
       continue
     }
@@ -245,7 +416,7 @@ export function extractFieldsInPage(): RawField[] {
       // An unlabeled file input at the top of a form is the ATS's "autofill from resume" box.
       if (!id && !clean(textOf(labelElFor(el)))) continue
       const fileLabel = clean(label).replace(/\s+(attach|upload|choose|drop)\b.*$/i, '').trim() || clean(label)
-      push({ selector: selectorOf(el), label: fileLabel, type: 'file', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' })
+      push({ selector: selectorOf(el), label: fileLabel, type: 'file', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' }, [el])
       continue
     }
 
@@ -256,12 +427,12 @@ export function extractFieldsInPage(): RawField[] {
     if (!clean(label)) continue
 
     if (role === 'combobox' && tag !== 'select') {
-      push({ selector: selectorOf(el), label: clean(label), type: 'select', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'combobox' })
+      push({ selector: selectorOf(el), label: clean(label), type: 'select', required: requiredOf(el, label), options: [], maxLength: null, section: sectionOf(el), isEeo: false, control: 'combobox' }, [el])
       continue
     }
     if (tag === 'select') {
       const opts = Array.from((el as HTMLSelectElement).options).map(o => clean(o.text)).filter(t => t && !/^(select|choose|please select|--)/i.test(t))
-      push({ selector: selectorOf(el), label: clean(label), type: 'select', required: requiredOf(el, label), options: opts, maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' })
+      push({ selector: selectorOf(el), label: clean(label), type: 'select', required: requiredOf(el, label), options: opts, maxLength: null, section: sectionOf(el), isEeo: false, control: 'native' }, [el])
       continue
     }
     const ft: FormFieldType = tag === 'textarea' || el.getAttribute('contenteditable') === 'true'
@@ -280,7 +451,7 @@ export function extractFieldsInPage(): RawField[] {
       section: sectionOf(el),
       isEeo: false,
       control: 'native',
-    })
+    }, [el])
   }
   return out
 }
@@ -305,16 +476,31 @@ export async function readComboboxOptions(frame: Frame, fields: RawField[]): Pro
   }
 }
 
+/**
+ * A field's description as stored: whitespace collapsed, required markers dropped, at most 1,500
+ * characters. Not cleanFieldLabel(): the employer's own sentences, addresses, and links stay as written.
+ */
+export function cleanFieldDescription(text: string | null | undefined, label = ''): string | null {
+  const t = (text ?? '').replace(/[✱]+/g, ' ').replace(/\s\*+(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!t || t.toLowerCase() === label.trim().toLowerCase()) return null
+  return t.slice(0, 1500)
+}
+
 export function toFormFields(raw: RawField[]): FormField[] {
-  return raw.map((r, i) => ({
-    id: `f${i + 1}`,
-    selector: r.selector,
-    label: cleanFieldLabel(r.label).slice(0, 500),
-    type: r.type,
-    required: r.required,
-    ...(r.options.length ? { options: r.options } : {}),
-    maxLength: r.maxLength,
-    section: r.section,
-    isEeo: r.isEeo,
-  }))
+  return raw.map((r, i) => {
+    const label = cleanFieldLabel(r.label).slice(0, 500)
+    const description = cleanFieldDescription(r.description, label)
+    return {
+      id: `f${i + 1}`,
+      selector: r.selector,
+      label,
+      type: r.type,
+      required: r.required,
+      ...(r.options.length ? { options: r.options } : {}),
+      maxLength: r.maxLength,
+      section: r.section,
+      isEeo: r.isEeo,
+      ...(description ? { description } : {}),
+    }
+  })
 }

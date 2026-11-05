@@ -196,6 +196,14 @@ export interface FormField {
   section?: string | null
   /** Gender, race, veteran, disability and similar voluntary self-identification questions. */
   isEeo?: boolean
+  /**
+   * The form's own instruction or description for the field, when it says more than the label:
+   * a Lever card's text above a checkbox whose label is only the option ("Stay Connected | ...
+   * please add no-reply@hire.lever.co to your safe sender list"), a Greenhouse or Ashby question
+   * description, aria-describedby text, or the paragraph directly above the field. Cloudflare
+   * hidden email addresses are decoded. Never part of `label`, so label matching never sees it.
+   */
+  description?: string | null
 }
 
 export type AnswerSource =
@@ -473,6 +481,8 @@ export interface QuestionView {
   answer: string | null
   /** Pending knows or has_done question with evidence from Devin's own GitHub commits. Null when there is none. */
   repoSuggestion?: RepoSuggestionView | null
+  /** A form_field question: the form's own text for the field it came from (FormField.description). */
+  formText?: string | null
 }
 
 export interface DemoProjectView {
