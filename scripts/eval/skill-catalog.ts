@@ -10,6 +10,8 @@
 //   ... cases <snapshot.db> <outDir> --plan <plan.json> [--distill-model m] [--review-model m] [--label name]
 //     Applies the plan to a fresh copy, then distills each of the key's new-requirement cases on its
 //     own (one ask each, as at ask time) and scores them, with latency and estimated cost per call.
+//   ... report <snapshot.db> <outDir> --plan <plan.json> [--label name]
+//     Writes the catalog report and score for an existing plan, without a Claude call.
 //   ... apply <db> --plan <plan.json>
 //     Applies a plan to a database (a local copy), as production would once it is approved.
 //   ... emit --plan <plan.json> [--approved]
@@ -57,7 +59,7 @@ export const APPROVED_SKILL_CATALOG: CatalogPlan | null = ${JSON.stringify(lean,
 }
 
 const [source, outDir] = positional
-if (!['bootstrap', 'cases', 'apply'].includes(mode ?? '') || !source || (mode !== 'apply' && !outDir)) {
+if (!['bootstrap', 'cases', 'apply', 'report'].includes(mode ?? '') || !source || (mode !== 'apply' && !outDir)) {
   console.error('usage: skill-catalog.ts bootstrap|cases <snapshot.db> <outDir> [...] | apply <db> --plan <plan.json> | emit --plan <plan.json> [--approved]')
   process.exit(2)
 }
@@ -113,6 +115,13 @@ q.refileSubjectSectionsOnce()
 type Plan = Awaited<ReturnType<typeof sc.bootstrapCatalog>>
 const subjects = new Map<number, string>(db.select({ id: questions.id, subject: questions.subject }).from(questions).all().map((r: any) => [r.id, r.subject]))
 const cell = (s: unknown) => String(s ?? '').replace(/\|/g, '/').replace(/\s+/g, ' ').trim()
+/** Model reasons cite prompt ids ("S2", "P14", "Q161"); the report names them instead. */
+const plain = (s: unknown) => cell(s)
+  .replace(/\bS1\b/g, '"Using AI for supervised coding"')
+  .replace(/\bS2\b/g, '"Using AI in unsupervised processes"')
+  .replace(/\bS\d+\b/g, 'an existing skill')
+  .replace(/\bP\d+\b/g, 'another proposed skill')
+  .replace(/\b[QR](\d+)\b/g, '#$1')
 
 function entryMap(plan: Plan): Map<number, string> {
   const map = new Map<number, string>()
@@ -177,6 +186,14 @@ if (mode === 'apply') {
   console.log(`applied to ${dbPath}: ${applied.entries} skills, ${applied.merged.length} merged, ${applied.reworded.length} reworded, ${applied.skipped.length} skipped, ${applied.repointed.length} applications pointed at canonical questions`)
   for (const s of applied.skipped) console.log(`  skipped #${s.id} (${s.skill}): ${s.reason}`)
   process.exit(0)
+}
+
+if (mode === 'report') {
+  const plan: Plan = JSON.parse(readFileSync(flag('plan')!, 'utf8'))
+  const s = score(plan)
+  writeFileSync(join(outDir!, `${label}-catalog.md`), catalogReport(plan, s))
+  writeFileSync(join(outDir!, `${label}-score.json`), JSON.stringify({ label, ...s }, null, 2))
+  console.log(`${label}: hard key ${s.passed}/${s.total}; report ${join(resolve(outDir!), `${label}-catalog.md`)}`)
 }
 
 if (mode === 'bootstrap') {
@@ -251,6 +268,10 @@ if (mode === 'cases') {
   console.log(`\n${label}: cases ${passed}/${results.length}; ${summary.avgSeconds.toFixed(1)} s a case; ${Object.entries(summary.perPurpose).map(([p, v]) => `${p} ${v.calls} calls est. $${v.estUsdPerCall.toFixed(4)} a call`).join('; ')}`)
 }
 
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9+#]+/g, ' ').trim()
+}
+
 /** The catalog report Devin reviews before anything applies in production. */
 function catalogReport(plan: Plan, s: ReturnType<typeof score>): string {
   const lines: string[] = []
@@ -263,7 +284,8 @@ function catalogReport(plan: Plan, s: ReturnType<typeof score>): string {
   lines.push(`- ${plan.entries.length} skills from ${plan.candidates} open, answered, and app-skipped skill and experience questions.`)
   lines.push(`- ${multi.length} skills hold more than one question; ${single.length} hold one.`)
   lines.push(`- ${merges.length} questions would merge into their skill's question (status skipped, note "Merged into question #N").`)
-  lines.push(`- ${rewords.length} open questions would be reworded to their skill's name and generic question; their knowledge base key follows the skill. Answered questions keep their wording.`)
+  const renamed = rewords.filter(e => normalize(e.members.find(m => m.id === e.canonicalId)?.subject ?? '') !== normalize(e.name))
+  lines.push(`- ${rewords.length} open questions would be reworded to their skill's generic question; ${renamed.length} of them also take a new subject (the skill name), and their knowledge base key follows it. Answered questions keep their wording. Your call: reword all of them, only the ${multi.filter(e => e.reword).length} skills with more than one question, or none.`)
   lines.push(`- ${plan.entries.filter(e => e.conflict).length} skills hold two answers of yours that differ; nothing in them merges.`)
   lines.push(`- Answer key: ${s.passed} of ${s.total} hard checks pass.`, '')
 
@@ -291,7 +313,7 @@ function catalogReport(plan: Plan, s: ReturnType<typeof score>): string {
   for (const e of plan.entries) {
     for (const o of KEY.open) {
       const here = e.members.filter(m => o.ids.includes(m.id))
-      for (const m of here) lines.push(`- ${cell(o.label)}: #${m.id} ${cell(m.subject)} is under **${cell(e.name)}**. ${cell(m.why)}`)
+      for (const m of here) lines.push(`- ${cell(o.label)}: #${m.id} ${cell(m.subject)} is under **${cell(e.name)}**. Why: ${plain(m.why)}`)
     }
   }
   if (s.misses.length) {
@@ -300,7 +322,7 @@ function catalogReport(plan: Plan, s: ReturnType<typeof score>): string {
   }
   if (plan.review.length) {
     lines.push('', '## What the review changed', '')
-    for (const r of plan.review) lines.push(`- ${cell(r.what)}: ${cell(r.reason)}`)
+    for (const r of plan.review) lines.push(`- ${cell(r.what)}: ${plain(r.reason)}`)
   }
   lines.push('', '## Skills with more than one question', '')
   for (const e of multi) {
@@ -313,9 +335,10 @@ function catalogReport(plan: Plan, s: ReturnType<typeof score>): string {
     lines.push('')
   }
   lines.push('## Skills with one question', '')
-  lines.push('| Id | Subject | Skill | Reworded |', '|---|---|---|---|')
+  lines.push('A reworded question takes the skill name as its subject and the generic question as its wording; when the name differs from the subject, its knowledge base key moves to the skill name too.', '')
+  lines.push('| Id | Subject now | Skill | Reworded to |', '|---|---|---|---|')
   for (const e of single) {
-    for (const m of e.members) lines.push(`| #${m.id} | ${cell(m.subject)} | ${cell(e.name)} | ${e.reword ? `yes: "${cell(e.question)}"` : 'no'} |`)
+    for (const m of e.members) lines.push(`| #${m.id} | ${cell(m.subject)} | ${cell(e.name)}${normalize(m.subject) !== normalize(e.name) ? ' (renamed)' : ''} | ${e.reword ? `"${cell(e.question)}"` : 'kept'} |`)
     if (!e.members.length) lines.push(`| none | (no question yet) | ${cell(e.name)} | no |`)
   }
   return `${lines.join('\n')}\n`
