@@ -57,6 +57,7 @@ A statement that Devin has NOT done something, lacks a skill, or would need to l
 A claim about the employer or the role needs the POSTING. A claim about Devin never comes from the POSTING, even when the posting uses the same words.
 Write every claim with its subject first: "Devin ..." for Devin, "The employer ..." or "The role ..." for the posting.
 Rewording, summarizing, and choosing what to emphasize are fine, but the quote must come from the source word for word.
+Stating the skill a specific piece of work in a source shows ("where the data was missing, I designed sensible defaults" for an entry that credits unsigned articles to the firm instead of guessing an author) summarizes that work: quote the work. It may not widen the scope, add a result, or claim a skill the work does not show.
 Plain enthusiasm or intent ("I would like to bring this to your team") is not a claim; list no claims for it.
 Numbers must match the source exactly. "Over 6 years" is supported by "6+ years". "8 years" is not.
 
