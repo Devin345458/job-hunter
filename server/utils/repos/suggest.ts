@@ -4,6 +4,7 @@ import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/s
 import type { RepoEvidence } from '#shared/types/repos'
 import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../ai'
 import { scrubDashes, unsupportedNumbers } from '../apply/text'
+import { cutToFit } from '../apply/fit'
 import { SEARCH_RULES, appRepoLevel, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
@@ -16,14 +17,18 @@ import { APP_REPO_FRAMING, APP_REPO_FRAMING_SENTENCE, isAppRepo, saysDirected } 
 // what the commits show, and the commits it rests on. Devin confirms with one tap and Save.
 // No hits stores status none, which shows nothing: finding nothing is never a No.
 
-const DRAFT_MAX = 600
+/** Devin's house style (2026-11-05): about 350 to 650 characters, never over 800. */
+const DRAFT_TARGET = 650
+const DRAFT_MAX = 800
 
 /**
  * The version of the draft wording rules. A suggested row written under an older one is judged
  * again on the next run, whatever its hit set, so its example is rewritten (the commits it cites
- * stay). 2: the example names no client, repo, or organization (2026-11-03).
+ * stay). 2: the example names no client, repo, or organization (2026-11-03). 3: Devin's house
+ * style: it opens with the level, then what he did and where, then the skills he used; no dates,
+ * no file or code names, 2 to 4 sentences (2026-11-05).
  */
-export const SUGGEST_TEXT_RULES = 2
+export const SUGGEST_TEXT_RULES = 3
 
 /** The draft wording version a stored result was written under; 1 before versions were recorded. */
 export function textRulesOf(termsJson: string | null | undefined): number {
@@ -46,7 +51,7 @@ const TermsSchema = z.object({
 const JudgeSchema = z.object({
   level: z.enum(['Yes', 'Some experience', 'None']),
   reason: z.string().describe('One short sentence on why, for the log.'),
-  draft: z.string().describe('First person as Devin, one to three plain sentences, empty when level is None.'),
+  draft: z.string().describe('First person as Devin, two to four plain sentences (one when the commits show only that much), without the level, empty when level is None.'),
   evidence: z.array(z.object({
     sha: z.string().describe('A sha from the list, as given.'),
     line: z.string().describe('One plain line under 120 characters on what this commit shows.'),
@@ -110,7 +115,7 @@ Rules:
 - A dependency in a manifest is context only. Evidence is always one of the listed commits.
 - evidence: one to five listed commits that best show it, by sha, each with one plain factual line about what that commit did ("Added WebAuthn registration and login endpoints"). Never cite a sha that is not listed.
 - Prefer commits that changed code or configuration. A commit that only edited notes, docs, or a task list is weaker. Cite it only when nothing better shows the point.
-- draft: the example only, for a box under the question that asks "Where did you do it?". The level is picked separately, so never start with Yes, No, or the level. First person as Devin, one to three plain sentences, under ${DRAFT_MAX} characters. Say what the project is in the words of its description (given beside each repo), what he built or did, and when (month and year from the commit dates). Never name a client, a repo, a GitHub organization, or a product, and never write the word repo: "On car wash management software in August 2026 I integrated Sentry", never "In the WashWerk repo". Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes. Empty when level is None.`
+- draft: the example for a box under the question that asks "Where did you do it?", in Devin's house style: short and skill-forward. Never start with Yes, No, or the level: the app puts the level in front. First person as Devin. First what he did and where, in one sentence, with the project in the words of its description (given beside each repo). Then the skills he used in that work: state each specific change as the skill it shows ("where the data was missing, I set sensible defaults"), not change by change. At most one other project. Two to four plain sentences when the commits show that much (one is fine when they show only one thing), about 350 to ${DRAFT_TARGET} characters, never over ${DRAFT_MAX}. Leave out dates and months, file, field, function, and package names, version strings, and counts of commits or files. Never name a client, a repo, a GitHub organization, or a product, and never write the word repo: "On car wash management software I set up error tracking with Sentry", never "In the WashWerk repo". Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes, no semicolons. Empty when level is None.`
 }
 
 /** The search rules version a stored result was made under; 1 before versions were recorded. */
@@ -315,11 +320,17 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       }
       // Last guard: a repo, owner, or organization name left in the draft reads as its description.
       const named = withoutRecordNames(scrubDashes(verdict.draft.trim()), names)
+      // This app's repo alone supports a framework topic as Some experience at most: agents he
+      // directed wrote it. Another repo's commit among the evidence can carry a Yes.
+      const level = verdict.level === 'None' ? null : appRepoLevel(verdict.level, found.appRepo, evidence.every(e => isAppRepo(e.repo)))
+      // The house style opens with the level (after the cap above, so the text and the level agree).
+      const opened = named && level ? `${level === 'Yes' ? 'Yes.' : 'Some experience.'} ${named.replace(/^(?:yes|some experience)\b[.,:]?\s*/i, '')}` : named
       // A draft resting on this app's own commits says how it was built (agents he directed).
-      const framed = evidence.some(e => isAppRepo(e.repo)) && named && !saysDirected(named) ? `${named} ${APP_REPO_FRAMING_SENTENCE}` : named
-      const draft = (framed.length <= DRAFT_MAX ? framed : named).slice(0, DRAFT_MAX)
+      const framed = evidence.some(e => isAppRepo(e.repo)) && opened && !saysDirected(opened) ? `${opened} ${APP_REPO_FRAMING_SENTENCE}` : opened
+      // Never over the limit, and never cut inside a sentence.
+      const draft = framed.length <= DRAFT_MAX ? framed : cutToFit(opened, DRAFT_MAX)
       const invented = unsupportedNumbers(draft, sourceText(found))
-      if (verdict.level === 'None' || !evidence.length || !draft || invented.length) {
+      if (!level || !evidence.length || !draft || invented.length) {
         const why = invented.length ? `draft named numbers the commits do not show: ${invented.join(', ')}` : verdict.reason
         upsert(q.id, { status: 'none', subject, termsJson, level: null, draft: null, evidenceJson: null, commitShasJson: JSON.stringify(hitShas), error: invented.length ? why : null })
         stats.none++
@@ -327,9 +338,6 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         log(`question ${q.id} (${subject}): ${hitShas.length} hits, no suggestion: ${why}`)
         continue
       }
-      // This app's repo alone supports a framework topic as Some experience at most: agents he
-      // directed wrote it. Another repo's commit among the evidence can carry a Yes.
-      const level = appRepoLevel(verdict.level, found.appRepo, evidence.every(e => isAppRepo(e.repo)))
       upsert(q.id, { status: 'suggested', subject, termsJson, level, draft, evidenceJson: JSON.stringify(evidence), commitShasJson: JSON.stringify(hitShas), error: null })
       stats.suggested++
       stats.results.push({ questionId: q.id, subject, outcome: 'suggested', hits: hitShas.length, level })

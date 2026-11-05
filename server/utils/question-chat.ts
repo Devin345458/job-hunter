@@ -312,6 +312,9 @@ The suggestedAnswer field:
 - When you set it, the reply says in one short sentence why that answer fits what he told you.`
 }
 
+/** What Devin's house style (2026-11-05) leaves out of every answer the app drafts. */
+const STYLE_LEAVE_OUT = 'Leave out dates and months (years of experience such as "8+ years" may stay), a definition of the term the question asks about (the employer knows it), any debugging story (what broke, the order he tried things), file, field, function, and package names, and numbers that are not meaningful scope ("three apps" stays, "151 of 188 elements" goes).'
+
 function draftRules(limit: number): string {
   return `
 The draft field (a written answer Devin can paste into the answer box and edit):
@@ -323,7 +326,8 @@ The draft field (a written answer Devin can paste into the answer box and edit):
 - When the answer needs an outcome or result and neither Devin nor an entry gave one, leave draft null and ask him for it in one short question instead of writing one. If he already said there was none, or answered your question without one, write the draft without a result.
 - Many entries record Devin's answer to a question, written "Has done this: X. (Answer to: <question>)". That confirms the question's main point only. Examples inside the question ("tools like Copilot or Claude") are not facts about Devin: never name one of them as something he uses unless he says so.
 - List the entries the draft uses in draftSources, written as [category/key].
-- Write it in the first person as Devin, plain and specific, with no dashes. Keep it to the length this field suits: two to four sentences and under ${limit} characters.
+- Write it in the first person as Devin, plain and direct, with no dashes and no semicolons, in his house style: the answer first, then what he did and where in one sentence, then the skills he used in that work (a specific decision stated as the skill it shows, "where the data was wrong or missing, I designed sensible defaults"), then at most one supporting project. Two to four sentences, about 350 to 650 characters when the entries and his words give that much (never pad), never over ${Math.min(limit, 800)} characters.
+- ${STYLE_LEAVE_OUT}
 - If the knowledge base and the conversation give too little for an honest answer, or Devin asks for more than they support, leave draft null and ask him one short follow-up question in the reply instead (for example "Which AI tools do you use day to day?").
 - When you give a draft, the reply is one or two sentences naming the knowledge base entries it draws on. Do not repeat the draft in the reply.${RECORDS_DRAFT_RULE}`
 }
@@ -334,7 +338,8 @@ The draft field (an example Devin can put in the "Where did you do it?" box unde
 - Leave it null unless Devin asks for help writing the example (for example "help me write the example") or asks you to change a draft.
 - The example comes only from what Devin types in this conversation. Never take any of it from the knowledge base, the job posting, or the question, and never guess.
 - When he asks for help and his messages do not yet say where he did it and what he did, leave draft null and ask at most two short questions in the reply: where he did it (the job or project) and what he did, plus the result if there was one.
-- Once his messages say where and what, write the draft in the first person as Devin: one to three plain sentences, under ${limit} characters, no dashes. Keep his own words where you can. Name no employer, product, event, audience, number, date, or result that he did not type here, and never make it stronger than what he said.
+- Once his messages say where and what, write the draft in the first person as Devin, in his house style: what he did and where, then the skills he used in that work (a specific decision stated as the skill it shows), at most one supporting project. One to four plain sentences, under 650 characters when his words give that much (never pad), never over ${Math.min(limit, 800)} characters, no dashes, no semicolons. Keep his own words where you can.
+- ${STYLE_LEAVE_OUT} Name no employer, product, event, audience, number, date, or result that he did not type here, and never make it stronger than what he said.
 - Add no outcome, effect, benefit, or adjective he did not give ("so nothing was lost", "instead of being lost", "which saved time", "successfully", "key"). Keep each of his facts about the same subject he gave it.
 - If he gave no result and none of your replies has asked about the result yet, ask once before drafting. Otherwise write the draft without a result. Never ask about the result more than once.
 - When you give a draft, the reply is one short sentence saying it uses only what he told you here. Do not repeat the draft in the reply.${RECORDS_DRAFT_RULE}`

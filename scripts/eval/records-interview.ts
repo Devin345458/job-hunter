@@ -1,21 +1,25 @@
-// Draft from my records against the local harness drafts, judged blind as interview answers.
-// Runs the app's own draftFromRecords() (server/utils/draft-from-records.ts) on a copy of a
+// Draft from my records against other drafts for the same questions, judged blind on Devin's house
+// style. Runs the app's own draftFromRecords() (server/utils/draft-from-records.ts) on a copy of a
 // production snapshot, on Devin's subscription through the Agent SDK (the token comes from the
 // worktree .env and is never printed), with his local memory server, then has a separate judge call
-// score each app draft and the local draft for the same question on the answer guide's rubric
-// (Direct answer, Concrete evidence, Ownership and judgment, Outcome, Calibration; ANSWER_RUBRIC in
+// score each app draft and the other draft for the same question on the style's rubric (Direct
+// answer, Scope, Skills shown, Short and plain, Calibration; ANSWER_RUBRIC in
 // server/utils/draft-from-records.ts) without saying which is which. Each pair is judged twice, once
-// in each order, and the two scores are averaged. Hard fails: more than 6 sentences, over 1,200
-// characters, or a dash (code), and a tool list (the judge). The ship bar: no hard fail, nothing
-// under 3, an average of 4 or more. The judge cannot see the records, so the "no record supports
-// it" and "names a client" fails are left to the app's own guards and are not scored for either.
+// in each order, and the two scores are averaged. Hard fails: more than 4 sentences after the level,
+// over 800 characters, a dash, or a semicolon (code), and a tool list (the judge). The ship bar: no
+// hard fail, nothing under 3, an average of 4 or more. What code sees the style leaves out (a date,
+// a file or code name; styleFaults()) is printed for both. The judge cannot see the records, so the
+// "no record supports it" and "names a client" fails are left to the app's own guards and are not
+// scored for either.
 //
 //   env -u ANTHROPIC_BASE_URL npx tsx --tsconfig scripts/eval/tsconfig.json scripts/eval/records-interview.ts \
-//     <snapshotCopy.db> <localDrafts.json> <out.json> [questionIds]
+//     <snapshotCopy.db> <otherDrafts.json> <out.json> [questionIds]
 //
-// localDrafts.json: { "<id>": "<local draft text>", ... }. Prints per-question scores, the averages,
-// and every app draft with its "To make this stronger" questions. RECORDS_DRAFT_DEBUG=1 also prints
-// each sentence Claude wrote with the check that kept, trimmed, or dropped it (never set in production).
+// otherDrafts.json: { "<id>": "<draft text>", ... }, or the out.json of an earlier run (its app
+// drafts are the other side, which compares a change before and after). An id with no other draft
+// is drafted and coached, not judged. Prints per-question scores, lengths, the averages, and every
+// app draft with its "To make this stronger" questions. RECORDS_DRAFT_DEBUG=1 also prints each
+// sentence Claude wrote with the check that kept, trimmed, or dropped it (never set in production).
 
 import { readFileSync, writeFileSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
@@ -44,7 +48,11 @@ if (!envToken) {
   console.error('NUXT_CLAUDE_CODE_OAUTH_TOKEN is not in .env')
   process.exit(2)
 }
-const local: Record<string, string> = JSON.parse(readFileSync(localPath, 'utf8'))
+const localRaw = JSON.parse(readFileSync(localPath, 'utf8'))
+// An earlier run's out.json: its app drafts are the other side.
+const local: Record<string, string> = Array.isArray(localRaw)
+  ? Object.fromEntries(localRaw.filter((r: any) => typeof r?.app === 'string' && r.app).map((r: any) => [String(r.id), r.app]))
+  : localRaw
 const ids = (idsArg ? idsArg.split(',') : Object.keys(local)).map(Number).filter(Boolean)
 
 await setupGlobals({
@@ -67,11 +75,13 @@ const mem = await import('../../server/utils/memory')
 // The laptop daemon is shared with every Claude session on it and took 28 seconds to open a
 // session on 2026-11-04; production's 10 seconds would leave memory out of every draft here.
 Object.assign(mem.MEMORY_LIMITS as any, { connectMs: 90_000, totalMs: 240_000 })
-const { draftFromRecords, ANSWER_RUBRIC, codeHardFails, clearsBar } = await import('../../server/utils/draft-from-records')
+const { draftFromRecords, ANSWER_RUBRIC, DIMENSIONS, RECORDS_LIMITS, answerSentenceCount, codeHardFails, clearsBar, styleFaults } = await import('../../server/utils/draft-from-records')
 const { aiStructured } = await import('../../server/utils/ai')
 
-const DIMS = ['Direct answer', 'Concrete evidence', 'Ownership and judgment', 'Outcome', 'Calibration'] as const
+const DIMS = DIMENSIONS
 type Dim = typeof DIMS[number]
+/** Characters, sentences after the level, and what the style leaves out that code sees. */
+const shape = (text: string) => ({ chars: text.length, sentences: answerSentenceCount(text), faults: styleFaults(text) })
 
 const JudgeShape = z.object({
   answers: z.array(z.object({
@@ -81,14 +91,14 @@ const JudgeShape = z.object({
       score: z.number().int(),
       quote: z.string(),
     })).describe('All five dimensions.'),
-    toolList: z.boolean().describe('True when the answer lists tools or skills instead of telling what he did with them.'),
+    toolList: z.boolean().describe('True when the answer lists tools or skills instead of saying what he did with them.'),
     why: z.string().describe('One or two lines on what earns or costs the scores.'),
   })),
 })
 
 const JUDGE_SYSTEM = `You are an experienced hiring manager. A software developer gives a written answer to an employer's screening question; a recruiter's software reads it first, then a person skims it.
 ${ANSWER_RUBRIC}
-Say whether each answer is a tool list. You cannot check whether the claims are true; score each answer as written, on its own merits. The order the answers appear in means nothing.`
+Say whether each answer is a tool list. You cannot check whether the claims are true; score each answer as written, on its own merits, against the style. The order the answers appear in means nothing.`
 
 function avg(xs: number[]): number {
   return xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 100) / 100 : 0
@@ -119,7 +129,7 @@ async function judge(id: number, question: string, requirement: string | null, a
     runs.push({ order: appFirst ? 'app first' : 'local first', app: toScores(appAns), local: toScores(localAns), appTools: appAns.toolList, localTools: localAns.toolList, appWhy: appAns.why, localWhy: localAns.why })
   }
   const mean = (k: 'app' | 'local') => Object.fromEntries(DIMS.map(d => [d, avg(runs.map(r => r[k][d]))])) as Scores
-  const fails = (text: string, tools: boolean) => [...codeHardFails(text, 1200), ...(tools ? ['A tool list'] : [])]
+  const fails = (text: string, tools: boolean) => [...codeHardFails(text, RECORDS_LIMITS.maxChars), ...(tools ? ['A tool list'] : [])]
   const appFails = fails(app, runs.every(r => r.appTools))
   const localFails = fails(localText, runs.every(r => r.localTools))
   const app_ = mean('app')
@@ -149,8 +159,8 @@ for (const id of ids) {
   const localText = local[String(id)]
   if (!localText) {
     // No local draft to compare: the draft and its coach pass only (the Some experience and No paths).
-    console.log(`drafted in ${seconds} seconds; no local draft to judge against`)
-    results.push({ id, subject: q.subject, question: q.question, seconds, steps, memory: res.memory, app: res.draft.text, appChars: res.draft.text.length, level: res.draft.level, adjacentOnly: !!res.draft.adjacentOnly, coach: res.draft.coach ?? null, reply: res.reply, unjudged: true })
+    console.log(`drafted in ${seconds} seconds; no other draft to judge against`)
+    results.push({ id, subject: q.subject, question: q.question, seconds, steps, memory: res.memory, app: res.draft.text, appChars: res.draft.text.length, appShape: shape(res.draft.text), level: res.draft.level, adjacentOnly: !!res.draft.adjacentOnly, coach: res.draft.coach ?? null, reply: res.reply, unjudged: true })
     writeFileSync(outPath, JSON.stringify(results, null, 2))
     continue
   }
@@ -172,10 +182,13 @@ for (const id of ids) {
     memory: res.memory,
     app: res.draft.text,
     appChars: res.draft.text.length,
+    appShape: shape(res.draft.text),
+    level: res.draft.level,
     sentences: res.draft.sentences.map(s => ({ text: s.text, sources: s.sources.map(x => `${x.kind}: ${x.label}${x.detail ? ` (${x.detail})` : ''}`) })),
     coach: res.draft.coach ?? null,
     reply: res.reply,
     local: localText,
+    localShape: shape(localText),
     judge: verdict,
     appTotal: total(verdict.app),
     localTotal: total(verdict.local),
@@ -191,24 +204,27 @@ for (const r of results) {
     continue
   }
   if (r.unjudged) {
-    console.log(`\n${r.id} ${r.subject} (${r.seconds} s, level ${r.level ?? 'none'}, ${r.appChars} chars, not judged: no local draft)`)
+    console.log(`\n${r.id} ${r.subject} (${r.seconds} s, level ${r.level ?? 'none'}, ${r.appChars} chars, ${r.appShape.sentences} sentences${r.appShape.faults.length ? `, ${r.appShape.faults.join('; ')}` : ''}, not judged: no other draft)`)
     console.log(`  REPLY: ${r.reply}`)
     console.log(`  APP DRAFT: ${r.app}`)
     for (const qq of r.coach?.questions ?? []) console.log(`  STRONGER: ${qq}`)
     if (r.coach) console.log(`  COACH: ${r.coach.scores.map((x: any) => `${x.dimension} ${x.score}`).join(', ')}; average ${r.coach.average}; ${r.coach.ships ? 'clears the bar' : 'under the bar'}${r.coach.rewritten ? '; rewritten once' : ''}`)
     continue
   }
-  console.log(`\n${r.id} ${r.subject} (${r.seconds} s, memory ${r.memory}, ${r.appChars} chars)`)
-  console.log(`  app   ${r.appTotal}  ${line(r.judge.app)}  ${r.judge.appShips ? 'SHIPS' : 'under the bar'}${r.judge.appFails.length ? ` (hard fails: ${r.judge.appFails.join('; ')})` : ''}`)
-  console.log(`  local ${r.localTotal}  ${line(r.judge.local)}  ${r.judge.localShips ? 'SHIPS' : 'under the bar'}${r.judge.localFails.length ? ` (hard fails: ${r.judge.localFails.join('; ')})` : ''}`)
+  const len = (sh: ReturnType<typeof shape>) => `${sh.chars} chars, ${sh.sentences} sentences${sh.faults.length ? `, ${sh.faults.join('; ')}` : ''}`
+  console.log(`\n${r.id} ${r.subject} (${r.seconds} s, memory ${r.memory}, level ${r.level ?? 'none'})`)
+  console.log(`  app   ${r.appTotal}  ${line(r.judge.app)}  ${r.judge.appShips ? 'SHIPS' : 'under the bar'}${r.judge.appFails.length ? ` (hard fails: ${r.judge.appFails.join('; ')})` : ''}  [${len(r.appShape)}]`)
+  console.log(`  other ${r.localTotal}  ${line(r.judge.local)}  ${r.judge.localShips ? 'SHIPS' : 'under the bar'}${r.judge.localFails.length ? ` (hard fails: ${r.judge.localFails.join('; ')})` : ''}  [${len(r.localShape)}]`)
   console.log(`  APP DRAFT: ${r.app}`)
+  console.log(`  OTHER DRAFT: ${r.local}`)
   for (const qq of r.coach?.questions ?? []) console.log(`  STRONGER: ${qq}`)
   if (r.coach) console.log(`  COACH: ${r.coach.scores.map((x: any) => `${x.dimension} ${x.score}`).join(', ')}; average ${r.coach.average}; ${r.coach.ships ? 'clears the bar' : 'under the bar'}${r.coach.rewritten ? '; rewritten once' : ''}`)
 }
 const ok = results.filter(r => !r.error && !r.unjudged)
 const dimAvg = (k: 'app' | 'local') => DIMS.map(d => `${d} ${avg(ok.map(r => r.judge[k][d]))}`).join(', ')
-console.log(`\nAverages over ${ok.length} questions: app ${avg(ok.map(r => r.appTotal))}, local ${avg(ok.map(r => r.localTotal))}`)
+console.log(`\nAverages over ${ok.length} questions: app ${avg(ok.map(r => r.appTotal))}, other ${avg(ok.map(r => r.localTotal))}`)
 console.log(`Per dimension, app: ${dimAvg('app')}`)
-console.log(`Per dimension, local: ${dimAvg('local')}`)
-console.log(`Clear the ship bar: app ${ok.filter(r => r.judge.appShips).length} of ${ok.length}, local ${ok.filter(r => r.judge.localShips).length} of ${ok.length}`)
+console.log(`Per dimension, other: ${dimAvg('local')}`)
+console.log(`Length, app: ${avg(ok.map(r => r.appShape.chars))} chars, ${avg(ok.map(r => r.appShape.sentences))} sentences; other: ${avg(ok.map(r => r.localShape.chars))} chars, ${avg(ok.map(r => r.localShape.sentences))} sentences`)
+console.log(`Clear the ship bar: app ${ok.filter(r => r.judge.appShips).length} of ${ok.length}, other ${ok.filter(r => r.judge.localShips).length} of ${ok.length}`)
 writeFileSync(outPath, JSON.stringify(results, null, 2))

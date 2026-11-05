@@ -95,19 +95,20 @@ export type RecordsMemoryUse = 'used' | 'none' | 'unreachable' | 'busy' | 'off'
  * level and scope up front, one project a reader can picture, his own decisions and why, a result
  * the records state, and a claim that matches the records exactly.
  */
-export type InterviewDimension = 'Direct answer' | 'Concrete evidence' | 'Ownership and judgment' | 'Outcome' | 'Calibration'
+/** The coach rubric's dimensions: Devin's house style (2026-11-05), short and skill-forward. */
+export type InterviewDimension = 'Direct answer' | 'Scope' | 'Skills shown' | 'Short and plain' | 'Calibration'
 
 /**
  * The coach pass on a finished draft: each dimension scored 1 to 5 with the sentence that earns it,
  * the hard fails, and whether it clears the ship bar (no hard fail, nothing under 3, an average of 4
  * or more). A draft under the bar gets one rewrite before Devin sees it. The questions ask for at
- * most two facts only Devin can add ("Add if true: what did you choose instead, and why?"), from the
+ * most two facts only Devin can add, a missing scope fact or result ("Add if true: how many projects have you done this for?"), from the
  * lowest dimensions; they are never filled in for him.
  */
 export interface RecordsDraftCoach {
   scores: Array<{ dimension: InterviewDimension; score: number; line: string; quote: string | null }>
   average: number
-  /** "More than 6 sentences", "A tool list", "Over 1,200 characters". */
+  /** "More than 4 sentences", "A tool list", "Over 800 characters", "A semicolon". */
   hardFails: string[]
   ships: boolean
   /** The draft shown is the rewrite of one that fell under the bar. */
