@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { and, eq, inArray, like, sql } from 'drizzle-orm'
 import { appSettings, jobs, questions } from '../db/schema'
 import type { Requirement } from '#shared/types/pipeline'
+import type { AnswerDepth } from '#shared/utils/limits'
 import { aiStructured, cachedPrompt, stepModel } from './ai'
 import { ruleTerm } from './learned-score'
 import { nowSql, parseJson } from './review'
@@ -80,7 +81,7 @@ export interface SkillEntry {
   phrasings: string[]
   /** The question asked for this skill, once one is. */
   questionId: number | null
-  /** A core skill; Devin may reserve longer answers for these. Editable later; nothing reads it yet. */
+  /** A core skill: drafts give it a full answer, every other skill 2 or 3 sentences (answerDepthFor). Editable on the Knowledge base page. */
   core: boolean
   source: 'seed' | 'distill' | 'bootstrap' | 'approved'
   createdAt: string
@@ -975,10 +976,38 @@ export function skillCatalogView(): SkillCatalogItem[] {
   }).sort((a, b) => Number(b.core) - Number(a.core) || b.wordings - a.wordings || a.name.localeCompare(b.name))
 }
 
-/** Marks a skill core or not. Drafts will give a core skill a full answer and every other skill 2 or 3 sentences. */
+/** Marks a skill core or not. Drafts give a core skill a full answer and every other skill 2 or 3 sentences (answerDepthFor). */
 export function setSkillCore(slug: string, core: boolean): SkillEntry | null {
   const e = catalogEntry(slug)
   if (!e) return null
   if (e.core !== core) saveEntry({ ...e, core })
   return { ...e, core }
+}
+
+
+/**
+ * The catalog skill a question asks about: the entry asked as this question (its questionId, or a
+ * question merged into this one), else the entry its subject's phrasing maps to. Null for a question
+ * that is not a skill or experience question, or that no entry covers.
+ */
+export function skillForQuestion(q: Pick<QuestionRow, 'id' | 'kind' | 'subject'>): SkillEntry | null {
+  if (q.kind !== 'knows' && q.kind !== 'has_done') return null
+  const catalog = loadCatalog()
+  const direct = catalog.find(e => e.questionId === q.id)
+  if (direct) return direct
+  const merged = catalog.find(e => e.questionId != null && canonicalQuestion(e.questionId)?.id === q.id)
+  if (merged) return merged
+  const match = q.subject?.trim() ? skillMatch(q.subject) : null
+  return match?.decided ? match.entry : null
+}
+
+/**
+ * How deep a drafted answer goes (Devin, 2026-11-05): core, a full answer in the shape of the one he
+ * wrote himself (about 1,200 characters in 3 or 4 short paragraphs); short, 2 or 3 conversational
+ * sentences. Only a core catalog skill is core; every other skill, and any question that is not a
+ * skill or experience question, is short.
+ */
+export function answerDepthFor(q: Pick<QuestionRow, 'id' | 'kind' | 'subject'>): { depth: AnswerDepth; skill: SkillEntry | null } {
+  const skill = skillForQuestion(q)
+  return { depth: skill?.core ? 'core' : 'short', skill }
 }

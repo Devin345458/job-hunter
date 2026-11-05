@@ -28,13 +28,14 @@ import { scrubDashes, unsupportedNumbers } from './apply/text'
 import { loadKnowledge, type KnowledgeEntry } from './knowledge'
 import { memoryLogLine, memoryTarget, searchMemory } from './memory'
 import { LEAD_LIMITS, memoryQueries, storedLeads } from './memory-leads'
-import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
+import { ANSWER_DEPTH_LIMITS, EXAMPLE_MAX_CHARS, type AnswerDepth } from '#shared/utils/limits'
 import { isLegacyQuestion, parseYesNo, questionExample, takesExample, waitingApplicationIds, type QuestionRow } from './questions'
 import { parseJson } from './review'
 import { fieldForQuestion } from './apply/field-text'
 import { githubChatSearch, githubPromptSection, githubSearchAvailable } from './repos/chat-search'
 import { cleanTerms, type TermSet } from './repos/search'
 import { withoutRecordNames } from './repos/describe'
+import { answerDepthFor } from './skill-catalog'
 
 // The chat panel on /questions. Devin asks what a generated question means, or asks for help
 // writing a free-text answer. Every fact the prompt holds is built here from the database; the
@@ -321,9 +322,23 @@ The suggestedAnswer field:
 
 /** What Devin's house style (2026-11-05) leaves out of every answer the app drafts. */
 const STYLE_SPOKEN = 'Write it the way he would say it to an interviewer across the table: contractions (I\'ve, it\'s, didn\'t), plain words, natural connectors ("Most recently"), no filler and no self-praise. Each sentence starts with its subject ("I" and a plain verb, or the level first: "Yes, I\'ve used it for years.") and holds one idea in about 25 words, never over 30. Never open a sentence with context ("On <project>,", "After <event>,", "At <employer>,"): put the project after the verb.'
-const STYLE_LEAVE_OUT = 'Leave out dates and months (years of experience such as "8+ years" may stay), a definition of the term the question asks about (the employer knows it), any debugging story (what broke, the order he tried things), file, field, function, and package names, and numbers that are not meaningful scope ("three apps" stays, "151 of 188 elements" goes).'
+const STYLE_LEAVE_OUT = 'Leave out dates and months (years of experience such as "8+ years" may stay), a definition of the term the question asks about (the employer knows it), any debugging story (what broke, the order he tried things), file, field, function, and package names, numbers that are not meaningful scope ("three apps" stays, "151 of 188 elements" goes), and any statistic only a script would count (a count of commits, projects, or files that neither an entry nor his own words state).'
 
-function draftRules(limit: number): string {
+/**
+ * The answer's shape by depth (Devin, 2026-11-05; answerDepthFor in skill-catalog.ts): a core
+ * catalog skill gets the full answer in the shape of the one he wrote himself, every other skill 2
+ * or 3 sentences. `source` names where its facts may come from. A form field's own limit wins.
+ */
+export function draftShape(depth: AnswerDepth, limit: number, source: string): string {
+  const lim = ANSWER_DEPTH_LIMITS[depth]
+  const max = Math.min(limit, lim.maxChars)
+  if (depth === 'core') {
+    return `This is one of his core skills, so the answer is the full version, in the shape of an answer he wrote himself: the level and the bigger point the plain yes stands for (the larger thing he built, led, or decided around it); the business result it produced; the structure he built, walked piece by piece with the reason each part exists; a time he measured something and changed what he did because of it; and the principle underneath. Leave out any part ${source} do not give, and never invent one: three solid paragraphs beat four padded ones. ${STYLE_SPOKEN} Three or four short paragraphs separated by a blank line, about ${lim.minChars} to ${lim.targetChars} characters when ${source} give that much (never pad), never over ${max} characters.`
+  }
+  return `It is the short version: the answer first, with what he did and where, then the skills he used in that work (a specific decision stated as the skill it shows, "I designed sensible defaults for data that was wrong or missing"), then at most one supporting project. ${STYLE_SPOKEN} Two or three sentences, about ${lim.minChars} to ${lim.targetChars} characters when ${source} give that much (never pad), never over ${max} characters.`
+}
+
+function draftRules(limit: number, depth: AnswerDepth): string {
   return `
 The draft field (a written answer Devin can paste into the answer box and edit):
 - Leave it null unless Devin asks for help writing the answer (for example "help me answer this" or "draft it") or asks you to change a draft.
@@ -334,19 +349,19 @@ The draft field (a written answer Devin can paste into the answer box and edit):
 - When the answer needs an outcome or result and neither Devin nor an entry gave one, leave draft null and ask him for it in one short question instead of writing one. If he already said there was none, or answered your question without one, write the draft without a result.
 - Many entries record Devin's answer to a question, written "Has done this: X. (Answer to: <question>)". That confirms the question's main point only. Examples inside the question ("tools like Copilot or Claude") are not facts about Devin: never name one of them as something he uses unless he says so.
 - List the entries the draft uses in draftSources, written as [category/key].
-- Write it in the first person as Devin, with no dashes and no semicolons, in his house style: the answer first, then what he did and where, then the skills he used in that work (a specific decision stated as the skill it shows, "I designed sensible defaults for data that was wrong or missing"), then at most one supporting project. ${STYLE_SPOKEN} Two to four sentences, about 350 to 650 characters when the entries and his words give that much (never pad), never over ${Math.min(limit, 800)} characters.
+- Write it in the first person as Devin, with no dashes and no semicolons, in his house style. ${draftShape(depth, limit, 'the entries and his words')}
 - ${STYLE_LEAVE_OUT}
 - If the knowledge base and the conversation give too little for an honest answer, or Devin asks for more than they support, leave draft null and ask him one short follow-up question in the reply instead (for example "Which AI tools do you use day to day?").
 - When you give a draft, the reply is one or two sentences naming the knowledge base entries it draws on. Do not repeat the draft in the reply.${RECORDS_DRAFT_RULE}`
 }
 
-function exampleDraftRules(limit: number): string {
+function exampleDraftRules(limit: number, depth: AnswerDepth): string {
   return `
 The draft field (an example Devin can put in the "Where did you do it?" box under his Yes or Some experience answer, then edit and save):
 - Leave it null unless Devin asks for help writing the example (for example "help me write the example") or asks you to change a draft.
 - The example comes only from what Devin types in this conversation. Never take any of it from the knowledge base, the job posting, or the question, and never guess.
 - When he asks for help and his messages do not yet say where he did it and what he did, leave draft null and ask at most two short questions in the reply: where he did it (the job or project) and what he did, plus the result if there was one.
-- Once his messages say where and what, write the draft in the first person as Devin, in his house style: what he did and where, then the skills he used in that work (a specific decision stated as the skill it shows), at most one supporting project. ${STYLE_SPOKEN} One to four plain sentences, under 650 characters when his words give that much (never pad), never over ${Math.min(limit, 800)} characters, no dashes, no semicolons. Keep his own words where you can.
+- Once his messages say where and what, write the draft in the first person as Devin, in his house style, with no dashes and no semicolons, keeping his own words where you can. ${draftShape(depth, limit, 'his words')}
 - ${STYLE_LEAVE_OUT} Name no employer, product, event, audience, number, date, or result that he did not type here, and never make it stronger than what he said.
 - Add no outcome, effect, benefit, or adjective he did not give ("so nothing was lost", "instead of being lost", "which saved time", "successfully", "key"). Keep each of his facts about the same subject he gave it.
 - If he gave no result and none of your replies has asked about the result yet, ask once before drafting. Otherwise write the draft without a result. Never ask about the result more than once.
@@ -787,9 +802,11 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   const entries = loadKnowledge()
   // Memory is searched only when Devin asks for help writing a free-text answer or an example.
   const memory = ctx?.draftKind && wantsMemory(input.messages) ? await chatMemory(ctx) : { use: null, excerpts: [] as ChatExcerpt[] }
+  // How deep a draft goes: the question's catalog skill and its core flag (short for any other question).
+  const depth: AnswerDepth = ctx?.draftKind ? answerDepthFor(ctx.question).depth : 'short'
   const extras = [
     ctx?.suggestOptions.length ? suggestionRules(ctx.suggestOptions) : '',
-    ctx?.draftKind === 'example' ? exampleDraftRules(ctx.draftLimit) : ctx?.draftLimit ? draftRules(ctx.draftLimit) : '',
+    ctx?.draftKind === 'example' ? exampleDraftRules(ctx.draftLimit, depth) : ctx?.draftLimit ? draftRules(ctx.draftLimit, depth) : '',
     ctx?.draftKind && memory.excerpts.length ? memoryRules(ctx.draftKind) : '',
   ].join('')
   // GitHub: searched when Devin asks for it, or when Claude calls the search (the githubSearch

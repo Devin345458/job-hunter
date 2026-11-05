@@ -2,12 +2,14 @@
 // style. Runs the app's own draftFromRecords() (server/utils/draft-from-records.ts) on a copy of a
 // production snapshot, on Devin's subscription through the Agent SDK (the token comes from the
 // worktree .env and is never printed), with his local memory server, then has a separate judge call
-// score each app draft and the other draft for the same question on the style's rubric (Direct
-// answer, Scope, Skills shown, Short and spoken, Calibration; ANSWER_RUBRIC in
-// server/utils/draft-from-records.ts) without saying which is which. Each pair is judged twice, once
-// in each order, and the two scores are averaged. Hard fails: more than 4 sentences after the level,
-// over 800 characters, a dash, or a semicolon (code), and a tool list (the judge). The ship bar: no
-// hard fail, nothing under 3, an average of 4 or more. What code sees the style leaves out (a date,
+// score each app draft and the other draft for the same question on the rubric for the question's
+// depth (answerRubric in server/utils/draft-from-records.ts): a core catalog skill on Opening,
+// Result, Structure, Judgment, Spoken and calibrated; any other question on Direct answer, Scope,
+// Skills shown, Short and spoken, Calibration. The judge is not told which is which. Each pair is
+// judged twice, once in each order, and the two scores are averaged. Hard fails (codeHardFails, by
+// depth): more sentences or paragraphs than the depth allows, over its characters, a dash, or a
+// semicolon (code), and a tool list (the judge). The ship bar: no hard fail, nothing under 3, an
+// average of 4 or more. What code sees the style leaves out (a date,
 // a file or code name, a sentence that opens with context, a sentence over 30 words; styleFaults())
 // is printed for both, with a count per side. The judge cannot see the records, so the
 // "no record supports it" and "names a client" fails are left to the app's own guards and are not
@@ -69,26 +71,28 @@ await setupGlobals({
   dailyAiBudgetUsd: '10',
   schedulerEnabled: 'false',
   demoToolPath: '',
-  memoryMcpUrl: 'http://127.0.0.1:7391/mcp',
+  // EVAL_MEMORY_URL=off drafts without past sessions (when the laptop's memory server does not answer).
+  memoryMcpUrl: process.env.EVAL_MEMORY_URL === 'off' ? '' : (process.env.EVAL_MEMORY_URL || 'http://127.0.0.1:7391/mcp'),
   memoryMcpHostHeader: '',
 })
 const mem = await import('../../server/utils/memory')
 // The laptop daemon is shared with every Claude session on it and took 28 seconds to open a
 // session on 2026-11-04; production's 10 seconds would leave memory out of every draft here.
 Object.assign(mem.MEMORY_LIMITS as any, { connectMs: 90_000, totalMs: 240_000 })
-const { draftFromRecords, ANSWER_RUBRIC, DIMENSIONS, RECORDS_LIMITS, answerSentenceCount, codeHardFails, clearsBar, styleFaults } = await import('../../server/utils/draft-from-records')
+const { draftFromRecords, answerRubric, DEPTH_DIMENSIONS, DEPTH_LIMITS, answerSentenceCount, codeHardFails, clearsBar, paragraphCount, styleFaults } = await import('../../server/utils/draft-from-records')
+const { answerDepthFor } = await import('../../server/utils/skill-catalog')
 const { aiStructured } = await import('../../server/utils/ai')
 
-const DIMS = DIMENSIONS
-type Dim = typeof DIMS[number]
-/** Characters, sentences after the level, and what the style leaves out that code sees. */
-const shape = (text: string) => ({ chars: text.length, sentences: answerSentenceCount(text), faults: styleFaults(text) })
+type Depth = keyof typeof DEPTH_DIMENSIONS
+type Dim = typeof DEPTH_DIMENSIONS[Depth][number]
+/** Characters, paragraphs, sentences after the level, and what the style leaves out that code sees. */
+const shape = (text: string) => ({ chars: text.length, paragraphs: paragraphCount(text), sentences: answerSentenceCount(text), faults: styleFaults(text) })
 
-const JudgeShape = z.object({
+const judgeShape = (depth: Depth) => z.object({
   answers: z.array(z.object({
     label: z.enum(['A', 'B']),
     scores: z.array(z.object({
-      dimension: z.enum(DIMS),
+      dimension: z.enum(DEPTH_DIMENSIONS[depth]),
       score: z.number().int(),
       quote: z.string(),
     })).describe('All five dimensions.'),
@@ -97,25 +101,25 @@ const JudgeShape = z.object({
   })),
 })
 
-const JUDGE_SYSTEM = `You are an experienced hiring manager. A software developer gives a written answer to an employer's screening question; a recruiter's software reads it first, then a person skims it.
-${ANSWER_RUBRIC}
+const judgeSystem = (depth: Depth) => `You are an experienced hiring manager. A software developer gives a written answer to an employer's screening question; a recruiter's software reads it first, then a person skims it.
+${answerRubric(depth)}
 Say whether each answer is a tool list. You cannot check whether the claims are true; score each answer as written, on its own merits, against the style. The order the answers appear in means nothing.`
 
 function avg(xs: number[]): number {
   return xs.length ? Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 100) / 100 : 0
 }
 
-type Scores = Record<Dim, number>
-const total = (s: Scores) => avg(DIMS.map(d => s[d]))
+type Scores = Record<string, number>
 
-async function judge(id: number, question: string, requirement: string | null, app: string, localText: string) {
+async function judge(id: number, question: string, requirement: string | null, app: string, localText: string, depth: Depth) {
+  const DIMS: readonly string[] = DEPTH_DIMENSIONS[depth]
   const runs: Array<{ order: string; app: Scores; local: Scores; appTools: boolean; localTools: boolean; appWhy: string; localWhy: string }> = []
   for (const appFirst of [true, false]) {
     const a = appFirst ? app : localText
     const b = appFirst ? localText : app
-    const out = await aiStructured(JudgeShape, {
+    const out = await aiStructured(judgeShape(depth), {
       purpose: 'eval_records_judge',
-      system: JUDGE_SYSTEM,
+      system: judgeSystem(depth),
       prompt: `## The question\n${question}${requirement ? `\nRequirement from the posting: "${requirement}"` : ''}\n\n## Answer A\n${a}\n\n## Answer B\n${b}\n\nScore both answers.`,
       effort: 'medium',
       maxTokens: 2500,
@@ -129,14 +133,14 @@ async function judge(id: number, question: string, requirement: string | null, a
     const localAns = appFirst ? B : A
     runs.push({ order: appFirst ? 'app first' : 'local first', app: toScores(appAns), local: toScores(localAns), appTools: appAns.toolList, localTools: localAns.toolList, appWhy: appAns.why, localWhy: localAns.why })
   }
-  const mean = (k: 'app' | 'local') => Object.fromEntries(DIMS.map(d => [d, avg(runs.map(r => r[k][d]))])) as Scores
-  const fails = (text: string, tools: boolean) => [...codeHardFails(text, RECORDS_LIMITS.maxChars), ...(tools ? ['A tool list'] : [])]
+  const mean = (k: 'app' | 'local') => Object.fromEntries(DIMS.map(d => [d, avg(runs.map(r => r[k][d]!))])) as Scores
+  const fails = (text: string, tools: boolean) => [...codeHardFails(text, DEPTH_LIMITS[depth].maxChars, depth), ...(tools ? ['A tool list'] : [])]
   const appFails = fails(app, runs.every(r => r.appTools))
   const localFails = fails(localText, runs.every(r => r.localTools))
   const app_ = mean('app')
   const local_ = mean('local')
-  const ships = (sc: Scores, f: string[]) => clearsBar(DIMS.map(d => ({ score: sc[d] })), f)
-  return { runs, app: app_, local: local_, appFails, localFails, appShips: ships(app_, appFails), localShips: ships(local_, localFails) }
+  const ships = (sc: Scores, f: string[]) => clearsBar(DIMS.map(d => ({ score: sc[d]! })), f, depth)
+  return { runs, app: app_, local: local_, appFails, localFails, appShips: ships(app_, appFails), localShips: ships(local_, localFails), total: (sc: Scores) => avg(DIMS.map(d => sc[d]!)) }
 }
 
 const results: any[] = []
@@ -146,7 +150,8 @@ for (const id of ids) {
     console.error(`question ${id} is not in the snapshot`)
     continue
   }
-  console.log(`\n=== ${id} ${q.subject}: drafting`)
+  const depth: Depth = answerDepthFor(q).depth
+  console.log(`\n=== ${id} ${q.subject}: drafting (depth ${depth})`)
   const t0 = performance.now()
   const steps: Array<{ step: string; label: string; at: number }> = []
   const res = await draftFromRecords(id, [], (step, label) => steps.push({ step, label, at: Math.round((performance.now() - t0) / 100) / 10 }))
@@ -161,7 +166,7 @@ for (const id of ids) {
   if (!localText) {
     // No local draft to compare: the draft and its coach pass only (the Some experience and No paths).
     console.log(`drafted in ${seconds} seconds; no other draft to judge against`)
-    results.push({ id, subject: q.subject, question: q.question, seconds, steps, memory: res.memory, app: res.draft.text, appChars: res.draft.text.length, appShape: shape(res.draft.text), level: res.draft.level, adjacentOnly: !!res.draft.adjacentOnly, coach: res.draft.coach ?? null, reply: res.reply, unjudged: true })
+    results.push({ id, subject: q.subject, question: q.question, depth, seconds, steps, memory: res.memory, app: res.draft.text, appChars: res.draft.text.length, appShape: shape(res.draft.text), level: res.draft.level, adjacentOnly: !!res.draft.adjacentOnly, sentences: res.draft.sentences.map(s => ({ text: s.text, sources: s.sources.map(x => `${x.kind}: ${x.label}${x.detail ? ` (${x.detail})` : ''}`) })), coach: res.draft.coach ?? null, reply: res.reply, unjudged: true })
     writeFileSync(outPath, JSON.stringify(results, null, 2))
     continue
   }
@@ -173,11 +178,12 @@ for (const id of ids) {
       return null
     }
   })()
-  const verdict = await judge(id, q.question, requirement, res.draft.text, localText)
+  const verdict = await judge(id, q.question, requirement, res.draft.text, localText, depth)
   results.push({
     id,
     subject: q.subject,
     question: q.question,
+    depth,
     seconds,
     steps,
     memory: res.memory,
@@ -191,29 +197,29 @@ for (const id of ids) {
     local: localText,
     localShape: shape(localText),
     judge: verdict,
-    appTotal: total(verdict.app),
-    localTotal: total(verdict.local),
+    appTotal: verdict.total(verdict.app),
+    localTotal: verdict.total(verdict.local),
   })
   writeFileSync(outPath, JSON.stringify(results, null, 2))
 }
 
 console.log('\n\n######## Results')
-const line = (sc: Scores) => DIMS.map(d => `${d.split(' ')[0]} ${sc[d]}`).join(' / ')
+const line = (sc: Scores) => Object.entries(sc).map(([d, v]) => `${d.split(' ')[0]} ${v}`).join(' / ')
 for (const r of results) {
   if (r.error) {
     console.log(`\n${r.id} ${r.subject}: no draft (${r.seconds} s): ${r.error}`)
     continue
   }
   if (r.unjudged) {
-    console.log(`\n${r.id} ${r.subject} (${r.seconds} s, level ${r.level ?? 'none'}, ${r.appChars} chars, ${r.appShape.sentences} sentences${r.appShape.faults.length ? `, ${r.appShape.faults.join('; ')}` : ''}, not judged: no other draft)`)
+    console.log(`\n${r.id} ${r.subject} (depth ${r.depth}, ${r.seconds} s, level ${r.level ?? 'none'}, ${r.appChars} chars, ${r.appShape.paragraphs} paragraphs, ${r.appShape.sentences} sentences${r.appShape.faults.length ? `, ${r.appShape.faults.join('; ')}` : ''}, not judged: no other draft)`)
     console.log(`  REPLY: ${r.reply}`)
     console.log(`  APP DRAFT: ${r.app}`)
     for (const qq of r.coach?.questions ?? []) console.log(`  STRONGER: ${qq}`)
     if (r.coach) console.log(`  COACH: ${r.coach.scores.map((x: any) => `${x.dimension} ${x.score}`).join(', ')}; average ${r.coach.average}; ${r.coach.ships ? 'clears the bar' : 'under the bar'}${r.coach.rewritten ? '; rewritten once' : ''}`)
     continue
   }
-  const len = (sh: ReturnType<typeof shape>) => `${sh.chars} chars, ${sh.sentences} sentences${sh.faults.length ? `, ${sh.faults.join('; ')}` : ''}`
-  console.log(`\n${r.id} ${r.subject} (${r.seconds} s, memory ${r.memory}, level ${r.level ?? 'none'})`)
+  const len = (sh: ReturnType<typeof shape>) => `${sh.chars} chars, ${sh.paragraphs} paragraphs, ${sh.sentences} sentences${sh.faults.length ? `, ${sh.faults.join('; ')}` : ''}`
+  console.log(`\n${r.id} ${r.subject} (depth ${r.depth}, ${r.seconds} s, memory ${r.memory}, level ${r.level ?? 'none'})`)
   console.log(`  app   ${r.appTotal}  ${line(r.judge.app)}  ${r.judge.appShips ? 'SHIPS' : 'under the bar'}${r.judge.appFails.length ? ` (hard fails: ${r.judge.appFails.join('; ')})` : ''}  [${len(r.appShape)}]`)
   console.log(`  other ${r.localTotal}  ${line(r.judge.local)}  ${r.judge.localShips ? 'SHIPS' : 'under the bar'}${r.judge.localFails.length ? ` (hard fails: ${r.judge.localFails.join('; ')})` : ''}  [${len(r.localShape)}]`)
   console.log(`  APP DRAFT: ${r.app}`)
@@ -222,7 +228,9 @@ for (const r of results) {
   if (r.coach) console.log(`  COACH: ${r.coach.scores.map((x: any) => `${x.dimension} ${x.score}`).join(', ')}; average ${r.coach.average}; ${r.coach.ships ? 'clears the bar' : 'under the bar'}${r.coach.rewritten ? '; rewritten once' : ''}`)
 }
 const ok = results.filter(r => !r.error && !r.unjudged)
-const dimAvg = (k: 'app' | 'local') => DIMS.map(d => `${d} ${avg(ok.map(r => r.judge[k][d]))}`).join(', ')
+// Per dimension within each depth (the two depths score different dimensions).
+const dimAvg = (k: 'app' | 'local') => (['short', 'core'] as const).filter(dp => ok.some(r => r.depth === dp))
+  .map(dp => `${dp}: ${DEPTH_DIMENSIONS[dp].map(d => `${d} ${avg(ok.filter(r => r.depth === dp).map(r => r.judge[k][d]))}`).join(', ')}`).join('; ')
 console.log(`\nAverages over ${ok.length} questions: app ${avg(ok.map(r => r.appTotal))}, other ${avg(ok.map(r => r.localTotal))}`)
 console.log(`Per dimension, app: ${dimAvg('app')}`)
 console.log(`Per dimension, other: ${dimAvg('local')}`)

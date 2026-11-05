@@ -3,8 +3,11 @@ import { z } from 'zod'
 import { questions, repoCommits, repoSources, repoSuggestions } from '../../db/schema'
 import type { RepoEvidence } from '#shared/types/repos'
 import { AiBudgetExceeded, aiStructured, cachedSystem, fallbackModel } from '../ai'
-import { scrubDashes, unsupportedNumbers } from '../apply/text'
+import { scrubDashes, splitSentences, unsupportedNumbers } from '../apply/text'
 import { cutToFit } from '../apply/fit'
+import { ANSWER_DEPTH_LIMITS, type AnswerDepth } from '#shared/utils/limits'
+import { unsupportedScope } from '../records-footprint'
+import { answerDepthFor } from '../skill-catalog'
 import { SEARCH_RULES, appRepoLevel, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
@@ -17,16 +20,67 @@ import { APP_REPO_FRAMING, APP_REPO_FRAMING_SENTENCE, isAppRepo, saysDirected } 
 // what the commits show, and the commits it rests on. Devin confirms with one tap and Save.
 // No hits stores status none, which shows nothing: finding nothing is never a No.
 
-/** Devin's house style (2026-11-05): about 350 to 650 characters, never over 800. */
-const DRAFT_TARGET = 650
-const DRAFT_MAX = 800
+/**
+ * How deep a draft goes follows the question's catalog skill (Devin, 2026-11-05; answerDepthFor in
+ * skill-catalog.ts): a core skill's draft is the fuller answer (up to 3 short paragraphs, never over
+ * 1,300 characters); every other skill's is 2 or 3 sentences, never over 600 (ANSWER_DEPTH_LIMITS).
+ */
+function depthLine(depth: AnswerDepth): string {
+  const lim = ANSWER_DEPTH_LIMITS[depth]
+  return depth === 'core'
+    ? `Answer depth: core. This is one of Devin's core skills, so the draft is the fuller answer: what he built or did and where, then the structure of that work piece by piece with the reason each part exists, then any measurement or result a commit states (never one it does not). Up to 3 short paragraphs separated by a blank line, about 600 to ${lim.targetChars} characters when the commits show that much (never pad), never over ${lim.maxChars}.`
+    : `Answer depth: short. The draft is 2 or 3 sentences (one is fine when the commits show only one thing), about ${lim.minChars} to ${lim.targetChars} characters, never over ${lim.maxChars}.`
+}
+
+/** The depth a stored result was written for; null before depths were recorded (read as short). */
+export function depthOf(termsJson: string | null | undefined): AnswerDepth | null {
+  try {
+    const d = JSON.parse(termsJson ?? '{}')?.depth
+    return d === 'core' || d === 'short' ? d : null
+  }
+  catch {
+    return null
+  }
+}
+
+/** A stored draft that fits the depth's limits: its sentences after a level standing alone, and its length. */
+export function fitsDepth(draft: string, depth: AnswerDepth): boolean {
+  const lim = ANSWER_DEPTH_LIMITS[depth]
+  const all = splitSentences(draft)
+  const n = all.length - (all.length > 1 && /^(?:yes|some experience)\.$/i.test(all[0]!) ? 1 : 0)
+  return n <= lim.sentences && draft.length <= lim.maxChars
+}
+
+/**
+ * The draft without any sentence that states scope, frequency, or a count (a count of commits,
+ * projects, or files, "every day", "since 2022"): no record a suggestion reads states them, and the
+ * search's counts are a script's, never a claim (unsupportedScope with no firm records). Paragraphs stay.
+ */
+export function withoutScriptCounts(text: string): string {
+  return text.split(/\n\s*\n/)
+    .map(p => splitSentences(p).filter(sentence => !unsupportedScope(sentence, []).length).join(' '))
+    .filter(Boolean).join('\n\n')
+}
+
+/** Never over the limit, never cut inside a sentence, paragraphs kept: sentences go from the end. */
+function cutDraft(text: string, max: number): string {
+  if (text.length <= max) return text
+  const items = text.split(/\n\s*\n/).flatMap((p, i) => splitSentences(p).map(sentence => ({ p: i, sentence })))
+  const join = (list: typeof items) => [...new Set(list.map(x => x.p))].map(p => list.filter(x => x.p === p).map(x => x.sentence).join(' ')).join('\n\n')
+  while (items.length > 1 && join(items).length > max) items.pop()
+  const out = join(items)
+  return out.length <= max ? out : cutToFit(out, max)
+}
 
 /**
  * The version of the draft wording rules. A suggested row written under an older one is judged
  * again on the next run, whatever its hit set, so its example is rewritten (the commits it cites
  * stay). 2: the example names no client, repo, or organization (2026-11-03). 3: Devin's house
  * style: it opens with the level, then what he did and where, then the skills he used; no dates,
- * no file or code names, 2 to 4 sentences (2026-11-05).
+ * no file or code names, 2 to 4 sentences (2026-11-05). The depth rule (2026-11-05, core skills
+ * fuller, every other skill 2 or 3 sentences) did not bump it: a suggested row is judged again only
+ * when its stored depth differs from the question's (depthOf) or its draft breaks the depth's
+ * limits (fitsDepth), so a row that already fits costs no call.
  */
 export const SUGGEST_TEXT_RULES = 3
 
@@ -51,7 +105,7 @@ const TermsSchema = z.object({
 const JudgeSchema = z.object({
   level: z.enum(['Yes', 'Some experience', 'None']),
   reason: z.string().describe('One short sentence on why, for the log.'),
-  draft: z.string().describe('First person as Devin, two to four plain sentences (one when the commits show only that much), without the level, empty when level is None.'),
+  draft: z.string().describe('First person as Devin, at the depth and length the prompt gives (one sentence when the commits show only that much), without the level, empty when level is None.'),
   evidence: z.array(z.object({
     sha: z.string().describe('A sha from the list, as given.'),
     line: z.string().describe('One plain line under 120 characters on what this commit shows.'),
@@ -115,7 +169,7 @@ Rules:
 - A dependency in a manifest is context only. Evidence is always one of the listed commits.
 - evidence: one to five listed commits that best show it, by sha, each with one plain factual line about what that commit did ("Added WebAuthn registration and login endpoints"). Never cite a sha that is not listed.
 - Prefer commits that changed code or configuration. A commit that only edited notes, docs, or a task list is weaker. Cite it only when nothing better shows the point.
-- draft: the example for a box under the question that asks "Where did you do it?", in Devin's house style: short, skill-forward, and the way he would say it to an interviewer (contractions, plain words, no filler). Never start with Yes, No, or the level: the app puts the level in front. First person as Devin. Start with "I" and a plain verb: what he did and where, in one sentence, with the project after the verb in the words of its description (given beside each repo). Then the skills he used in that work: state each specific change as the skill it shows ("I set sensible defaults for data that was missing"), not change by change. Each sentence starts with its subject and holds one idea in about 25 words, never over 30. Never open a sentence with context ("On <project>,", "After <event>,"). At most one other project. Two to four plain sentences when the commits show that much (one is fine when they show only one thing), about 350 to ${DRAFT_TARGET} characters, never over ${DRAFT_MAX}. Leave out dates and months, file, field, function, and package names, version strings, and counts of commits or files. Never name a client, a repo, a GitHub organization, or a product, and never write the word repo: "I set up error tracking with Sentry for car wash management software", never "In the WashWerk repo". Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes, no semicolons. Empty when level is None.`
+- draft: the example for a box under the question that asks "Where did you do it?", in Devin's house style: short, skill-forward, and the way he would say it to an interviewer (contractions, plain words, no filler). Never start with Yes, No, or the level: the app puts the level in front. First person as Devin. Start with "I" and a plain verb: what he did and where, in one sentence, with the project after the verb in the words of its description (given beside each repo). Then the skills he used in that work: state each specific change as the skill it shows ("I set sensible defaults for data that was missing"), not change by change. Each sentence starts with its subject and holds one idea in about 25 words, never over 30. Never open a sentence with context ("On <project>,", "After <event>,"). At most one other project. Length and shape follow the answer depth the prompt gives for the question: short is 2 or 3 sentences; core is the fuller answer in up to 3 short paragraphs. Leave out dates and months, file, field, function, and package names, version strings, and any count of commits, files, or projects: those are a script's counts, never a claim. Never name a client, a repo, a GitHub organization, or a product, and never write the word repo: "I set up error tracking with Sentry for car wash management software", never "In the WashWerk repo". Use only what the commits show. Never add an employer, client, user count, metric, team, or result the commits do not show. No dashes, no semicolons. Empty when level is None.`
 }
 
 /** The search rules version a stored result was made under; 1 before versions were recorded. */
@@ -133,10 +187,11 @@ function shortSha(sha: string) {
   return sha.slice(0, 12)
 }
 
-function judgePrompt(q: QuestionRow, terms: TermSet, found: SearchResult): string {
+function judgePrompt(q: QuestionRow, terms: TermSet, found: SearchResult, depth: AnswerDepth): string {
   const lines: string[] = []
   lines.push(`Question: "${q.question}"`)
   lines.push(`Subject: ${q.subject ?? ''}`)
+  lines.push(depthLine(depth))
   lines.push(`Searched for: ${[...terms.code, ...terms.packages, ...terms.paths].join(', ')}`)
   const repos = [...new Set(found.hits.map(h => h.repo))]
   const described = loadRepoDescriptions()
@@ -146,7 +201,7 @@ function judgePrompt(q: QuestionRow, terms: TermSet, found: SearchResult): strin
     lines.push(`Dependencies declared at the default branch that match: ${found.dependencies.slice(0, 20).map(d => `${d.repo}: ${d.name} in ${d.manifest}`).join('; ')}`)
   }
   for (const s of found.pathSummaries) {
-    lines.push(`${s.repo}: ${s.commits} of his commits change files matching ${terms.paths.join(', ')}, from ${s.first} to ${s.last}`)
+    lines.push(`${s.repo}: ${s.commits} of his commits change files matching ${terms.paths.join(', ')}, from ${s.first} to ${s.last} (for judging only; never state this count)`)
   }
   lines.push('\nHis commits:')
   for (const h of found.hits) {
@@ -237,6 +292,8 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
   for (const q of rows) {
     const subject = (q.subject ?? q.question).trim()
     const prev = existing.get(q.id)
+    // A core catalog skill gets the fuller draft; every other skill the short one.
+    const depth = answerDepthFor(q).depth
     try {
       let t = termsBySubject.get(subject.toLowerCase())
       if (!t || opts.force) {
@@ -254,7 +311,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       }
       // The rules versions ride along in terms_json: a hit set found under newer search rules, or a
       // draft written under older wording rules, is judged again.
-      const termsJson = JSON.stringify({ searchable: t.searchable, terms: t.terms, rules: SEARCH_RULES, text: SUGGEST_TEXT_RULES })
+      const termsJson = JSON.stringify({ searchable: t.searchable, terms: t.terms, rules: SEARCH_RULES, text: SUGGEST_TEXT_RULES, depth })
       // Files, folders, and packages only this subject produces (schema.graphql, shopify.app.toml)
       // are searched whatever Claude gave, so path evidence never depends on it naming them.
       // Signatures follow the subject alone: words in the question text name other technologies too.
@@ -284,13 +341,17 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         const sameSet = JSON.stringify(hitShas) === (prev.commitShasJson ?? '')
         const sameRules = rulesOf(prev.termsJson) === SEARCH_RULES
         const sameText = textRulesOf(prev.termsJson) === SUGGEST_TEXT_RULES
-        const keep = prev.status === 'suggested' && !sameText
+        // A draft written for another depth (the skill's Core switch moved, or it predates depths and
+        // is now core), or one over the depth's limits, is written again; the others stand.
+        const storedDepth = depthOf(prev.termsJson)
+        const rightDepth = (storedDepth ?? 'short') === depth && (!prev.draft || fitsDepth(prev.draft, depth))
+        const keep = prev.status === 'suggested' && (!sameText || !rightDepth)
           ? false
           : sameRules
             ? (prev.status === 'suggested' && cited.length && cited.every(s => hitShas.includes(s))) || (prev.status === 'none' && sameSet)
             : (prev.status === 'suggested' || prev.status === 'none') && sameSet
         if (keep) {
-          if (!sameRules || !sameText) db.update(repoSuggestions).set({ termsJson }).where(eq(repoSuggestions.questionId, q.id)).run()
+          if (!sameRules || !sameText || storedDepth !== depth) db.update(repoSuggestions).set({ termsJson }).where(eq(repoSuggestions.questionId, q.id)).run()
           stats.unchanged++
           stats.results.push({ questionId: q.id, subject, outcome: 'unchanged', hits: hitShas.length })
           continue
@@ -300,7 +361,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         purpose: 'repo_judge',
         // The rules are the same for every question (587 tokens on Opus 5.5, over the 512 minimum), so they are cached.
         system: cachedSystem(judgeSystem()),
-        prompt: judgePrompt(q, searchTerms, found),
+        prompt: judgePrompt(q, searchTerms, found, depth),
         maxTokens: 1500,
         effort: 'low',
         ref: { type: 'question', id: q.id },
@@ -324,14 +385,16 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       // directed wrote it. Another repo's commit among the evidence can carry a Yes.
       const level = verdict.level === 'None' ? null : appRepoLevel(verdict.level, found.appRepo, evidence.every(e => isAppRepo(e.repo)))
       // The house style opens with the level (after the cap above, so the text and the level agree).
-      const body = named.replace(/^(?:yes|some experience)\b[.,:]?\s*/i, '')
+      // No sentence states a count or a scope: the search's counts are a script's, never a claim.
+      const body = withoutScriptCounts(named.replace(/^(?:yes|some experience)\b[.,:]?\s*/i, ''))
       // Said the way he would say it: "Yes, I set up..." when the draft starts with "I".
       const lead = /^I(?:\s|'|\u2019)/.test(body)
       const opened = body && level ? (level === 'Yes' && lead ? `Yes, ${body}` : `${level === 'Yes' ? 'Yes.' : 'Some experience.'} ${body.charAt(0).toUpperCase()}${body.slice(1)}`) : ''
       // A draft resting on this app's own commits says how it was built (agents he directed).
       const framed = evidence.some(e => isAppRepo(e.repo)) && opened && !saysDirected(opened) ? `${opened} ${APP_REPO_FRAMING_SENTENCE}` : opened
-      // Never over the limit, and never cut inside a sentence.
-      const draft = framed.length <= DRAFT_MAX ? framed : cutToFit(opened, DRAFT_MAX)
+      // Never over the depth's limit, and never cut inside a sentence.
+      const max = ANSWER_DEPTH_LIMITS[depth].maxChars
+      const draft = framed.length <= max ? framed : cutDraft(opened, max)
       const invented = unsupportedNumbers(draft, sourceText(found))
       if (!level || !evidence.length || !draft || invented.length) {
         const why = invented.length ? `draft named numbers the commits do not show: ${invented.join(', ')}` : verdict.reason

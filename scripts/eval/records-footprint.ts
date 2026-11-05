@@ -37,18 +37,29 @@ const A = { kind: 'aggregate' as const, text: fp.footprintText(f), footprint: f 
 const S = { kind: 'said' as const, text: 'my experience with docker containers (which is extensive I use them all day every day)' }
 const role = { kind: 'knowledge' as const, text: 'Acme - Senior Developer\nOct 2021 - Present | Remote\n- Deployed a self-hosted Sentry instance across 50 projects.' }
 const summary = { kind: 'knowledge' as const, text: 'Professional Summary\nSoftware developer with over 8 years of experience.' }
+// Counts across his commits are a script's: they pick the stories and never support a claim
+// (Devin, 2026-11-05). A count, a "since", or a frequency stands only on his words or his knowledge base.
+const kbDocker = { kind: 'knowledge' as const, text: 'Docker\nSince 2022 I have written or changed the Docker setup in more than 50 projects.' }
 const cases: Array<[string, any[], boolean]> = [
-  [`Since ${f.firstYear} I have set up or changed the Docker setup in more than ${roundDown} projects.`, [A], true],
+  [`Since ${f.firstYear} I have set up or changed the Docker setup in more than ${roundDown} projects.`, [A], false],
   [`I have changed the Docker setup in more than ${f.projects + 8} projects.`, [A], false],
-  [`I have changed the Docker setup in ${f.projects} projects.`, [A], true],
+  [`I have changed the Docker setup in ${f.projects} projects.`, [A], false],
   [`I have changed the Docker setup in ${roundDown} projects.`, [A], false],
-  [`I worked on Docker in ${latest.projects} projects in ${latest.year}.`, [A], true],
-  [`I worked on Docker in ${latest.projects} projects.`, [A], latest.projects === f.projects],
+  [`I worked on Docker in ${latest.projects} projects in ${latest.year}.`, [A], false],
+  [`I worked on Docker in ${latest.projects} projects.`, [A], false],
+  ['I have worked on Docker in dozens of projects.', [A], false],
+  ['I have changed the Docker setup in fifty projects.', [A], false],
+  ['I have changed the Docker setup in more than 50 projects.', [kbDocker], true],
+  ['I have changed the Docker setup in fifty projects.', [kbDocker], true],
+  ['Since 2022 I have changed the Docker setup in more than 50 projects.', [kbDocker], true],
+  ['I have changed the Docker setup in more than 60 projects.', [kbDocker], false],
   ['I use Docker every day.', [A], false],
   ['Yes, every day.', [S], true],
-  [`I use Docker daily in more than ${roundDown} projects.`, [S, A], true],
+  [`I use Docker daily in more than ${roundDown} projects.`, [S, A], false],
+  ['I use Docker daily.', [S, A], true],
   ['Every Laravel project I work on runs in Docker Compose.', [A, role], false],
   [`Since ${Number(f.firstYear) - 3} I have used Docker.`, [A], false],
+  [`Since ${f.firstYear} I have used Docker.`, [A], false],
   ['Since 2021 I have used Sentry.', [role], true],
   ['I maintained a self-hosted Sentry instance across 50 projects.', [role], true],
   ['I have used Docker for five years.', [A], false],
@@ -66,7 +77,7 @@ const commit = (like: string) => {
   const row = useDb().$client.prepare('SELECT repo, message FROM repo_commits WHERE message LIKE ? LIMIT 1').get(`%${like}%`) as { repo: string; message: string } | undefined
   return row ? `${row.repo}\n${row.message}` : ''
 }
-const docker = [A.text, commit('thecodingmachine v5 image'), commit('local clamd behind the clamav'), commit('Run on PHP 8.5 and add the S3')]
+const docker = [commit('thecodingmachine v5 image'), commit('local clamd behind the clamav'), commit('Run on PHP 8.5 and add the S3')]
 const worktrees = [commit('isolated stack per worktree'), commit('parameterize docker + vite HMR')]
 const overlap: Array<[string, string[], boolean]> = [
   ['That work includes writing Dockerfiles and Compose files, upgrading PHP base images, and adding local stand-ins for S3 storage and a virus scanner.', docker, true],
@@ -126,6 +137,39 @@ const covered = new Set(queries.flatMap(q => q.split(' ').filter(t => t.startsWi
 const queryOk = longest <= 1024 && covered === names.length
 if (!queryOk) failed++
 console.log(`\n=== code search query length\n${queryOk ? 'PASS' : 'FAIL'} ${names.length} repos in ${queries.length} queries, longest ${longest} characters (GitHub refuses over 1,024)`)
+
+// Answer depth (Devin, 2026-11-05): a core catalog skill gets the full answer in paragraphs, every
+// other skill 2 or 3 sentences; repos:suggest drops any sentence that states a script's count.
+const dr = await import('../../server/utils/draft-from-records')
+const sg = await import('../../server/utils/repos/suggest')
+const { answerDepthFor } = await import('../../server/utils/skill-catalog')
+const qc = await import('../../server/utils/question-chat')
+const qRow = (id: number) => useDb().$client.prepare('SELECT id, kind, subject FROM questions WHERE id = ?').get(id) as any
+const s4 = 'Yes, I built it. I designed the parts. I measured it. I moved the work.'
+const depthCases: Array<[string, boolean]> = [
+  ['a core draft keeps its paragraphs', dr.joinDraft([{ text: 'A.', paragraph: 1 }, { text: 'B.', paragraph: 1 }, { text: 'C.', paragraph: 2 }, { text: 'D.' }, { text: 'E.', paragraph: 1 }], 'core') === 'A. B.\n\nC. D. E.'],
+  ['a short draft is one paragraph', dr.joinDraft([{ text: 'A.', paragraph: 1 }, { text: 'B.', paragraph: 3 }], 'short') === 'A. B.'],
+  ['four sentences fail the short limit', dr.codeHardFails(s4, 600, 'short').some(f => f.startsWith('More than 3 sentences'))],
+  ['four sentences pass the core limit', !dr.codeHardFails(s4, 1300, 'core').length],
+  ['five paragraphs fail the core limit', dr.codeHardFails('A.\n\nB.\n\nC.\n\nD.\n\nE.', 1300, 'core').some(f => f.startsWith('More than 4 paragraphs'))],
+  ['the ship bar needs every dimension of the depth', !dr.clearsBar([{ score: 5 }, { score: 5 }], [], 'core') && dr.clearsBar([5, 5, 4, 4, 4].map(score => ({ score })), [], 'core')],
+  ['suggest drops a sentence with a commit count', sg.withoutScriptCounts('I built the GraphQL client. I changed it in 37 commits across 4 projects.') === 'I built the GraphQL client.'],
+  ['suggest keeps paragraphs', sg.withoutScriptCounts('I built it.\n\nIt has two parts. I ran it every day.') === 'I built it.\n\nIt has two parts.'],
+  ['a four-sentence short draft is over the depth', !sg.fitsDepth(s4, 'short') && sg.fitsDepth(s4, 'core')],
+  ['#143 Using AI for supervised coding is core', !qRow(143) || answerDepthFor(qRow(143)).depth === 'core'],
+  ['#116 GraphQL is short', !qRow(116) || answerDepthFor(qRow(116)).depth === 'short'],
+  ['a form field question is short', answerDepthFor({ id: -1, kind: 'form_field', subject: 'Using AI for supervised coding' }).depth === 'short'],
+  ['a level with a short qualifier counts with the next sentence', dr.answerSentenceCount('Some, on the client side. I used GraphQL in one integration. I wired it into shipping. I have not built a server.') === 3],
+  ['the chat draft rules give a core skill the full answer', (() => { const t = qc.draftShape('core', 1200, 'his words'); return t.includes('full version') && t.includes('never over 1200 characters') && t.includes('paragraphs') })()],
+  ['the chat draft rules give any other skill 2 or 3 sentences', (() => { const t = qc.draftShape('short', 5000, 'his words'); return t.includes('Two or three sentences') && t.includes('never over 600 characters') })()],
+  ['a form field limit wins in the chat draft rules', qc.draftShape('core', 500, 'his words').includes('never over 500 characters')],
+  ['a real first sentence still counts', dr.answerSentenceCount('Some, I used GraphQL to query a store API for a client. I have not built a server.') === 2 && !dr.isLevelOnly('Yes, I built 3 apps.')],
+]
+console.log('\n=== answer depth')
+for (const [name, ok] of depthCases) {
+  if (!ok) failed++
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${name}`)
+}
 
 // Finding nothing is not a No: a No only when Devin said it (an answer, a negative entry, his words).
 const { devinSaidNo } = await import('../../server/utils/draft-from-records')

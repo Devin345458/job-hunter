@@ -4,10 +4,13 @@ import type { KnowledgeEntry } from './knowledge'
 import { anchorPattern, appRepoAnchors, appRepoMessage, appRepoPath, appRepoScope, messageBody, pathMatches, subjectAnchors, subjectParts, type TermSet } from './repos/search'
 import { APP_REPO_DESCRIPTION, isAppRepo } from './repos/settings'
 
-// What a records draft says about scale: how much of Devin's own work touches a subject, counted by
-// code over every one of his indexed commits (not the few the chat search shows), and which roles in
-// his knowledge base name it. A draft states scope ("in more than 50 projects since 2022") only from
-// these counts or from his own words, and unsupportedScope() below holds every sentence to that.
+// Where Devin's own work on a subject sits: how much of it touches the subject, counted by code over
+// every one of his indexed commits (not the few the chat search shows), the projects where it
+// clusters (the candidate stories a draft is built around), and which roles in his knowledge base
+// name it. The counts only pick the stories and the sample commits. They are never a record a
+// draft cites, and no draft states them (Devin, 2026-11-05: no statistics only a script would
+// count): a scope or count stands only on his own words or his knowledge base, and
+// unsupportedScope() below holds every sentence to that.
 
 export const FOOTPRINT_LIMITS = {
   /** Commits added to the draft's records beside the chat search's, one per project, busiest projects first. */
@@ -77,7 +80,7 @@ export function draftAnchors(subject: string | null, question: string): TermSet 
   return subjectAnchors({ code: [], paths: [], packages: [] }, subject?.trim() || null, text, text)
 }
 
-/** A count rounded down to a figure a person would say: 52 to 50, 377 to 350, 1,240 to 1,200. */
+/** A count rounded down to a figure a person would say: 52 to 50, 377 to 350, 1,240 to 1,200. The eval scripts use it to show that even a rounded count is not a claim. */
 export function roundedDown(n: number): number | null {
   const step = n >= 1000 ? 100 : n >= 100 ? 50 : n >= 30 ? 10 : 5
   let r = Math.floor(n / step) * step
@@ -208,20 +211,15 @@ function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
 }
 
-function withRounded(n: number, one: string, many: string): string {
-  const r = roundedDown(n)
-  return r ? `${plural(n, one, many)} (more than ${r.toLocaleString('en-US')})` : plural(n, one, many)
-}
-
 /**
- * The aggregate as the draft reads it. Every figure a sentence may use is written out, the rounded
- * forms included, so the number checks pass only for figures the counts state.
+ * The counts in one paragraph, for the eval scripts and the log. No draft is sent them: they pick
+ * the candidate stories, and no figure in them is ever a claim (unsupportedScope).
  */
 export function footprintText(f: SubjectFootprint): string {
   const span = f.firstYear === f.lastYear ? `in ${f.firstYear}` : `from ${f.firstYear} to ${f.lastYear}`
   const latest = f.perYear[f.perYear.length - 1]!
   const lines = [
-    `Projects where Devin's own commits (work he wrote or changed) match ${f.subject}: ${withRounded(f.projects, 'project', 'projects')}, ${span}${f.perYear.length > 1 ? `, ${latest.projects} of them in ${latest.year}` : ''}.`,
+    `Projects where Devin's own commits (work he wrote or changed) match ${f.subject}: ${plural(f.projects, 'project', 'projects')}, ${span}${f.perYear.length > 1 ? `, ${latest.projects} of them in ${latest.year}` : ''}.`,
     f.perYear.length > 1 ? `Projects per year: ${f.perYear.map(y => `${y.year}: ${y.projects}`).join(', ')}.` : null,
     `Commits in all: ${f.commits.toLocaleString('en-US')}.`,
     f.files.length ? `Files these commits change most: ${f.files.map(x => `${x.name} (${plural(x.commits, 'commit', 'commits')}${x.folder ? `, mostly in ${x.folder}` : ''})`).join(', ')}.` : null,
@@ -231,7 +229,7 @@ export function footprintText(f: SubjectFootprint): string {
   return lines.filter(Boolean).join(' ')
 }
 
-/** The one line the sources list shows under a sentence that cites the aggregate. */
+/** The counts in one line, for the log. */
 export function footprintDetail(f: SubjectFootprint): string {
   const span = f.firstYear === f.lastYear ? f.firstYear : `${f.firstYear} to ${f.lastYear}`
   return `${f.subject}, ${plural(f.commits, 'commit', 'commits')} in ${plural(f.projects, 'project', 'projects')}, ${span}`
@@ -299,8 +297,17 @@ const FREQUENCY: Array<{ family: string; re: RegExp }> = [
 /** "every project", "all of my repos", "most of our client projects". */
 const UNIVERSAL = /\b(every|each|all|most|nearly all|almost all)\s+(?:of\s+)?(?:my\s+|our\s+|the\s+|his\s+)?(?:[a-z]+\s+){0,2}?(projects?|repositories|repos|codebases?|apps?|applications?|clients?|builds?|stacks?)\b/g
 
-/** "more than 50 projects", "377 commits", "over 20 repositories". */
-const COUNT = /\b(?:(more than|over|at least|nearly|almost|about|around|roughly|close to)\s+)?(\d[\d,]*)\+?\s+(?:(?:different|separate|client|other|of\s+(?:my|our|his))\s+)?(projects?|repositories|repos|codebases?|applications?|apps|commits?)\b/g
+/** Spelled counts a sentence may give instead of a figure ("fifty projects"). */
+const SPELLED_COUNT: Record<string, number> = {
+  two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  fifteen: 15, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100,
+}
+
+/** "more than 50 projects", "377 commits", "over 20 repositories", "fifty client projects". */
+const COUNT = new RegExp(`\\b(?:(more than|over|at least|nearly|almost|about|around|roughly|close to)\\s+)?(\\d[\\d,]*|${Object.keys(SPELLED_COUNT).join('|')})\\+?\\s+(?:(?:different|separate|client|other|of\\s+(?:my|our|his))\\s+)?(projects?|repositories|repos?|codebases?|applications?|apps?|commits?)\\b`, 'g')
+
+/** "dozens of projects", "hundreds of commits": a count without a figure. */
+const VAGUE_COUNT = /\b(dozens|scores|hundreds|thousands)\s+of\s+(?:(?:my|our|his|different|client)\s+)?(?:projects?|repositories|repos?|codebases?|applications?|apps?|commits?)\b/g
 
 const SINCE = /\bsince (?:early |late |mid )?((?:19|20)\d{2})\b/g
 
@@ -317,21 +324,21 @@ function universalKey(word: string, noun: string): string {
 }
 
 /**
- * Scope and frequency phrases the sentence uses that its records do not state:
- * - a count of projects only against an aggregate's counts (rounded down, never up), a per-year
- *   count with its year named, or the same figure and noun in a cited knowledge base entry or
- *   Devin's own words; a count of commits only from those last two (a draft describes work, not commits);
+ * Scope and frequency phrases the sentence uses that its records do not state. Only Devin's own
+ * words and his knowledge base state scope; the code's counts across his commits never do, and an
+ * aggregate record passed in supports nothing:
+ * - a count of projects, repos, apps, or commits ("more than 50 projects", "dozens of projects",
+ *   "fifty projects") only when the same figure and noun are in a cited knowledge base entry or his
+ *   own words;
  * - "daily", "every day", "every project", "all my projects" only when his own words (or a cited
  *   knowledge base entry) say so;
- * - "since 2022" only when an aggregate starts that year or earlier, his words say it, or a cited
- *   role runs from that year to the present;
+ * - "since 2022" only when his words say it, or a cited role runs from that year to the present;
  * - "for five years", "8+ years" only when his words or a cited knowledge base entry say it.
  */
 export function unsupportedScope(sentence: string, records: ScopeRecord[]): string[] {
-  const t = sentence.toLowerCase().replace(/[‘’]/g, '\'')
-  const prints = records.filter(r => r.kind === 'aggregate' && r.footprint).map(r => r.footprint!)
-  // Only Devin's own words and his knowledge base can state a frequency or a universal scope.
-  const firm = records.filter(r => r.kind === 'said' || r.kind === 'knowledge').map(r => r.text.toLowerCase().replace(/[‘’]/g, '\'')).join('\n')
+  const t = sentence.toLowerCase().replace(/[\u2018\u2019]/g, '\'')
+  // Only Devin's own words and his knowledge base can state a frequency, a count, or a universal scope.
+  const firm = records.filter(r => r.kind === 'said' || r.kind === 'knowledge').map(r => r.text.toLowerCase().replace(/[\u2018\u2019]/g, '\'')).join('\n')
   const out: string[] = []
 
   const want = frequencyFamilies(t)
@@ -350,29 +357,19 @@ export function unsupportedScope(sentence: string, records: ScopeRecord[]): stri
   }
 
   for (const m of t.matchAll(new RegExp(COUNT.source, 'g'))) {
-    const qualifier = m[1] ?? ''
-    const n = Number(m[2]!.replace(/,/g, ''))
-    const commitsNoun = /^commit/.test(m[3]!)
-    // A draft talks about projects, not commits: a commit count stands only where his words or his
-    // knowledge base state it.
-    const fits = !commitsNoun && prints.some((f) => {
-      const total = f.projects
-      if (qualifier === 'more than' || qualifier === 'over') return n < total
-      if (qualifier === 'at least') return n <= total
-      if (qualifier) return n <= total && n >= total * 0.9
-      if (n === total) return true
-      // "30 projects in 2026": a year's own count, with that year in the sentence.
-      return f.perYear.some(y => y.projects === n && t.includes(y.year))
-    })
-    const stated = new RegExp(`(^|[^0-9])${m[2]!.replace(/,/g, ',?')}\\+?\\s+(?:[a-z]+\\s+)?${m[3]!.replace(/s$/, '')}`).test(firm)
-    if (!fits && !stated) out.push(m[0])
+    const raw = m[2]!
+    const n = SPELLED_COUNT[raw] ?? Number(raw.replace(/,/g, ''))
+    const noun = m[3]!.replace(/(?:ies|s)$/, '').replace(/^repositor$/, 'repo')
+    if (!countStated(firm, n, noun)) out.push(m[0])
+  }
+  for (const m of t.matchAll(new RegExp(VAGUE_COUNT.source, 'g'))) {
+    if (!firm.includes(m[1]!)) out.push(m[0])
   }
 
   for (const m of t.matchAll(new RegExp(SINCE.source, 'g'))) {
     const year = m[1]!
-    const fromPrint = prints.some(f => year >= f.firstYear && year <= f.lastYear)
     const fromRole = new RegExp(`${year}\\s*(?:-|to)\\s*present`).test(firm)
-    if (!fromPrint && !fromRole && !firm.includes(`since ${year}`)) out.push(m[0])
+    if (!fromRole && !firm.includes(`since ${year}`)) out.push(m[0])
   }
 
   for (const m of t.matchAll(new RegExp(YEARS.source, 'g'))) {
@@ -386,4 +383,11 @@ export function unsupportedScope(sentence: string, records: ScopeRecord[]): stri
     if (!stated) out.push(m[0].trim())
   }
   return [...new Set(out)]
+}
+
+/** A count with its noun in his words or his knowledge base: "50 projects", "more than 50 client projects", "fifty projects". */
+function countStated(firm: string, n: number, noun: string): boolean {
+  const spelled = Object.entries(SPELLED_COUNT).filter(([, v]) => v === n).map(([w]) => w)
+  const figures = [String(n), n.toLocaleString('en-US'), ...spelled].map(f => f.replace(/,/g, ',?'))
+  return new RegExp(`(^|[^0-9a-z])(?:${figures.join('|')})\\+?\\s+(?:[a-z]+\\s+){0,2}${noun}`).test(firm)
 }

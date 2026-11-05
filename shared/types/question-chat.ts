@@ -95,20 +95,26 @@ export type RecordsMemoryUse = 'used' | 'none' | 'unreachable' | 'busy' | 'off'
  * level and scope up front, one project a reader can picture, his own decisions and why, a result
  * the records state, and a claim that matches the records exactly.
  */
-/** The coach rubric's dimensions: Devin's house style (2026-11-05), short, skill-forward, and conversational. */
+/**
+ * The coach rubric's dimensions (Devin's house style, 2026-11-05). A short answer (a skill that is not core) is scored on Direct answer, Scope,
+ * Skills shown, Short and spoken, Calibration; a core skill's full answer on Opening, Result,
+ * Structure, Judgment, Spoken and calibrated (DEPTH_DIMENSIONS in server/utils/draft-from-records.ts).
+ */
 export type InterviewDimension = 'Direct answer' | 'Scope' | 'Skills shown' | 'Short and spoken' | 'Calibration'
+  | 'Opening' | 'Result' | 'Structure' | 'Judgment' | 'Spoken and calibrated'
 
 /**
  * The coach pass on a finished draft: each dimension scored 1 to 5 with the sentence that earns it,
  * the hard fails, and whether it clears the ship bar (no hard fail, nothing under 3, an average of 4
  * or more). A draft under the bar gets one rewrite before Devin sees it. The questions ask for at
- * most two facts only Devin can add, a missing scope fact or result ("Add if true: how many projects have you done this for?"), from the
- * lowest dimensions; they are never filled in for him.
+ * most two facts only Devin can add from the lowest dimensions: a missing scope fact or result for
+ * a short answer ("Add if true: how many projects have you done this for?"), a missing result or
+ * measurement first for a core skill's full answer. They are never filled in for him.
  */
 export interface RecordsDraftCoach {
   scores: Array<{ dimension: InterviewDimension; score: number; line: string; quote: string | null }>
   average: number
-  /** "More than 4 sentences", "A tool list", "Over 800 characters", "A semicolon". */
+  /** "More than 3 sentences", "More than 4 paragraphs", "A tool list", "Over 600 characters", "A semicolon". */
   hardFails: string[]
   ships: boolean
   /** The draft shown is the rewrite of one that fell under the bar. */
@@ -118,7 +124,7 @@ export interface RecordsDraftCoach {
 }
 
 export interface RecordsDraft {
-  /** The sentences joined, ready for the answer box or the example box. */
+  /** The sentences joined, ready for the answer box or the example box; a core answer's paragraphs are separated by a blank line. */
   text: string
   /** Yes when the records show the work, Some experience when they show only part of it. Null on a written answer. */
   level: 'Yes' | 'Some experience' | null
@@ -132,6 +138,8 @@ export interface RecordsDraft {
    * show, for Devin to use if he picks Some experience or No himself. Level is null; nothing is picked.
    */
   adjacentOnly?: boolean
+  /** How deep it went: core (a core catalog skill, the full answer) or short (2 or 3 sentences). Absent on drafts made before depths. */
+  depth?: 'core' | 'short'
 }
 
 /** What a records draft is doing now, for the step line under the spinner. */
