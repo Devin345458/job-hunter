@@ -3,12 +3,13 @@
 // production snapshot, on Devin's subscription through the Agent SDK (the token comes from the
 // worktree .env and is never printed), with his local memory server, then has a separate judge call
 // score each app draft and the other draft for the same question on the style's rubric (Direct
-// answer, Scope, Skills shown, Short and plain, Calibration; ANSWER_RUBRIC in
+// answer, Scope, Skills shown, Short and spoken, Calibration; ANSWER_RUBRIC in
 // server/utils/draft-from-records.ts) without saying which is which. Each pair is judged twice, once
 // in each order, and the two scores are averaged. Hard fails: more than 4 sentences after the level,
 // over 800 characters, a dash, or a semicolon (code), and a tool list (the judge). The ship bar: no
 // hard fail, nothing under 3, an average of 4 or more. What code sees the style leaves out (a date,
-// a file or code name; styleFaults()) is printed for both. The judge cannot see the records, so the
+// a file or code name, a sentence that opens with context, a sentence over 30 words; styleFaults())
+// is printed for both, with a count per side. The judge cannot see the records, so the
 // "no record supports it" and "names a client" fails are left to the app's own guards and are not
 // scored for either.
 //
@@ -226,5 +227,7 @@ console.log(`\nAverages over ${ok.length} questions: app ${avg(ok.map(r => r.app
 console.log(`Per dimension, app: ${dimAvg('app')}`)
 console.log(`Per dimension, other: ${dimAvg('local')}`)
 console.log(`Length, app: ${avg(ok.map(r => r.appShape.chars))} chars, ${avg(ok.map(r => r.appShape.sentences))} sentences; other: ${avg(ok.map(r => r.localShape.chars))} chars, ${avg(ok.map(r => r.localShape.sentences))} sentences`)
+const faultCount = (k: 'appShape' | 'localShape') => ok.reduce((n, r) => n + r[k].faults.length, 0)
+console.log(`Style faults code sees (dates, code names, sentences that open with context, sentences over 30 words): app ${faultCount('appShape')}, other ${faultCount('localShape')}`)
 console.log(`Clear the ship bar: app ${ok.filter(r => r.judge.appShips).length} of ${ok.length}, other ${ok.filter(r => r.judge.localShips).length} of ${ok.length}`)
 writeFileSync(outPath, JSON.stringify(results, null, 2))

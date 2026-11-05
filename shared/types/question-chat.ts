@@ -95,8 +95,8 @@ export type RecordsMemoryUse = 'used' | 'none' | 'unreachable' | 'busy' | 'off'
  * level and scope up front, one project a reader can picture, his own decisions and why, a result
  * the records state, and a claim that matches the records exactly.
  */
-/** The coach rubric's dimensions: Devin's house style (2026-11-05), short and skill-forward. */
-export type InterviewDimension = 'Direct answer' | 'Scope' | 'Skills shown' | 'Short and plain' | 'Calibration'
+/** The coach rubric's dimensions: Devin's house style (2026-11-05), short, skill-forward, and conversational. */
+export type InterviewDimension = 'Direct answer' | 'Scope' | 'Skills shown' | 'Short and spoken' | 'Calibration'
 
 /**
  * The coach pass on a finished draft: each dimension scored 1 to 5 with the sentence that earns it,
