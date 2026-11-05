@@ -123,6 +123,10 @@ onMounted(() => fetchEntries())
       />
     </div>
 
+    <!-- The skills employers ask about, each with a Core switch. With the Skill or Experience filter
+         too, since those are the entries the catalog's skills answer to. -->
+    <KnowledgeSkillCatalog v-if="!selectedCategory || selectedCategory === 'skill' || selectedCategory === 'experience'" :search="searchQuery" />
+
     <!-- Loading -->
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" />
 

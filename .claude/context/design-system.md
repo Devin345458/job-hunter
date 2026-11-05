@@ -86,6 +86,7 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular f
 | Menu | Floats on `surface-bright`, one step above the card it opens from | `global.scss` |
 | Loading skeleton | Flat bars one tone above what they sit on (`surface-bright` on a card, `surface` on the page ground with `skeleton--ground`), at the real layout, no shimmer; counts and data lines wait for the data instead of reading 0 | `global.scss`, every `v-skeleton-loader` |
 | Switch | Off: a light gray thumb on a `surface-light` track; on: the color the screen gives it | `global.scss` |
+| Row with a trailing switch | Name over a gray one-line explanation, the switch at the right with a one-word label (`Core`); the switch gets `flex: none` and `min-width: max-content`, its label `white-space: nowrap`, or on a phone the label breaks letter by letter and the control spills past the card | `knowledge/SkillCatalog.vue` |
 | Blocking mark | A 3px amber left edge and the amber "Blocks an approval" label, the same on the Questions page and the Send card; questions that do not block are plain raised panels | `QuestionCard.vue`, `ReviewQuestions.vue` |
 | Gap plan item | The requirement as the heading, the plan's decision under it in gray with its icon, "Must have" in ink | `DemoGapAnalysis.vue` |
 | Phone sub page app bar | Back arrow to the list in place of the menu button, title is the sub page | `app/layouts/default.vue` |
@@ -116,3 +117,4 @@ Inter 400, 500, 600 (Google Fonts), the dealt face. Nothing above 600. Tabular f
 | 2026-11-04 | Health folds to one line above the queue | It held the top 390px of the queue column; the line keeps the paused or blocked state visible and the Runs and Queue links |
 | 2026-11-04 | Jobs is a list with pay columns, not a card grid | Score, base and total could not be compared down a 3-up grid of 5 to 8 chips a card |
 | 2026-11-04 | Questions page ten at a time | All 232 rendered on one 129-screen page |
+| 2026-11-05 | The Core switches sit in their own "Skills employers ask about" list on the Knowledge base page, above the entries | The flag belongs to a catalog skill, not to a knowledge base entry: most of the 184 skills have no entry yet, and Laravel and Vue come from the resume. Twelve rows, core first, then Show all; the page's search filters it |

@@ -680,6 +680,12 @@ export interface CatalogPlanEntry {
 export interface CatalogPlan {
   name: string
   approved: boolean
+  /**
+   * Which open canonical questions take their skill's name and generic question: every one ("all"),
+   * only skills that hold more than one question ("combined"), or none. Answered ones never do.
+   * Missing means "combined".
+   */
+  rewordScope?: 'all' | 'combined' | 'none'
   candidates: number
   models: { distill: string; review: string }
   entries: CatalogPlanEntry[]
@@ -871,20 +877,23 @@ export function applyCatalogPlan(plan: CatalogPlan): CatalogApplied {
   const out: CatalogApplied = { entries: 0, merged: [], reworded: [], skipped: [], repointed: [] }
   const mergeMap = new Map<number, number>()
   const phrasings: Array<[string, string]> = []
+  const scope = plan.rewordScope ?? 'combined'
   plan.entries.forEach((p, n) => {
+    const reword = p.reword && (scope === 'all' || (scope === 'combined' && p.members.length > 1))
     const entry: SkillEntry = catalogEntry(p.slug) ?? { slug: p.slug, name: p.name, kind: p.kind, question: p.question, scope: p.scope, phrasings: [], questionId: null, core: p.core, source: 'approved', createdAt: `${nowSql().slice(0, 10)} ${String(n).padStart(6, '0')}` }
     Object.assign(entry, { name: p.name, kind: p.kind, question: p.question, scope: p.scope, core: p.core })
     let canon: QuestionRow | null = null
     if (p.canonicalId != null) {
       const row = get(p.canonicalId)
       const planned = p.members.find(m => m.id === p.canonicalId)
-      const why = !row ? 'gone' : row.status !== planned?.status ? `now ${row.status}` : row.subject !== planned.subject ? `subject changed to "${row.subject}"` : null
+      // Answered since the plan is fine: the members merge into it, and only its wording stays.
+      const why = !row ? 'gone' : row.status !== 'pending' && row.status !== 'answered' ? `now ${row.status}` : row.subject !== planned?.subject ? `subject changed to "${row.subject}"` : null
       if (why) {
         out.skipped.push({ id: p.canonicalId, skill: p.name, reason: `canonical question ${why}; nothing in this skill merged` })
       }
       else {
         canon = row
-        if (p.reword && row!.status === 'pending') {
+        if (reword && row!.status === 'pending') {
           const target = subjectTarget(p.name, p.kind, codeFlagOf(row!.context))
           const others = p.members.filter(m => m.id !== row!.id).map(m => m.subject)
           db.update(questions).set({
@@ -940,4 +949,36 @@ export function applyApprovedCatalogOnce(plan: CatalogPlan | null, log: (m: stri
     .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
   log(`skill catalog: ${applied.entries} skills; merged ${applied.merged.map(m => `#${m.id} into #${m.into}`).join(', ') || 'none'}; reworded ${applied.reworded.map(id => `#${id}`).join(', ') || 'none'}${applied.skipped.length ? `; skipped ${applied.skipped.map(s => `#${s.id} (${s.reason})`).join(', ')}` : ''}`)
   return { ran: true, reason: null, applied }
+}
+
+// ── The core flag ──
+
+export interface SkillCatalogItem {
+  slug: string
+  name: string
+  kind: SkillKind
+  question: string
+  scope: string
+  core: boolean
+  /** How many posting wordings mapped to it. */
+  wordings: number
+  questionId: number | null
+  /** The status of its question: pending, answered, skipped, or null without one. */
+  questionStatus: string | null
+}
+
+/** The catalog for the Knowledge base page: core skills first, then the most asked. */
+export function skillCatalogView(): SkillCatalogItem[] {
+  return loadCatalog().map((e) => {
+    const q = e.questionId != null ? skillQuestion(e) : null
+    return { slug: e.slug, name: e.name, kind: e.kind, question: e.question, scope: e.scope, core: e.core, wordings: e.phrasings.length, questionId: q?.id ?? e.questionId, questionStatus: q?.status ?? null }
+  }).sort((a, b) => Number(b.core) - Number(a.core) || b.wordings - a.wordings || a.name.localeCompare(b.name))
+}
+
+/** Marks a skill core or not. Drafts will give a core skill a full answer and every other skill 2 or 3 sentences. */
+export function setSkillCore(slug: string, core: boolean): SkillEntry | null {
+  const e = catalogEntry(slug)
+  if (!e) return null
+  if (e.core !== core) saveEntry({ ...e, core })
+  return { ...e, core }
 }

@@ -372,8 +372,9 @@ describe('the bootstrap plan', () => {
     const s = seed()
     respond = answers(s)
     const plan = await m.bootstrapCatalog({ batch: 6 })
-    // Changed since the plan: one member answered, one gone.
+    // Changed since the plan: one member answered, one gone, and an open canonical answered.
     answer(s.b.id, 'Yes')
+    answer(s.i.id, 'Yes')
     db().run(m.sql`delete from questions where id = ${s.j.id}`)
     const applied = m.applyCatalogPlan(plan)
     assert.deepEqual(applied.merged.map((x: any) => x.id).sort(), [s.a.id, s.d.id].sort())
@@ -383,9 +384,8 @@ describe('the bootstrap plan', () => {
     assert.equal(m.appSkipNote(row(s.d.id))?.startsWith(`Merged into question #${s.c.id}`), true, 'listed under Skipped by the app')
     assert.equal(row(s.c.id).answer, 'Yes', 'his answer is untouched')
     const iac = row(s.i.id)
-    assert.equal(iac.subject, 'Infrastructure as code')
-    assert.equal(iac.knowledgeKey, 'experience:Has done: Infrastructure as code', 'the knowledge key follows the skill')
-    assert.match(iac.context, /Asked as: Infrastructure-as-code, IaC\.$/)
+    assert.equal(iac.subject, 'Infrastructure-as-code', 'answered since the plan: its wording stays')
+    assert.ok(applied.skipped.some((x: any) => x.id === s.j.id), 'its gone member is listed')
     // A wording seen in the plan finds its skill's question without a call.
     calls.length = 0
     respond = () => { throw new Error('the stub should not be called') }
@@ -402,6 +402,46 @@ describe('the bootstrap plan', () => {
     assert.equal(row(s.a.id).status, 'pending')
     assert.equal(m.applyApprovedCatalogOnce({ ...plan, approved: true }).ran, true)
     assert.equal(m.applyApprovedCatalogOnce({ ...plan, approved: true }).ran, false, 'runs once')
+  })
+
+  test('the reword scope: "combined" rewords only skills with more than one question, "none" rewords nothing', async () => {
+    const s = seed()
+    respond = answers(s)
+    const plan = await m.bootstrapCatalog({ batch: 6 })
+    const rust = plan.entries.find((e: any) => e.name === 'Rust')
+    rust.reword = true
+    rust.question = 'Have you built software in Rust?'
+    m.applyCatalogPlan({ ...plan, rewordScope: 'combined' })
+    assert.equal(row(s.k.id).question, 'Have you used Rust in a real project?', 'a one-question skill keeps its wording')
+    assert.equal(row(s.i.id).subject, 'Infrastructure as code', 'a combined skill is reworded')
+    assert.equal(row(s.i.id).knowledgeKey, 'experience:Has done: Infrastructure as code', 'the knowledge key follows the skill')
+    assert.match(row(s.i.id).context, /Asked as: Infrastructure-as-code, IaC\.$/)
+  })
+
+  test('reword scope "all" rewords one-question skills too; "none" leaves every question as it was', async () => {
+    const s = seed()
+    respond = answers(s)
+    const plan = await m.bootstrapCatalog({ batch: 6 })
+    const rust = plan.entries.find((e: any) => e.name === 'Rust')
+    rust.reword = true
+    rust.question = 'Have you built software in Rust?'
+    const before = row(s.i.id).subject
+    m.applyCatalogPlan({ ...plan, rewordScope: 'none' })
+    assert.equal(row(s.i.id).subject, before)
+    db().run(m.sql`delete from app_settings`)
+    m.applyCatalogPlan({ ...plan, rewordScope: 'all' })
+    assert.equal(row(s.k.id).question, 'Have you built software in Rust?')
+  })
+
+  test('the core flag: stored per skill, listed first, and a missing skill is refused', async () => {
+    m.ensureSeedSkills()
+    respond = stub({ 'Ruby on Rails': { name: 'Ruby on Rails' } })
+    await askChecked('Ruby on Rails')
+    assert.equal(m.setSkillCore('ruby-on-rails', true).core, true)
+    assert.equal(m.catalogEntry('ruby-on-rails').core, true)
+    assert.equal(m.skillCatalogView()[0].slug, 'ruby-on-rails', 'core skills come first')
+    assert.equal(m.setSkillCore('no-such-skill', true), null)
+    assert.equal(m.setSkillCore('ruby-on-rails', false).core, false)
   })
 
   test('a failed call leaves no plan to apply', async () => {

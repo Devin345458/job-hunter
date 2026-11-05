@@ -36,6 +36,7 @@ if (mode === 'emit') {
   const lean = {
     name: plan.name,
     approved: rest.includes('--approved'),
+    rewordScope: plan.rewordScope ?? 'combined',
     candidates: plan.candidates,
     models: plan.models,
     review: [],
