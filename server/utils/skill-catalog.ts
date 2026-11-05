@@ -648,6 +648,8 @@ export interface CatalogPlanMember {
   status: string
   answer: string | null
   posting: string | null
+  /** Why the distill (or the review's move) put it under this skill. */
+  why: string | null
   action: 'canonical' | 'merge' | 'keep'
   reason: string | null
 }
@@ -689,7 +691,7 @@ export interface CatalogPlan {
  * skill's canonical question (his own answer, else an answered one, else the oldest open) and what
  * merges. Writes nothing.
  */
-export async function bootstrapCatalog(opts: { distillModel?: string; reviewModel?: string; batch?: number; log?: (m: string) => void } = {}): Promise<CatalogPlan> {
+export async function bootstrapCatalog(opts: { distillModel?: string; reviewModel?: string; batch?: number; log?: (m: string) => void; onCall?: (step: 'distill' | 'review', seconds: number) => void } = {}): Promise<CatalogPlan> {
   const log = opts.log ?? (() => {})
   const rows = catalogCandidates()
   const distillModel = opts.distillModel ?? stepModel(DISTILL_PURPOSE) ?? DISTILL_DEFAULT_MODEL
@@ -700,12 +702,23 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
   type Draft = Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'> & { source: 'seed' | 'bootstrap'; ids: number[] }
   const drafts: Draft[] = SEED_SKILLS.map(s => ({ ...s, source: 'seed', ids: [] }))
   const byId = new Map(rows.map(r => [r.id, r]))
+  const why = new Map<number, string>()
   const batch = opts.batch ?? 25
+  const timed = async <T>(step: 'distill' | 'review', run: () => Promise<T>): Promise<T> => {
+    const t = Date.now()
+    try {
+      return await run()
+    }
+    finally {
+      opts.onCall?.(step, (Date.now() - t) / 1000)
+    }
+  }
   try {
     for (let start = 0; start < rows.length; start += batch) {
       const slice = rows.slice(start, start + batch)
       const items: DistillItem[] = slice.map(q => ({ ...lineOf(q), kind: q.kind as SkillKind, guardSide: q }))
-      const d = await distillCall(items, drafts, { model: distillModel })
+      const d = await timed('distill', () => distillCall(items, drafts, { model: distillModel }))
+      d.reasons.forEach((r, i) => why.set(slice[i]!.id, r))
       const fresh = d.proposals.map((p) => {
         const same = drafts.find(x => normName(x.name) === normName(p.name))
         if (same) return same
@@ -719,7 +732,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
     // The review: the seeds are the catalog, every other skill a proposal with its questions.
     const seeds = drafts.filter(x => x.source === 'seed')
     const proposed = drafts.filter(x => x.source === 'bootstrap')
-    const r = await reviewCall(seeds, proposed.map(p => ({ ...p, lines: p.ids.map(id => lineOf(byId.get(id)!)) })), { members: seeds.map(s => s.ids.map(id => lineOf(byId.get(id)!))), model: reviewModel })
+    const r = await timed('review', () => reviewCall(seeds, proposed.map(p => ({ ...p, lines: p.ids.map(id => lineOf(byId.get(id)!)) })), { members: seeds.map(s => s.ids.map(id => lineOf(byId.get(id)!))), model: reviewModel }))
     const final: Draft[] = [...seeds]
     const into: Draft[] = []
     proposed.forEach((p, k) => {
@@ -732,6 +745,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
         const moving = p.ids.filter(id => !blocked.includes(id))
         target.ids.push(...moving)
         plan.review.push({ what: `"${p.name}" (${p.ids.map(id => `#${id}`).join(', ')}) into "${target.name}"${blocked.length ? `, except ${blocked.map(id => `#${id}`).join(', ')} (kept apart by code)` : ''}`, reason: dec.reason })
+        for (const id of moving) why.set(id, `${why.get(id) ?? ''} Review: ${dec.reason}`.trim())
         if (blocked.length) {
           const kept: Draft = { ...p, ids: blocked }
           final.push(kept)
@@ -759,6 +773,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
       }
       for (const d of final) d.ids = d.ids.filter(x => x !== id)
       to.ids.push(id)
+      why.set(id, `moved by the review: ${m.reason}`)
       plan.review.push({ what: `moved #${id} ${byId.get(id)!.subject} to "${to.name}"`, reason: m.reason })
     }
     // Merged names: the same skill twice after the review becomes one.
@@ -768,7 +783,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
       if (same) same.ids.push(...d.ids)
       else unique.push(d)
     }
-    plan.entries = unique.filter(d => d.ids.length || d.source === 'seed').map(d => planEntry(d, byId, sentences))
+    plan.entries = unique.filter(d => d.ids.length || d.source === 'seed').map(d => planEntry(d, byId, sentences, why))
   }
   catch (e: any) {
     plan.error = `${e?.constructor?.name ?? 'Error'}: ${e?.message ?? e}`
@@ -777,7 +792,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
 }
 
 /** Decides a skill's canonical question and what merges, in code. */
-function planEntry(d: Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'> & { source: 'seed' | 'bootstrap'; ids: number[] }, byId: Map<number, QuestionRow>, sentences: Map<number, string>): CatalogPlanEntry {
+function planEntry(d: Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'> & { source: 'seed' | 'bootstrap'; ids: number[] }, byId: Map<number, QuestionRow>, sentences: Map<number, string>, why: Map<number, string>): CatalogPlanEntry {
   const undone = inferenceUndoneQuestionIds()
   const members = [...new Set(d.ids)].map(id => byId.get(id)!).sort((a, b) => a.id - b.id)
   const answered = members.filter(m => m.status === 'answered')
@@ -798,7 +813,7 @@ function planEntry(d: Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'> &
     answerFrom: canonical?.status === 'answered' && canonical.answer ? { id: canonical.id, answer: canonical.answer } : null,
     conflict,
     members: members.map((m): CatalogPlanMember => {
-      const base = { id: m.id, subject: m.subject!, status: m.status, answer: m.answer, posting: sentences.get(m.id) ?? null }
+      const base = { id: m.id, subject: m.subject!, status: m.status, answer: m.answer, posting: sentences.get(m.id) ?? null, why: why.get(m.id) ?? null }
       if (conflict) return { ...base, action: 'keep', reason: 'answered differently in this skill; nothing merged' }
       if (!canonical) return { ...base, action: 'keep', reason: 'no open or answered question in the skill' }
       if (m.id === canonical.id) return { ...base, action: 'canonical', reason: null }
