@@ -324,7 +324,8 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
       // directed wrote it. Another repo's commit among the evidence can carry a Yes.
       const level = verdict.level === 'None' ? null : appRepoLevel(verdict.level, found.appRepo, evidence.every(e => isAppRepo(e.repo)))
       // The house style opens with the level (after the cap above, so the text and the level agree).
-      const opened = named && level ? `${level === 'Yes' ? 'Yes.' : 'Some experience.'} ${named.replace(/^(?:yes|some experience)\b[.,:]?\s*/i, '')}` : named
+      const body = named.replace(/^(?:yes|some experience)\b[.,:]?\s*/i, '')
+      const opened = body && level ? `${level === 'Yes' ? 'Yes.' : 'Some experience.'} ${body.charAt(0).toUpperCase()}${body.slice(1)}` : ''
       // A draft resting on this app's own commits says how it was built (agents he directed).
       const framed = evidence.some(e => isAppRepo(e.repo)) && opened && !saysDirected(opened) ? `${opened} ${APP_REPO_FRAMING_SENTENCE}` : opened
       // Never over the limit, and never cut inside a sentence.
