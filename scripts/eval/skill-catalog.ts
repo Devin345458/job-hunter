@@ -2,10 +2,11 @@
 // Claude calls on the subscription token in .env (NUXT_CLAUDE_CODE_OAUTH_TOKEN). Never point it at
 // the live database: every mode works on a fresh copy it makes in outDir.
 //
-//   npx tsx --tsconfig scripts/eval/tsconfig.json scripts/eval/skill-catalog.ts bootstrap <snapshot.db> <outDir> [--distill-model m] [--review-model m] [--label name]
+//   npx tsx --tsconfig scripts/eval/tsconfig.json scripts/eval/skill-catalog.ts bootstrap <snapshot.db> <outDir> [--distill-model m] [--review-model m] [--label name] [--drafts <label>-drafts.json]
 //     Builds the proposed catalog from every existing question, scores it against the answer key
 //     (fixtures/skill-catalog-key.json), and writes <label>-plan.json, <label>-score.json, and
-//     <label>-catalog.md (the catalog report Devin reviews).
+//     <label>-catalog.md (the catalog report Devin reviews), and <label>-drafts.json (the distill
+//     step's result; pass it back with --drafts to rerun only the review).
 //   ... cases <snapshot.db> <outDir> --plan <plan.json> [--distill-model m] [--review-model m] [--label name]
 //     Applies the plan to a fresh copy, then distills each of the key's new-requirement cases on its
 //     own (one ask each, as at ask time) and scores them, with latency and estimated cost per call.
@@ -182,7 +183,15 @@ if (mode === 'bootstrap') {
   const before = lastCallId()
   const times: Record<string, number[]> = { distill: [], review: [] }
   const t0 = Date.now()
-  const plan = await sc.bootstrapCatalog({ distillModel, reviewModel, log: m => console.log(m), onCall: (step, s) => times[step]!.push(s) })
+  const reuse = flag('drafts')
+  const plan = await sc.bootstrapCatalog({
+    distillModel,
+    reviewModel,
+    log: m => console.log(m),
+    onCall: (step, s) => times[step]!.push(s),
+    drafts: reuse ? JSON.parse(readFileSync(reuse, 'utf8')) : undefined,
+    onDrafts: d => writeFileSync(join(outDir!, `${label}-drafts.json`), JSON.stringify(d, null, 2)),
+  })
   const seconds = (Date.now() - t0) / 1000
   const stats = callStats(before)
   if (plan.error) {

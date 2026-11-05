@@ -355,6 +355,7 @@ For each proposal decide:
 - "new" when it is a real skill the catalog lacks, at the breadth its requirements check. You may improve its name, question, and scope.
 - "S<n>" when it rewords an existing skill: one Yes, Some experience, or No about that skill would answer every one of its requirements.
 - "P<k>" when it rewords an earlier proposal in this list.
+List only the proposals you map onto another skill or whose name, question, or scope you change. Leave out every proposal that stays as proposed: it is added as it is.
 A proposal that is too narrow maps to the broader skill only when the broader skill's answer would answer its requirements too; otherwise it stays new. A proposal that is too broad gets a narrower name, question, and scope that match what its requirements check.
 Also check every requirement listed under an existing skill or a proposal: when one sits under the wrong skill, move it ("moves") to the skill it checks. Give every decision and move a one-line reason naming the rule.
 
@@ -374,7 +375,7 @@ const DistillSchema = z.object({
 
 const ReviewSchema = z.object({
   proposals: z.array(z.object({
-    proposal: z.string().describe('The proposal\'s id, e.g. "P1"'),
+    proposal: z.string().describe('The proposal\'s id, e.g. "P1"; only proposals you map or change'),
     decision: z.string().describe('"new", "S<n>" of the existing skill it rewords, or "P<k>" of an earlier proposal it rewords'),
     name: z.string().describe('For "new": the final short generic name'),
     question: z.string().describe('For "new": the final generic yes or no question'),
@@ -495,7 +496,8 @@ async function reviewCall(
     purpose: REVIEW_PURPOSE,
     model: opts.model ?? stepModel(REVIEW_PURPOSE) ?? REVIEW_DEFAULT_MODEL,
     effort: 'medium',
-    maxTokens: 16000,
+    // A bootstrap review reads every proposed skill; thinking counts against this too.
+    maxTokens: 32000,
     ref: opts.ref,
     system: REVIEW_SYSTEM,
     prompt: cachedPrompt([`SKILLS\n${skills || '(none yet)'}`], `\n\nPROPOSED SKILLS\n${proposals.map((p, k) => `P${k + 1}: ${p.name} (${p.kind}) | question: "${p.question}" | scope: ${p.scope}\n${p.lines.map(l => `  ${requirementText(l)}`).join('\n')}`).join('\n')}`),
@@ -691,7 +693,22 @@ export interface CatalogPlan {
  * skill's canonical question (his own answer, else an answered one, else the oldest open) and what
  * merges. Writes nothing.
  */
-export async function bootstrapCatalog(opts: { distillModel?: string; reviewModel?: string; batch?: number; log?: (m: string) => void; onCall?: (step: 'distill' | 'review', seconds: number) => void } = {}): Promise<CatalogPlan> {
+export interface CatalogDraft extends Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'> {
+  source: 'seed' | 'bootstrap'
+  ids: number[]
+}
+
+export async function bootstrapCatalog(opts: {
+  distillModel?: string
+  reviewModel?: string
+  batch?: number
+  log?: (m: string) => void
+  onCall?: (step: 'distill' | 'review', seconds: number) => void
+  /** The distill step's result from an earlier run, to rerun only the review. */
+  drafts?: { drafts: CatalogDraft[]; why: Array<[number, string]> }
+  /** Called with the distill step's result, so a later run can reuse it. */
+  onDrafts?: (d: { drafts: CatalogDraft[]; why: Array<[number, string]> }) => void
+} = {}): Promise<CatalogPlan> {
   const log = opts.log ?? (() => {})
   const rows = catalogCandidates()
   const distillModel = opts.distillModel ?? stepModel(DISTILL_PURPOSE) ?? DISTILL_DEFAULT_MODEL
@@ -699,10 +716,10 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
   const plan: CatalogPlan = { name: `Proposed ${nowSql().slice(0, 10)} from ${rows.length} questions`, approved: false, candidates: rows.length, models: { distill: distillModel, review: reviewModel }, entries: [], review: [], error: null }
   const sentences = postingSentences(rows)
   const lineOf = (q: QuestionRow): RequirementLine => ({ ref: `Q${q.id}`, subject: q.subject!, question: q.question, posting: sentences.get(q.id) ?? null })
-  type Draft = Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'> & { source: 'seed' | 'bootstrap'; ids: number[] }
-  const drafts: Draft[] = SEED_SKILLS.map(s => ({ ...s, source: 'seed', ids: [] }))
+  type Draft = CatalogDraft
+  const drafts: Draft[] = opts.drafts ? structuredClone(opts.drafts.drafts) : SEED_SKILLS.map(s => ({ ...s, source: 'seed', ids: [] }))
   const byId = new Map(rows.map(r => [r.id, r]))
-  const why = new Map<number, string>()
+  const why = new Map<number, string>(opts.drafts?.why ?? [])
   const batch = opts.batch ?? 25
   const timed = async <T>(step: 'distill' | 'review', run: () => Promise<T>): Promise<T> => {
     const t = Date.now()
@@ -714,7 +731,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
     }
   }
   try {
-    for (let start = 0; start < rows.length; start += batch) {
+    for (let start = opts.drafts ? rows.length : 0; start < rows.length; start += batch) {
       const slice = rows.slice(start, start + batch)
       const items: DistillItem[] = slice.map(q => ({ ...lineOf(q), kind: q.kind as SkillKind, guardSide: q }))
       const d = await timed('distill', () => distillCall(items, drafts, { model: distillModel }))
@@ -729,6 +746,7 @@ export async function bootstrapCatalog(opts: { distillModel?: string; reviewMode
       d.mapped.forEach((m, i) => ('skill' in m ? drafts[m.skill]! : fresh[m.proposal]!).ids.push(slice[i]!.id))
       log(`distilled questions ${slice[0]!.id} to ${slice.at(-1)!.id}: ${d.proposals.length} new skills, catalog ${drafts.length}`)
     }
+    if (!opts.drafts) opts.onDrafts?.({ drafts: structuredClone(drafts), why: [...why] })
     // The review: the seeds are the catalog, every other skill a proposal with its questions.
     const seeds = drafts.filter(x => x.source === 'seed')
     const proposed = drafts.filter(x => x.source === 'bootstrap')
