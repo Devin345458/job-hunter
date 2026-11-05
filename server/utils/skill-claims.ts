@@ -19,7 +19,7 @@ import { loadKnowledge, type KnowledgeEntry } from './knowledge'
 import { ruleTerm } from './learned-score'
 import {
   answerQuestion,
-  askQuestion,
+  askSkillQuestion,
   findKnowledgeEntry,
   isNegativeKnowledge,
   knowledgeCovers,
@@ -410,11 +410,13 @@ export function applyKnownSkillClaim(ctx: SkillClaimContext): SkillClaimResult {
 }
 
 /** The existing question, or a new pending one tied to this job and application. Never on a sandbox job. */
-export function ensureSkillClaimQuestion(ctx: SkillClaimContext): QuestionRow {
+export async function ensureSkillClaimQuestion(ctx: SkillClaimContext): Promise<QuestionRow> {
   if (ctx.isSandbox) throw createError({ statusCode: 409, statusMessage: 'Sandbox cards never create questions or write your knowledge base.' })
   if (ctx.question) return ctx.question
   const asks = ctx.requirement?.text ?? ctx.name
-  return askQuestion({
+  // The meaning check first: an existing question that asks the same claim in other words is the one to answer.
+  return askSkillQuestion({
+    phrase: asks,
     question: questionText(ctx),
     context: `${ctx.job.title} at ${ctx.job.company} asks for: ${asks.replace(/\.+$/, '')}. Your answer decides whether the resume and letter can mention it.`,
     kind: ctx.kind,
@@ -478,7 +480,7 @@ export async function saveSkillClaim(ctx: SkillClaimContext, rawAnswer: unknown,
   }
   if (ctx.isSandbox) return { written: false, question: null, knowledge: null, requirementsChanged: 0 }
 
-  const q = ensureSkillClaimQuestion(ctx)
+  const q = await ensureSkillClaimQuestion(ctx)
   const outcome = await answerQuestion(q.id, answer, example)
   const yn = parseYesNo(answer)!
   // answerQuestion rescored jobs from the stored row; re-read it so the statuses apply to the current one.

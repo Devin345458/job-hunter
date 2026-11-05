@@ -13,7 +13,7 @@ export default defineTask({
     const outcome = await withRun('jobs:match', triggerOf(payload), async (log) => {
       const stats = await matchStep((payload ?? {}) as Record<string, unknown>, log)
       // Ask about skills the newly read and scored jobs need now, not at tomorrow's learning step.
-      const asked = askDailyQuestions()
+      const asked = await askDailyQuestions()
       if (asked.length) log(`asked ${asked.length} new skill ${asked.length === 1 ? 'question' : 'questions'}`)
       return { ...stats, skillQuestionsAsked: asked.length }
     })

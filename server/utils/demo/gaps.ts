@@ -172,8 +172,9 @@ Write the question so Devin can answer yes or no in one tap. Plain American Engl
         items.push({ ...base, decision: 'skip', rationale: `The knowledge base does not mention ${subject} and you skipped the question about it.` })
         continue
       }
-      const q = askQuestion({
+      const q = await askSkillQuestion({
         question: c.question,
+        phrase: c.requirement,
         context: `${job.title} at ${job.company} asks for: ${asSentence(c.requirement)} The knowledge base does not say whether you have this. ${c.codeShowable ? GAP_CONTEXT_CODE : GAP_CONTEXT_EXPERIENCE}`,
         kind: c.askKind,
         subject,

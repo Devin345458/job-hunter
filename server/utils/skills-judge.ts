@@ -1,6 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
 import { questions } from '../db/schema'
+import type { AskInput } from './questions'
 import type { GapAnalysis, GapItem, Requirement, ScoreBreakdown } from '#shared/types/pipeline'
 import { isProfileFact, isSoftSkill } from '#shared/utils/requirement-kinds'
 import { plainQuestionContext } from '#shared/utils/plain-text'
@@ -354,7 +355,7 @@ function asSentence(requirement: string): string {
  * questions that no question covers yet, on that application, and returns the plan with their ids.
  * Never for sandbox jobs, which create no questions.
  */
-export function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: number; job: { id: number; title: string; company: string; isSandbox: boolean } }, previous: GapAnalysis | null = null): GapAnalysis {
+export async function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: number; job: { id: number; title: string; company: string; isSandbox: boolean } }, previous: GapAnalysis | null = null): Promise<GapAnalysis> {
   // A question this card already asked for the same requirement or subject is kept, whatever the
   // new call called it, so a rescore never asks the same thing twice.
   const carried = gap.items.map((i) => {
@@ -363,19 +364,29 @@ export function askGapQuestions(gap: GapAnalysis, ctx: { applicationId: number; 
     return before ? { ...i, questionId: before.questionId } : i
   })
   if (ctx.job.isSandbox) return { ...gap, items: carried }
-  const items = carried.map((i) => {
-    if (i.decision !== 'ask' || i.questionId || !i.ask || !i.subject) return i
-    const q = askQuestion({
+  const inputs = new Map<number, AskInput>()
+  carried.forEach((i, n) => {
+    if (i.decision !== 'ask' || i.questionId || !i.ask || !i.subject) return
+    inputs.set(n, {
       question: i.ask.question,
       context: `${ctx.job.title} at ${ctx.job.company} asks for: ${asSentence(i.requirement)} The knowledge base does not say whether you have this. ${i.ask.codeShowable ? GAP_CONTEXT_CODE : GAP_CONTEXT_EXPERIENCE}`,
       kind: i.ask.kind,
       subject: i.subject,
+      phrase: i.requirement,
       answerType: 'yes_no',
       codeShowable: i.ask.codeShowable,
       applicationId: ctx.applicationId,
       jobId: ctx.job.id,
       blocking: false,
     })
+  })
+  // One meaning check for the plan's open questions: an existing question that asks the same
+  // claim in other words is reused instead of asking again.
+  if (inputs.size) await checkSameMeaning([...inputs.values()].map(meaningAskOf), { type: 'application', id: ctx.applicationId })
+  const items = carried.map((i, n) => {
+    const input = inputs.get(n)
+    if (!input) return i
+    const q = askQuestion(input)
     return { ...i, questionId: q.id, rationale: `The knowledge base does not say whether you have ${i.subject}. Asked: "${q.question}"` }
   })
   return { ...gap, items }

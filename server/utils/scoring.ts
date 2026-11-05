@@ -318,7 +318,7 @@ export async function scoreOne(job: JobRow, ctx: { entries: KnowledgeEntry[]; pr
     const qids = askCompQuestions(ctx.prefs, comp, job.id)
     const breakdown = composeBreakdown(skills, scoreCompensation(comp, ctx.prefs, qids), learnedAdjustment(job))
     writeScore(job, breakdown, job.matchScore == null ? 'initial' : 'rescore')
-    if (!reuse && skills.gap) refreshDecideGap(job, skills.gap)
+    if (!reuse && skills.gap) await refreshDecideGap(job, skills.gap)
     log(`#${job.id} ${job.company} | ${job.title}: final ${breakdown.final} (skills ${skills.score}, comp ${breakdown.compensation.score ?? 'n/a'}, learned ${breakdown.learned.total})`)
     return { jobId: job.id, outcome: reuse ? 'reused' : 'scored', final: breakdown.final, asked: [qids.floorQuestionId, qids.healthQuestionId].filter((id): id is number => !!id) }
   }
@@ -334,12 +334,12 @@ export async function scoreOne(job: JobRow, ctx: { entries: KnowledgeEntry[]; pr
  * A job with a Decide card that was scored again: the card's copy of the gap plan follows the new
  * one, with its open questions asked (the job is at the threshold, or its card is hidden anyway).
  */
-function refreshDecideGap(job: JobRow, gap: NonNullable<SkillsResult['gap']>) {
+async function refreshDecideGap(job: JobRow, gap: NonNullable<SkillsResult['gap']>) {
   const app = useDb().select({ id: applications.id }).from(applications)
     .where(and(eq(applications.jobId, job.id), eq(applications.status, 'to_decide'))).get()
   if (!app) return
   const before = parseJson<NonNullable<SkillsResult['gap']> | null>(useDb().select({ g: applications.gapAnalysisJson }).from(applications).where(eq(applications.id, app.id)).get()?.g, null)
-  const plan = askGapQuestions(gap, { applicationId: app.id, job }, before)
+  const plan = await askGapQuestions(gap, { applicationId: app.id, job }, before)
   useDb().update(applications).set({ gapAnalysisJson: JSON.stringify(plan), updatedAt: nowSql() }).where(eq(applications.id, app.id)).run()
 }
 

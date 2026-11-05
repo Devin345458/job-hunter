@@ -33,6 +33,7 @@ import { applyAnswerToOpenJobs } from './skill-claims'
 import { NOT_A_GAP } from '#shared/utils/requirement-kinds'
 import { sameSubject } from './skills-judge'
 import { queueRepoSuggest, repoSuggestionsFor } from './repos/suggest-store'
+import { checkSameMeaning, meaningGuard, meaningMatch, postingPhrase, type MeaningAsk } from './question-meaning'
 
 export type QuestionRow = InferSelectModel<typeof questions>
 
@@ -58,6 +59,8 @@ export interface AskInput {
    * question's section (Skills or Experience) is decided from the subject with this as a tiebreak.
    */
   codeShowable?: boolean
+  /** What the posting wrote ("Proficiency using AI-powered tools"); the meaning check reads the subject with it. */
+  phrase?: string | null
 }
 
 export function dedupeKeyOf(kind: string, subject: string) {
@@ -65,9 +68,32 @@ export function dedupeKeyOf(kind: string, subject: string) {
 }
 
 /**
+ * The cheap exact checks, in order: the same dedupe key (answered, then pending), the question a
+ * merged duplicate with that key points to, and for a skill or experience the same skill once
+ * qualifiers are dropped ("Expert-level Python" is Python). Null when none finds a question.
+ */
+export function exactQuestionFor(kind: string, subject: string): QuestionRow | null {
+  const dedupeKey = dedupeKeyOf(kind, subject)
+  const existing = useDb().select().from(questions)
+    .where(and(eq(questions.dedupeKey, dedupeKey), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+  const found = existing.find(q => q.status === 'answered') ?? existing.find(q => q.status === 'pending')
+  if (found) return found
+  // Asked before and merged into another question: that one is the question to wait on. Without
+  // this, a refresh that re-asked a merged form question created it again on every run.
+  const merged = existing.length ? null : mergedCanonicalFor(dedupeKey)
+  if (merged) return merged
+  return kind === 'knows' || kind === 'has_done' ? sameCoreQuestion(subject) : null
+}
+
+/**
  * Ask Devin a question, at most once per (kind, subject).
  * - Already answered: returns the existing row (status 'answered'), so the caller can use the answer.
  * - Already pending: returns it, and marks it blocking if this caller needs it to block.
+ * - A skill or experience the meaning check (question-meaning.ts) tied to an existing question:
+ *   returns that one. Callers that can wait run the check first (askSkillQuestion); here only its
+ *   stored decision is read. With no decision (the check failed, or never ran) the word match
+ *   decides, as before.
  * - Otherwise inserts a new pending question.
  */
 export function askQuestion(input: AskInput): QuestionRow {
@@ -80,21 +106,19 @@ export function askQuestion(input: AskInput): QuestionRow {
     }
     return q
   }
-  const existing = db.select().from(questions)
-    .where(and(eq(questions.dedupeKey, dedupeKey), inArray(questions.status, ['pending', 'answered'])))
-    .all()
-  const answered = existing.find(q => q.status === 'answered')
-  if (answered) return answered
-  const pending = existing.find(q => q.status === 'pending')
-  if (pending) return reuse(pending)
-  // Asked before and merged into another question: that one is the question to wait on. Without
-  // this, a refresh that re-asked a merged form question created it again on every run.
-  const merged = existing.length ? null : mergedCanonicalFor(dedupeKey)
-  if (merged) return reuse(merged)
-  // The same skill or experience in other words ("Expert-level Python", "Python3"): one question.
+  const exact = exactQuestionFor(input.kind, input.subject)
+  if (exact) return reuse(exact)
   if (input.kind === 'knows' || input.kind === 'has_done') {
-    const same = sameSkillQuestion(input.subject)
-    if (same) return reuse(same)
+    // The same claim in other words ("AI-first" and "AI-assisted"), as Claude judged it.
+    const meant = meaningMatch(input.subject)
+    if (meant.decided) {
+      if (meant.row) return reuse(meant.row)
+    }
+    else {
+      // No decision: the word match ("Payments and reconciliation" in other words).
+      const same = sameSkillQuestion(input.subject)
+      if (same) return reuse(same)
+    }
   }
   // A skill or experience answer is filed by what the subject is, decided here once for the
   // question, whatever key the caller suggested: Docker under Skills, fintech under Experience.
@@ -119,6 +143,22 @@ export function askQuestion(input: AskInput): QuestionRow {
   // A new skill or experience question gets checked against Devin's own GitHub commits.
   if (row.kind === 'knows' || row.kind === 'has_done') queueRepoSuggest(row.id)
   return row
+}
+
+/**
+ * askQuestion() for a skill or experience, after the meaning check: one Claude call decides
+ * whether an existing question already asks the same claim, unless the exact checks or a stored
+ * decision settle it. A failed or budget-stopped check never blocks asking: askQuestion() then
+ * uses the word match.
+ */
+export async function askSkillQuestion(input: AskInput, ref?: { type: string; id: number }): Promise<QuestionRow> {
+  if (input.kind === 'knows' || input.kind === 'has_done') await checkSameMeaning([meaningAskOf(input)], ref)
+  return askQuestion(input)
+}
+
+/** The meaning check's view of a question about to be asked. */
+export function meaningAskOf(input: AskInput): MeaningAsk {
+  return { subject: input.subject, kind: input.kind, question: input.question, phrase: input.phrase ?? postingPhrase(input.context), context: input.context ?? null }
 }
 
 /** Answered value for a (kind, subject), or null if Devin has not answered it. */
@@ -305,13 +345,18 @@ function subjectParts(subject: string): string[] {
   return subject.split(/\s*(?:,|\/|&|\bor\b|\band\b)\s*/i).map(s => s.trim()).filter(Boolean)
 }
 
+/** The parts of a skill or experience subject ("Figma or Sketch" is Figma and Sketch), for the meaning check. */
+export function skillSubjectParts(subject: string): string[] {
+  return subjectParts(subject)
+}
+
 /**
  * True when every part of a subject names a tool, language, framework, or platform: one
  * capitalized word (Docker, Kotlin), a capital past the first letter, a digit, or a symbol
  * (GraphQL, iMAX, S3, C#, Next.js, Microsoft Azure), or a known lowercase skill. "Payments and
  * reconciliation" and "Highly transactional systems" are kinds of work, not tools.
  */
-function namesTool(subject: string): boolean {
+export function namesTool(subject: string): boolean {
   const parts = subjectParts(subject)
   return parts.length > 0 && parts.every((part) => {
     const core = skillCore(part)
@@ -1143,7 +1188,7 @@ function repointMerged(mergeMap: Map<number, number>): number[] {
  * Questions an application blocks on, and ones Devin reopened, are never skipped; reopened
  * duplicates are still merged. Skipped questions can be reopened.
  */
-export function tidyKnowsQuestions(): { reworded: number; skipped: number; merged: number; answered: number } {
+export async function tidyKnowsQuestions(): Promise<{ reworded: number; skipped: number; merged: number; answered: number; meaningError: string | null }> {
   const db = useDb()
   const rows = db.select().from(questions)
     .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered'])))
@@ -1156,30 +1201,70 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
   // Answered and blocking questions anchor their subject: they are never merged or skipped.
   const canon: QuestionRow[] = rows.filter(r => r.status === 'answered').concat(rows.filter(r => r.status === 'pending' && r.blocking))
   for (const q of canon) subjectOf.set(q.id, q.kind === 'knows' ? knowsRawSubject(q) : (q.subject ?? q.question))
-  const skips: Array<{ q: QuestionRow; reason: string }> = []
-  const groups = new Map<number, QuestionRow[]>()
-  for (const q of rows.filter(r => r.status === 'pending' && !r.blocking)) {
-    let subject = (q.subject ?? '').trim() || q.question
+  const answeredRows = canon.filter(c => c.status === 'answered')
+  const open = rows.filter(r => r.status === 'pending' && !r.blocking)
+
+  // What each open question asks about, or why it is skipped, decided once so the meaning check
+  // and the loop below read the same subject.
+  const plan = new Map<number, { subject: string } | { skip: string } | { carried: true }>()
+  for (const q of open) {
     // An answer on the same subject is carried to it below (carryAllAnswers), so it is neither
     // skipped as covered nor merged: it reads "Answered from your answer to #N".
-    if (!undone.has(q.id) && canon.some(c => c.status === 'answered' && carries(c, q))) continue
-    if (q.kind === 'knows') {
-      const verdict = knowsVerdict(q, gapIds)
-      if ('reason' in verdict) {
-        if (!reopened.has(q.id) && !undone.has(q.id)) {
-          skips.push({ q, reason: verdict.reason })
-          continue
+    if (!undone.has(q.id) && answeredRows.some(c => carries(c, q))) {
+      plan.set(q.id, { carried: true })
+      continue
+    }
+    if (q.kind !== 'knows') {
+      plan.set(q.id, { subject: (q.subject ?? '').trim() || q.question })
+      continue
+    }
+    const verdict = knowsVerdict(q, gapIds)
+    if ('reason' in verdict) {
+      plan.set(q.id, !reopened.has(q.id) && !undone.has(q.id) ? { skip: verdict.reason } : { subject: knowsRawSubject(q) })
+      continue
+    }
+    plan.set(q.id, { subject: verdict.subject })
+  }
+
+  // One Claude call (or a few) for the open questions no stored decision covers: does an older
+  // question, or an answered one, ask the same claim? Stored per subject, so the next tidy asks nothing.
+  const meaning = await checkSameMeaning(open.flatMap((q) => {
+    const p = plan.get(q.id)!
+    return 'subject' in p && !undone.has(q.id) ? [{ subject: p.subject, kind: q.kind!, question: q.question, context: q.context, phrase: postingPhrase(q.context), selfId: q.id }] : []
+  }))
+
+  const skips: Array<{ q: QuestionRow; reason: string }> = []
+  const groups = new Map<number, QuestionRow[]>()
+  const intoOf = new Map<number, number>()
+  // Merged by meaning rather than by the same skill: their wording never renames the canonical question.
+  const byMeaning = new Set<number>()
+  for (const q of open) {
+    const p = plan.get(q.id)!
+    if ('carried' in p) continue
+    if ('skip' in p) {
+      skips.push({ q, reason: p.skip })
+      continue
+    }
+    const subject = p.subject
+    // A question whose carried answer he undid stands on its own: it is not merged into the answer.
+    let into = undone.has(q.id) ? undefined : canon.find(c => sameCoreSkill(subjectOf.get(c.id)!, subject))
+    if (!into && !undone.has(q.id)) {
+      const meant = meaningMatch(subject)
+      if (meant.decided) {
+        const id = meant.row ? (intoOf.get(meant.row.id) ?? meant.row.id) : null
+        const target = id != null && id !== q.id ? canon.find(c => c.id === id) : undefined
+        if (target && !meaningGuard({ subject, question: q.question, context: q.context }, { subject: subjectOf.get(target.id)!, question: target.question, context: target.context })) {
+          into = target
+          byMeaning.add(q.id)
         }
-        subject = knowsRawSubject(q)
       }
       else {
-        subject = verdict.subject
+        into = canon.find(c => sameSkill(subjectOf.get(c.id)!, subject))
       }
     }
-    // A question whose carried answer he undid stands on its own: it is not merged into the answer.
-    const into = undone.has(q.id) ? undefined : canon.find(c => sameSkill(subjectOf.get(c.id)!, subject))
     if (into) {
       groups.set(into.id, [...(groups.get(into.id) ?? []), q])
+      intoOf.set(q.id, into.id)
       continue
     }
     subjectOf.set(q.id, subject)
@@ -1189,11 +1274,12 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
   // Each open knows question is worded for the shortest name its group used, before the duplicates'
   // notes quote it: "Proficient in Python" (the oldest) becomes "Python". A gap plan's question
   // keeps the wording the scoring call gave it ("Have you used Temporal or a similar workflow
-  // orchestration tool?") until its subject changes.
+  // orchestration tool?") until its subject changes. Only the same skill renames it: "AI-first",
+  // merged by meaning into "AI-assisted", names another wording of the claim, not a shorter name.
   let reworded = 0
   for (const c of canon) {
     if (c.status !== 'pending' || c.kind !== 'knows') continue
-    const names = [subjectOf.get(c.id)!, ...(groups.get(c.id) ?? []).map(d => knowsVerdict(d, gapIds)).map(v => ('subject' in v ? v.subject : null)).filter((s): s is string => !!s)]
+    const names = [subjectOf.get(c.id)!, ...(groups.get(c.id) ?? []).filter(d => !byMeaning.has(d.id)).map(d => knowsVerdict(d, gapIds)).map(v => ('subject' in v ? v.subject : null)).filter((s): s is string => !!s)]
     const cores = names.map(skillCore).filter(n => n && !GENERIC_WORDS.has(n.toLowerCase()))
     const subject = cores.sort((a, b) => a.length - b.length)[0] ?? subjectOf.get(c.id)!
     const fromGapPlan = c.applicationId != null || gapIds.has(c.id)
@@ -1221,7 +1307,7 @@ export function tidyKnowsQuestions(): { reworded: number; skipped: number; merge
   for (const s of skips) appSkip(s.q, s.reason)
   repointMerged(mergeMap)
   const answered = carryAllAnswers().length
-  return { reworded, skipped: skips.length, merged: mergeMap.size, answered }
+  return { reworded, skipped: skips.length, merged: mergeMap.size, answered, meaningError: meaning.error }
 }
 
 /** app_settings key: set once the skips made before reasons were recorded have been labeled. */
@@ -1251,12 +1337,12 @@ export interface SkipRepairResult {
  *   (the app never skipped those silently) and stay as they are.
  * The knows tidy runs before (so merge notes quote settled wording) and after (for the reopened ones).
  */
-export function repairQuestionSkipsOnce(log: (m: string) => void = () => {}): SkipRepairResult {
+export async function repairQuestionSkipsOnce(log: (m: string) => void = () => {}): Promise<SkipRepairResult> {
   const db = useDb()
   const result: SkipRepairResult = { ran: false, labeled: [], merged: [], reopened: [] }
   if (db.select().from(appSettings).where(eq(appSettings.key, SKIP_REPAIR_KEY)).get()) return result
   result.ran = true
-  tidyKnowsQuestions()
+  await tidyKnowsQuestions()
   const gapIds = gapPlanQuestionIds()
   const unlabeled = db.select().from(questions).where(eq(questions.status, 'skipped')).all()
     .filter(q => !q.context || !APP_SKIP_NOTE.test(q.context))
@@ -1287,7 +1373,7 @@ export function repairQuestionSkipsOnce(log: (m: string) => void = () => {}): Sk
     result.reopened.push(q.id)
   }
   repointMerged(mergeMap)
-  const after = tidyKnowsQuestions()
+  const after = await tidyKnowsQuestions()
   const valueJson = JSON.stringify({ labeled: result.labeled.length, merged: result.merged.length, reopened: result.reopened })
   db.insert(appSettings).values({ key: SKIP_REPAIR_KEY, valueJson, updatedAt: nowSql() })
     .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
@@ -1327,11 +1413,11 @@ export function rewordLegacyGapContexts(): number {
  * cover (a must-have in one job, or any requirement in two or more). At most five new per day.
  * Sandbox jobs never create questions.
  */
-export function askDailyQuestions(): QuestionRow[] {
+export async function askDailyQuestions(): Promise<QuestionRow[]> {
   const db = useDb()
   rewordLegacyGapContexts()
   closeNonGapQuestions()
-  tidyKnowsQuestions()
+  await tidyKnowsQuestions()
   const before = new Set(db.select({ id: questions.id }).from(questions).all().map(r => r.id))
   const created: QuestionRow[] = []
   const floor = askCompFloor()
@@ -1343,14 +1429,14 @@ export function askDailyQuestions(): QuestionRow[] {
     // prepare threshold, and those postings are where the noise comes from.
     .filter(j => !j.isSandbox && j.requirementsJson && j.matchScore != null && j.matchScore >= QUESTION_SCORE_FLOOR)
   const scoreOf = new Map(open.map(j => [j.id, j.matchScore]))
-  const wanted = new Map<string, { subject: string; jobs: Set<number>; mustHave: boolean; firstJob: number; value: number }>()
+  const wanted = new Map<string, { subject: string; phrase: string; jobs: Set<number>; mustHave: boolean; firstJob: number; value: number }>()
   for (const j of open) {
     for (const r of parseJson<Requirement[]>(j.requirementsJson, [])) {
       if (r.status !== 'unknown' || !['language', 'framework', 'skill'].includes(r.kind)) continue
       const subject = cleanSkillSubject(r.text)
       if (!subject) continue
       const key = ruleTerm(subject)
-      const w = wanted.get(key) ?? { subject, jobs: new Set<number>(), mustHave: false, firstJob: j.id, value: 0 }
+      const w = wanted.get(key) ?? { subject, phrase: r.text, jobs: new Set<number>(), mustHave: false, firstJob: j.id, value: 0 }
       if (!w.jobs.has(j.id)) {
         w.jobs.add(j.id)
         // How much the answer is worth: better-matching jobs count more, and a must-have more
@@ -1365,9 +1451,16 @@ export function askDailyQuestions(): QuestionRow[] {
     .filter(w => w.mustHave || w.jobs.size >= 2)
     .sort((a, b) => b.value - a.value || b.jobs.size - a.jobs.size)
   const asked = new Set(db.select({ subject: questions.subject }).from(questions).where(eq(questions.kind, 'knows')).all().map(r => r.subject).filter(Boolean).map(x => ruleTerm(x!)))
-  for (const c of candidates) {
+  const fresh = candidates.filter(c => !(asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))))
+  // The meaning check for the subjects about to be asked, in one call: "AI-first" today and
+  // "AI-assisted" last week are one question. Subjects past the first 60 wait for the next run's
+  // check, or fall back to the word match if they are asked before it.
+  await checkSameMeaning(fresh.slice(0, 60).flatMap((c) => {
+    const subject = cleanSkillSubject(c.subject)
+    return subject && !knowledgeCovers(subject) ? [{ subject, kind: 'knows', question: knowsQuestionText(subject), phrase: c.phrase }] : []
+  }))
+  for (const c of fresh) {
     if (created.length >= MAX_NEW_SKILL_QUESTIONS_PER_RUN) break
-    if (asked.has(ruleTerm(c.subject)) || c.subject.split(/\s+/).some(w => w.length > 1 && asked.has(ruleTerm(w)))) continue
     const row = askKnows(c.subject, {
       jobId: c.firstJob,
       context: `${c.jobs.size === 1 ? 'An open job asks' : `${c.jobs.size} open jobs ask`} for ${c.subject.replace(/[.\s]+$/, '')}. Your answer goes into your knowledge base. A No means it is never claimed.`,
@@ -1454,6 +1547,26 @@ export function skipForApp(id: number, reason: string) {
   if (q) appSkip(q, reason)
 }
 
+/** mergeInto() for the meaning repair (question-meaning.ts). */
+export function mergeQuestionInto(dup: QuestionRow, into: QuestionRow) {
+  mergeInto(dup, into)
+}
+
+/** repointMerged() for the meaning repair (question-meaning.ts). */
+export function repointMergedQuestions(mergeMap: Map<number, number>): number[] {
+  return repointMerged(mergeMap)
+}
+
+/** Questions whose carried answer Devin undid; the meaning repair leaves them standing. */
+export function inferenceUndoneQuestionIds(): Set<number> {
+  return inferenceUndoneIds()
+}
+
+/** True for text about wanting something ("Interest in fintech"), not having done it. */
+export function isInterestText(text: string): boolean {
+  return INTEREST.test(text)
+}
+
 /** Merges a pending question into the one that asks the same thing, with the note the fact tidy writes. */
 function mergeInto(dup: QuestionRow, into: QuestionRow) {
   const note = `Merged into question #${into.id} ("${into.question}"), which asks for the same thing. Answer that one.`
@@ -1497,6 +1610,22 @@ export function sameSkill(a: string, b: string): boolean {
   const cb = skillCore(b)
   if (!ca || !cb) return false
   return ruleTerm(ca) === ruleTerm(cb) || sameWords(ca, cb)
+}
+
+/** The same skill once qualifiers are dropped: "Docker containerization" and "Docker", "Python3" and "Python". */
+export function sameCoreSkill(a: string, b: string): boolean {
+  const ca = ruleTerm(skillCore(a))
+  return !!ca && ca === ruleTerm(skillCore(b))
+}
+
+/** The answered question, else the oldest open one, about the same skill once qualifiers are dropped. */
+function sameCoreQuestion(subject: string): QuestionRow | null {
+  const rows = useDb().select().from(questions)
+    .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered'])))
+    .all()
+    .filter(q => !!q.subject && sameCoreSkill(subject, q.subject))
+    .sort((a, b) => Number(b.status === 'answered') - Number(a.status === 'answered') || a.id - b.id)
+  return rows[0] ?? null
 }
 
 /** The answered question, else the oldest open one, that asks about the same skill or experience. */
@@ -1965,6 +2094,10 @@ export async function askOrReuse(requests: AskRequest[], ref?: { type: string; i
   const db = useDb()
   const outcomes: Array<AskOutcome | null> = requests.map(() => null)
   const semantic: number[] = []
+  // A skill or experience question goes through the meaning check first, as askSkillQuestion() does.
+  // Form fields ask facts and form_field questions; their own check is matchLabelsToExisting() below.
+  const skillAsks = requests.filter(r => r.input.kind === 'knows' || r.input.kind === 'has_done').map(r => meaningAskOf(r.input))
+  if (skillAsks.length) await checkSameMeaning(skillAsks, ref)
   requests.forEach((r, i) => {
     const dedupeKey = dedupeKeyOf(r.input.kind, r.input.subject)
     const exact = db.select().from(questions).where(and(eq(questions.dedupeKey, dedupeKey), inArray(questions.status, ['pending', 'answered']))).all()

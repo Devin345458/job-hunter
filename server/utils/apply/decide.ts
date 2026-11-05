@@ -135,7 +135,7 @@ export async function readForDecision(app: AppRow, log: (m: string) => void = ()
     // A job scored since decide-first carries its gap plan from the scoring call: copied here, with
     // its open questions asked now that the job has a Decide card. Older scores get one here.
     const scored = scoredGap(job)
-    if (scored) update(app.id, { gapAnalysisJson: JSON.stringify(askGapQuestions(scored, { applicationId: app.id, job })) })
+    if (scored) update(app.id, { gapAnalysisJson: JSON.stringify(await askGapQuestions(scored, { applicationId: app.id, job })) })
   }
   if (!db.select({ g: applications.gapAnalysisJson }).from(applications).where(eq(applications.id, app.id)).get()?.g) {
     update(app.id, { statusDetail: 'Checking the gaps against your knowledge base' })

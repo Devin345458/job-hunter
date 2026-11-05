@@ -872,7 +872,7 @@ export async function runDailyLearning(log: (msg: string) => void) {
   const result = recomputeRules()
   log(`${result.decisionsUsed} decisions, ${result.specs} rules, ${result.changes.length} changed`)
   // 3. Ask what the pipeline needs to know and the knowledge base does not say.
-  const asked = askDailyQuestions()
+  const asked = await askDailyQuestions()
   // 4. Rescore open jobs with the new rules, and queue skill judgments older than a related answer
   //    for the next jobs:match.
   const { rescored } = await rescoreJobs('open', 'rule_change')

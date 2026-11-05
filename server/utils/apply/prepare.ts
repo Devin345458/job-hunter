@@ -197,7 +197,7 @@ export async function prepareApplication(jobId: number, existing?: AppRow, log: 
     // scoring call. Only an application from before decide-first with neither gets one here.
     const scored = existing?.gapAnalysisJson ? null : scoredGap(job)
     if (scored) {
-      update(app.id, { coverLetter: letter.text, tailoringNotes: notes, gapAnalysisJson: JSON.stringify(askGapQuestions(scored, { applicationId: app.id, job })) })
+      update(app.id, { coverLetter: letter.text, tailoringNotes: notes, gapAnalysisJson: JSON.stringify(await askGapQuestions(scored, { applicationId: app.id, job })) })
     }
     else if (!existing?.gapAnalysisJson) {
       update(app.id, { coverLetter: letter.text, tailoringNotes: notes, statusDetail: 'Analyzing gaps' })

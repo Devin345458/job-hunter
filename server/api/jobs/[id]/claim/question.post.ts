@@ -8,5 +8,5 @@ export default defineEventHandler(async (event): Promise<QuestionView> => {
   const body = await readBody<{ text?: unknown; source?: unknown; applicationId?: unknown }>(event)
   const applicationId = body?.applicationId != null ? Number(body.applicationId) : null
   const ctx = skillClaimContext(id, body?.text, body?.source, Number.isInteger(applicationId) ? applicationId : null)
-  return toQuestionView(ensureSkillClaimQuestion(ctx))
+  return toQuestionView(await ensureSkillClaimQuestion(ctx))
 })
