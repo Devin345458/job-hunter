@@ -39,6 +39,9 @@ export default defineNitroPlugin((nitroApp) => {
   // Once after the 2026-11-04 deploy (server/utils/comp-repair.ts): a percent 401(k) match counts
   // at each end of the base range. No Claude call; a failure never stops the worker.
   repairCompTotalsOnce(m => console.log(`[repair] ${m}`)).catch(e => console.error('[repair] could not repair the pay totals', e))
+  // After the 2026-11-06 deploy, and whenever his minimum or target pay changes: every waiting
+  // application's salary fields are answered again per job (server/utils/apply/answers.ts).
+  refreshPayAnswersWhenChanged(m => console.log(`[repair] ${m}`)).catch(e => console.error('[repair] could not refresh the pay fields', e))
 
   const w = createWorker()
   w.start()

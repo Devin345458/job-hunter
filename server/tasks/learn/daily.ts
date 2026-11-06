@@ -23,6 +23,8 @@ export default defineTask({
       const catalog = applyApprovedCatalogOnce(APPROVED_SKILL_CATALOG, log)
       const tidy = await tidyFactQuestions(log)
       const released = await releaseMisreadFactFields(log)
+      // When his minimum or target pay changed since the last pass: salary fields answered again per job.
+      const pay = await refreshPayAnswersWhenChanged(log)
       const learned = await runDailyLearning(log)
       return {
         ...learned,
@@ -30,6 +32,7 @@ export default defineTask({
         ...(repair.ran ? { skipRepairLabeled: repair.labeled.length, skipRepairMerged: repair.merged.length, skipRepairReopened: repair.reopened.length } : {}),
         ...(catalog.applied ? { catalogSkills: catalog.applied.entries, catalogMerged: catalog.applied.merged.length, catalogReworded: catalog.applied.reworded.length, catalogSkipped: catalog.applied.skipped.length } : {}),
         misreadFieldsReleased: released.length,
+        ...(pay.ran ? { payFieldsChanged: pay.changes.length, payApplicationsRefreshed: pay.refreshed.length } : {}),
         factQuestionsMerged: tidy.merged.length,
         factQuestionsAnswered: tidy.derived.length,
         factQuestionsReworded: tidy.reworded.length,

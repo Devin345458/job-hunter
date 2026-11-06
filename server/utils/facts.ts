@@ -7,6 +7,9 @@
 // Pure functions only (no database, no Nitro auto-imports), so the label matching and the
 // derivations can be checked with tsx on their own. answers.ts and questions.ts do the I/O.
 
+import type { CompensationBreakdown } from '#shared/types/pipeline'
+import { compParts } from '#shared/utils/comp-parts'
+
 // ── Shapes ───────────────────────────────────────────────────
 
 /** The fields of a knowledge base row this module reads. */
@@ -25,7 +28,7 @@ export type FactKey =
   | 'address.full' | 'address.location' | 'address.city_country' | 'address.city_state_country' | 'address.city_state_zip'
   | 'address.us_resident' | 'address.timezone' | 'address.location_judgment'
   | 'contact.email' | 'contact.phone' | 'contact.linkedin' | 'contact.github' | 'contact.github_username' | 'contact.website'
-  | 'work.sponsorship' | 'work.authorization' | 'work.relocation' | 'work.start_date' | 'work.salary'
+  | 'work.sponsorship' | 'work.authorization' | 'work.relocation' | 'work.start_date' | 'work.salary' | 'work.salary_in_band'
 
 /** One resolved value and where it came from, e.g. "profile/Full Name" or "initials of profile/Full Name". */
 export interface FactValue {
@@ -69,6 +72,14 @@ export interface FactDef {
   contextExclude?: (field: FieldLike, siblings: FieldLike[]) => boolean
   /** The value that answers the label as written, or null. */
   value: (v: FactValues) => FactValue | null
+  /**
+   * The value worded for this field, when one fact reads differently per label: the salary
+   * expectation is "$160,000" for "minimum required salary" and "$160,000 or more base" elsewhere,
+   * and on a list of pay ranges it is the range that holds the figure. Replaces value() when set.
+   * `exact` marks a value already chosen from the field's options (or a plain Yes), so a choice
+   * field takes it as it is instead of going to mapToOptions.
+   */
+  fieldValue?: (field: FieldShape, v: FactValues) => (FactValue & { exact?: boolean }) | null
   /** For choice fields: values to try against the options, in order. Defaults to [value]. */
   choiceValues?: (v: FactValues) => string[]
   /** A sentence for mapToOptions when the label needs judgment on top of the fact (a time zone, a commute). */
@@ -285,6 +296,11 @@ export type QuestionKind = 'has_done' | 'knows' | 'preference' | 'fact' | 'form_
 export interface ResolveOptions {
   /** Devin's answer to an already answered question, by (kind, subject). Used after the knowledge base. */
   answered?: (kind: QuestionKind, subject: string) => string | null
+  /**
+   * The pay the job posts (jobs.comp_json), for the facts that depend on the job: whether his
+   * minimum falls within the posted range. Left out, those facts are absent.
+   */
+  comp?: CompensationBreakdown | null
 }
 
 /**
@@ -472,13 +488,188 @@ export function resolveFacts(entries: FactEntry[], opts: ResolveOptions = {}): F
   if (website && !isNone(website.value, true)) set('contact.website', website.value, website.detail)
   else if (v['contact.github']) set('contact.website', v['contact.github'].value, `${v['contact.github'].detail} (the GitHub profile is the portfolio)`, true)
 
-  // Work facts: knowledge base first, then an answered question.
+  // Work facts: knowledge base first, then an answered question. Pay is read below.
   for (const def of WORK_FACTS) {
+    if (def.key === 'work.salary' || def.key === 'work.salary_in_band') continue
     const kb = stored(def.kb)
     const value = kb && !isNone(kb.value) ? kb : answeredAs(opts, def.ask!.kind, def.ask!.subject)
     if (value && value.value && !/^none$/i.test(value.value)) set(def.key, value.value, value.detail)
   }
+
+  // Pay. The salary expectation is never below his minimum: the figure is the minimum, or his
+  // target when that is higher. Written as "$160,000 or more base"; fieldValue words it per label.
+  // Text without a dollar figure (a stray "Yes") is no figure at all.
+  const pay = payBasis(entries, opts)
+  if (pay.figure) set('work.salary', `${usd(pay.figure.value)} or more base`, pay.figure.detail)
+  // Within the posted range: Yes when the top of what the job posts reaches his minimum. Never
+  // No: a range under it, or no range, is his call for that one application.
+  if (opts.comp !== undefined && pay.floor) {
+    const top = postedPayTop(opts.comp)
+    if (top && top.top >= pay.floor.value) {
+      set('work.salary_in_band', 'Yes', `the posted ${top.basis} pay tops out at ${usd(top.top)}, at or above your minimum of ${usd(pay.floor.value)} (${pay.floor.detail})`, true)
+    }
+  }
   return v
+}
+
+// ── Pay ──────────────────────────────────────────────────────
+
+/** Where his lowest acceptable total pay may be stored, most specific first. */
+export const PAY_FLOOR_KB_KEYS = ['preference/Minimum Total Compensation', 'preference/Compensation Floor', 'preference/Salary Floor', 'preference/Minimum Salary', 'preference/Minimum Compensation']
+/** Where the salary he aims for may be stored. */
+export const PAY_TARGET_KB_KEYS = ['preference/Target Salary', 'preference/Salary Expectation', 'preference/Desired Salary']
+
+/** Subjects of the pay questions: COMP_FLOOR_SUBJECT in questions.ts, and the salary fact's own question. */
+const FLOOR_SUBJECT = 'compensation floor'
+const TARGET_SUBJECT = 'salary expectation'
+
+function usd(n: number): string {
+  return `$${Math.round(n).toLocaleString('en-US')}`
+}
+
+const MONEY = /\$?\s?(\d+(?:\.\d+)?)\s?(k\b)?/gi
+
+/** Every figure of $10,000 or more in a text, in order: "$150,000 to $160,000" gives both. */
+function payFigures(text: string): number[] {
+  const t = text.replace(/(\d),(?=\d{3}\b)/g, '$1')
+  return [...t.matchAll(MONEY)]
+    .map(m => Number(m[1]) * (m[2] ? 1000 : 1))
+    .filter(n => Number.isFinite(n) && n >= 10000)
+    .map(n => Math.round(n))
+}
+
+/**
+ * The first dollar figure in a stored pay answer: "$160,000 a year in total compensation ...",
+ * "$150,000+ USD", "160000", "160k". Null with no figure, or none of $10,000 or more.
+ */
+export function payFigure(text: string | null | undefined): number | null {
+  if (!text) return null
+  return payFigures(cleanStoredAnswer(text))[0] ?? null
+}
+
+export interface PayValue {
+  value: number
+  /** Where it came from: "preference/Minimum Total Compensation" or "question: compensation floor". */
+  detail: string
+}
+
+export interface PayBasis {
+  /** His lowest acceptable total yearly pay. */
+  floor: PayValue | null
+  /** The salary he aims for. */
+  target: PayValue | null
+  /** What a salary field states: the floor, or the target when it is higher. */
+  figure: (PayValue & { from: 'floor' | 'target' }) | null
+}
+
+/** His minimum and target from the knowledge base, then from answered questions. Nothing is guessed. */
+export function payBasis(entries: FactEntry[], opts: ResolveOptions = {}): PayBasis {
+  const read = (keys: string[], subject: string): PayValue | null => {
+    for (const want of keys) {
+      const e = lookup(entries, [want])
+      const n = e ? payFigure(e.value) : null
+      if (e && n != null) return { value: n, detail: kbDetail(e) }
+    }
+    const n = payFigure(opts.answered?.('preference', subject))
+    return n != null ? { value: n, detail: `question: ${subject}` } : null
+  }
+  const floor = read(PAY_FLOOR_KB_KEYS, FLOOR_SUBJECT)
+  const target = read(PAY_TARGET_KB_KEYS, TARGET_SUBJECT)
+  const figure = target && (!floor || target.value > floor.value)
+    ? { ...target, from: 'target' as const }
+    : floor ? { ...floor, from: 'floor' as const } : null
+  return { floor, target, figure }
+}
+
+/**
+ * The top of what a job posts, in yearly US dollars: the total when the posting adds anything to
+ * base (a bonus, equity, a valued benefit), else base. Read from compParts(), the one pay sum. Null
+ * with no base pay, or pay in another currency.
+ */
+export function postedPayTop(comp: CompensationBreakdown | null | undefined): { top: number; basis: 'base' | 'total' } | null {
+  if (!comp || (comp.currency ?? 'USD').toUpperCase() !== 'USD') return null
+  const parts = compParts(comp)
+  if (parts.totalMax == null) return null
+  return { top: parts.totalMax, basis: parts.counted.length ? 'total' : 'base' }
+}
+
+/** "$165,000 to $225,000 base" or "$163,280 to $221,520 total", for a sentence. Null with no base pay or another currency. */
+export function postedPayText(comp: CompensationBreakdown | null | undefined): string | null {
+  if (!comp || (comp.currency ?? 'USD').toUpperCase() !== 'USD') return null
+  const parts = compParts(comp)
+  if (parts.totalMin == null || parts.totalMax == null) return null
+  const basis = parts.counted.length ? 'total' : 'base'
+  return parts.totalMin === parts.totalMax ? `${usd(parts.totalMax)} ${basis}` : `${usd(parts.totalMin)} to ${usd(parts.totalMax)} ${basis}`
+}
+
+/** One option of a pay range list: "$150,000 to $160,000", "$200,000+", "Under $100k". Null when it states no figure. */
+export function optionRange(option: string): { low: number; high: number } | null {
+  const nums = payFigures(option)
+  if (nums.length === 0) return null
+  if (nums.length === 1) {
+    if (/\b(under|less than|below|up to|max|maximum)\b|</i.test(option)) return { low: 0, high: nums[0]! }
+    return { low: nums[0]!, high: Infinity }
+  }
+  return { low: Math.min(nums[0]!, nums[1]!), high: Math.max(nums[0]!, nums[1]!) }
+}
+
+/**
+ * The option of a pay range list that holds the figure: low end at or under it, high end above it
+ * ("$160,000 to $170,000" for $160,000, never "$150,000 to $160,000"). Null when no option holds it.
+ */
+export function rangeOptionFor(figure: number, options: string[]): string | null {
+  return options.find((o) => {
+    const r = optionRange(o)
+    return !!r && r.low <= figure && figure < r.high
+  }) ?? null
+}
+
+/** Labels that ask for a minimum, so the answer is the figure alone. */
+const ASKS_MINIMUM = /\b(minimum|lowest|at least|bottom line|walk away)\b/
+/** Labels that ask for total pay (base with bonus, variable, OTE). */
+const ASKS_TOTAL = /\b(total|ote|on target|variable|including|bonus|commission)\b/
+
+/**
+ * The salary expectation worded for one field. A number field takes the figure; a list of pay
+ * ranges takes the range that holds it; text says "$160,000" when the label asks for a minimum,
+ * "$160,000 or more in total compensation" when it asks for total pay and the figure is his total
+ * minimum, else "$160,000 or more base". Never a number he has not given.
+ */
+function salaryForField(field: FieldShape, v: FactValues): (FactValue & { exact?: boolean }) | null {
+  const fact = v['work.salary']
+  const figure = fact ? payFigure(fact.value) : null
+  if (!fact || figure == null) return null
+  const options = field.options ?? []
+  if (['select', 'radio', 'checkbox_group'].includes(field.type) && options.length) {
+    // Not a list of pay ranges: mapToOptions reads the options as before.
+    if (options.filter(o => optionRange(o)).length < 2) return fact
+    const pick = rangeOptionFor(figure, options)
+    return pick ? { ...fact, value: pick, detail: `${fact.detail}, as the range that holds ${usd(figure)}`, exact: true } : null
+  }
+  if (field.type === 'number') return { ...fact, value: String(figure) }
+  const text = labelText(field.label)
+  if (ASKS_MINIMUM.test(text)) return { ...fact, value: usd(figure) }
+  if (ASKS_TOTAL.test(text) && !PAY_TARGET_KB_KEYS.some(k => fact.detail === k) && fact.detail !== `question: ${TARGET_SUBJECT}`) {
+    return { ...fact, value: `${usd(figure)} or more in total compensation` }
+  }
+  return fact
+}
+
+/** Whether the posted range works: Yes when derived, taken as it is on a Yes or No list. */
+function inBandForField(_field: FieldShape, v: FactValues): (FactValue & { exact?: boolean }) | null {
+  const fact = v['work.salary_in_band']
+  return fact ? { ...fact, exact: true } : null
+}
+
+/** The subject of the question asked when the posted range cannot answer the field: one per application, never shared. */
+export function inBandQuestionSubject(label: string, company: string, applicationId: number): string {
+  const l = label.replace(/\s+/g, ' ').trim()
+  return `${l.length > 150 ? `${l.slice(0, 150)}...` : l} (${company || 'the employer'}, application #${applicationId})`
+}
+
+/** True for a question asked for one application only (inBandQuestionSubject). Never reused for another form. */
+export function isApplicationOnlySubject(subject: string | null | undefined): boolean {
+  return /, application #\d+\)$/.test(subject ?? '')
 }
 
 function answeredAs(opts: ResolveOptions, kind: QuestionKind, subject: string): { value: string; detail: string } | null {
@@ -589,6 +780,26 @@ const WORK_FACTS: Array<FactDef & { kb: string[] }> = [
     alwaysBlocking: true,
   },
   {
+    // "Do you accept the listed salary range for this position?" (Samsara), "Are your salary
+    // expectations for this role within the posted salary band?" (CircleCI): a yes or no about
+    // this job's pay, answered per job from the posted range (resolveFacts with opts.comp). Never
+    // a shared answer: when the range cannot say Yes, answers.ts asks for that application only,
+    // so ask stays null and the tidy never groups these questions.
+    key: 'work.salary_in_band',
+    group: 'work',
+    label: 'posted salary range',
+    match: /\b(accept|okay|ok|comfortable|fine|agree)\b(?: \w+){0,5}? (salary|pay|compensation|base|wage) (range|band)s?\b|\bwithin\b(?: \w+){0,4}? (salary|pay|compensation|base|wage) (range|band)s?\b|\b(salary|pay|compensation|base|wage) (range|band)s?\b.*\b(acceptable|work for you|works for you|align with|in line with)\b/,
+    // "Please select the salary range that best aligns with your expectations" and "What is your desired salary range?" ask for his number.
+    exclude: /\b(select|choose|pick|which|what|how much|desired)\b/,
+    // A list of pay ranges is the salary expectation, not a yes or no.
+    contextExclude: field => (field as FieldShape).options?.length ? !(field as FieldShape).options!.some(o => /^\s*(yes|no|i (accept|agree|do|am))\b/i.test(o)) : false,
+    value: valueOf('work.salary_in_band'),
+    fieldValue: inBandForField,
+    ask: null,
+    kb: [],
+    alwaysBlocking: false,
+  },
+  {
     key: 'work.salary',
     group: 'work',
     label: 'salary expectation',
@@ -596,7 +807,8 @@ const WORK_FACTS: Array<FactDef & { kb: string[] }> = [
     // "Do you accept the listed salary range for this position?" is a yes or no, not his number.
     exclude: /\b(do you accept|are you (ok|okay|comfortable|fine) with|do you agree|is (this|the) (salary|range|pay) (acceptable|ok|okay))\b/,
     value: valueOf('work.salary'),
-    statement: v => v['work.salary'] ? `Devin's salary expectation (from his knowledge base): ${v['work.salary'].value}` : null,
+    fieldValue: salaryForField,
+    statement: v => v['work.salary'] ? `Devin's salary expectation: ${v['work.salary'].value} (never state a lower figure; from ${v['work.salary'].detail})` : null,
     ask: { kind: 'preference', subject: 'salary expectation', question: 'What salary should applications list as your expectation?', knowledgeKey: 'preference:Target Salary', answerType: 'text', category: 'preference' },
     kb: ['preference/Target Salary', 'preference/Salary Expectation', 'preference/Salary Floor', 'preference/Minimum Salary'],
     alwaysBlocking: true,
@@ -983,13 +1195,14 @@ export function resolveField(def: FactDef, field: FieldShape, v: FactValues, sib
     const separate = siblings.some(s => s !== field && SEPARATE_PART_FACTS.includes(matchFact(s)?.key as FactKey))
     if (separate) d = factByKey('address.street')
   }
-  const val = d.value(v)
+  const val = d.fieldValue ? d.fieldValue(field, v) : d.value(v)
   const statement = d.statement?.(v) ?? (val ? `${field.label}: ${val.value}` : null)
   if (val) {
     // The work facts are yes/no answers that a negated label flips ("without sponsorship"), so
-    // their choice fields always go through mapToOptions, which handles the negation.
+    // their choice fields always go through mapToOptions, which handles the negation. A value
+    // already picked from the options in code (a pay range, the posted range's Yes) is used as it is.
     const choiceField = ['select', 'radio', 'checkbox', 'checkbox_group'].includes(field.type) && (field.options?.length ?? 0) > 0
-    if (d.group === 'work' && choiceField) return { def: d, res: { kind: 'map', statement: statement!, detail: val.detail } }
+    if (d.group === 'work' && choiceField && !('exact' in val && val.exact)) return { def: d, res: { kind: 'map', statement: statement!, detail: val.detail } }
     const choices = d.choiceValues?.(v) ?? [val.value]
     return { def: d, res: { kind: 'value', value: val.value, detail: val.detail, confidence: d.confidence ?? 'high', choices: choices.length ? choices : [val.value], statement: statement! } }
   }

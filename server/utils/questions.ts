@@ -13,6 +13,7 @@ import {
   factForQuestion,
   isAddressFact,
   isAddressQuestion,
+  isApplicationOnlySubject,
   labelText,
   missingAddressParts,
   questionFor,
@@ -2005,10 +2006,12 @@ export async function matchLabelsToExisting(
 
   const db = useDb()
   // Ordered by id, so the prompt lists them in the same order every time (prompt caching).
+  // A question asked for one application only (the posted salary range) never answers another form.
   const candidates = db.select().from(questions)
     .where(and(inArray(questions.kind, ['fact', 'form_field']), inArray(questions.status, ['pending', 'answered'])))
     .orderBy(questions.id)
     .all()
+    .filter(q => !isApplicationOnlySubject(q.subject))
   const profile = loadKnowledge('profile')
   const now = nowSql()
   const decide = (i: number, match: string) => {
