@@ -118,7 +118,7 @@ Checklist for the job-hunter /goal run that started 2026-11-01. Tick an item onl
 ## Found during the run
 
 - [x] 2026-11-06 Devin's answers saved on production: visa sponsorship #127 No (was Yes by mistake), pay floor #103 $160,000 (rescored 2,280 jobs), fully paid health insurance #104 worth $8,000 a year.
-- [ ] 2026-11-06 Saving the 177 approved Answer Drafts to production (171 PATCHes; 6 already answered; merged ones go to their canonical question; app-skipped #182, #272, #295, #332 answered as he approved). Log: scratchpad qa6/save-log.jsonl.
+- [x] 2026-11-06 Saving the 177 approved Answer Drafts to production (171 PATCHes; 6 already answered; merged ones go to their canonical question; app-skipped #182, #272, #295, #332 answered as he approved). Log: scratchpad qa6/save-log.jsonl. Done: 171 of 171 saved (68 Yes, 50 Some experience, 52 No, LinkedIn URL), 375 waiting-application refreshes, 5 answers carried to same-subject questions, about 10 minutes. Open questions on production went from 291 to 142; 192 knowledge entries now come from his answers.
 - [ ] 2026-11-06 `auto-draft`: picking Yes or Some experience starts Draft from my records and fills the empty example box (Devin: "I always want you to take the first stab at filling out my examples").
 - [ ] 2026-11-06 #335 (Samsara, Senior Software Engineer II, listed base $154,700 to $260,000): holds "$150,000+ USD" for a yes/no "Do you accept the listed salary range?"; waiting on Devin's yes or no.
 
