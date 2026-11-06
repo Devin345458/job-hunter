@@ -495,6 +495,18 @@ describe('folding a duplicate LLM skill into "Using AI in unsupervised processes
     assert.equal(calls.length, 0)
   })
 
+  test('production\'s shape: the duplicate merges into the skill\'s answered question', async () => {
+    const { canon, dup, plan } = await duplicate()
+    answer(canon.id, 'Yes')
+    const r = m.applySkillFolds(plan, true)
+    assert.deepEqual(r.rows.filter((x: any) => x.action === 'merge').map((x: any) => x.id), [dup.id])
+    assert.equal(row(dup.id).status, 'skipped')
+    assert.match(row(dup.id).context, new RegExp(`^Merged into question #${canon.id} `))
+    assert.equal(row(canon.id).status, 'answered', 'the answer stays')
+    assert.equal(m.skillMatch('AI/LLM applications').entry.slug, S2)
+    assert.equal(m.canonicalQuestion(dup.id).id, canon.id)
+  })
+
   test('a new proposal with the folded skill\'s name is the skill it was folded into', async () => {
     const { canon, plan } = await duplicate()
     m.applySkillFolds(plan, true)
