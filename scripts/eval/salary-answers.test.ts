@@ -103,6 +103,16 @@ describe('the posted range question, per job', () => {
     assert.match(res.detail, /posted total pay tops out at \$165,000/)
   })
 
+  test("an application's own question reads as the posted range fact, for both production labels", async () => {
+    const { cleanFieldLabel } = await import('../../shared/utils/plain-text')
+    for (const [label, company, id] of [[SAMSARA, 'Samsara', 94], [CIRCLECI, 'CircleCI', 44]] as const) {
+      const subject = m.inBandQuestionSubject(cleanFieldLabel(label), company, id)
+      assert.equal(m.factForQuestion({ kind: 'form_field', subject, question: cleanFieldLabel(label) })?.key, 'work.salary_in_band', subject)
+      assert.equal(m.isApplicationOnlySubject(subject), true)
+    }
+    assert.equal(m.isApplicationOnlySubject(SAMSARA), false, 'the label-keyed question (#335) is not application-only')
+  })
+
   test('without the job (questions.ts, the tidy) the posted range fact is absent', () => {
     const v = m.resolveFacts([MINIMUM, TARGET])
     assert.equal(v['work.salary_in_band'], undefined)
@@ -223,6 +233,10 @@ describe('refreshing stored answers', () => {
       assert.equal(q.applicationId, ids[name]!.app)
       assert.match(q.subject, new RegExp(`\\(${name}, application #${ids[name]!.app}\\)$`))
       assert.match(q.context, /for this application only/)
+      // The tidy reads it as the posted range fact (ask null), so it is never grouped, nor sent to the
+      // semantic pass that could merge it into the older label-keyed question.
+      assert.equal(m.factForQuestion(q)?.key, 'work.salary_in_band')
+      assert.equal(m.isApplicationOnlySubject(q.subject), true)
       asked.push(q.id)
       assert.equal(salary.value, '$160,000 or more base')
     }
