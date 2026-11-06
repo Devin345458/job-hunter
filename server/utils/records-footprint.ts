@@ -315,6 +315,24 @@ const SINCE = /\bsince (?:early |late |mid )?((?:19|20)\d{2})\b/g
 
 const YEARS = /\b(?:for |over |more than |nearly |almost |about )*(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|many)\+?\s+years?\b/g
 
+/**
+ * "the daily budget", "a daily and 7-day cap", "the daily run": what a system does each day, not
+ * how often he works. The 2026-11-06 draft for #153 lost its sentence on this app ("its background
+ * Claude steps stop cleanly at a daily budget") to the frequency check, though the commit it cited
+ * says "daily budget". Such a phrase is read as a feature only when a cited record says the same
+ * thing ("daily" before the same noun); "I use Docker daily" stays a frequency claim.
+ */
+const DAILY_FEATURE = /\bdaily(?:\s+(?:and|or)\s+(?:weekly|monthly|7-day|seven-day))?\s+(?:ai\s+|api\s+|spend(?:ing)?\s+|subscription\s+)?(budgets?|limits?|caps?|quotas?|runs?|jobs?|schedules?|reports?|digests?|emails?|summar(?:y|ies)|backups?|syncs?|batch(?:es)?|pipelines?|tasks?)\b/g
+
+/** The sentence without the daily system features its records name in the same words. */
+function withoutDailyFeatures(sentence: string, records: ScopeRecord[]): string {
+  const all = records.map(r => r.text.toLowerCase()).join('\n')
+  return sentence.replace(DAILY_FEATURE, (m, noun: string) => {
+    const stem = noun.replace(/(?:ies|es|s)$/, '')
+    return new RegExp(`\\bdaily(?:\\s+(?:and|or)\\s+\\S+)?\\s+(?:\\S+\\s+)?${stem}`).test(all) ? ' ' : m
+  })
+}
+
 function frequencyFamilies(text: string): Set<string> {
   return new Set(FREQUENCY.filter(f => f.re.test(text)).map(f => f.family))
 }
@@ -333,7 +351,8 @@ function universalKey(word: string, noun: string): string {
  *   "fifty projects") only when the same figure and noun are in a cited knowledge base entry or his
  *   own words;
  * - "daily", "every day", "every project", "all my projects" only when his own words (or a cited
- *   knowledge base entry) say so;
+ *   knowledge base entry) say so; "the daily budget" of a system is a feature, not a frequency,
+ *   when a cited record says it too (withoutDailyFeatures);
  * - "since 2022" only when his words say it, or a cited role runs from that year to the present;
  * - "for five years", "8+ years" only when his words or a cited knowledge base entry say it.
  */
@@ -343,7 +362,7 @@ export function unsupportedScope(sentence: string, records: ScopeRecord[]): stri
   const firm = records.filter(r => r.kind === 'said' || r.kind === 'knowledge').map(r => r.text.toLowerCase().replace(/[\u2018\u2019]/g, '\'')).join('\n')
   const out: string[] = []
 
-  const want = frequencyFamilies(t)
+  const want = frequencyFamilies(withoutDailyFeatures(t, records))
   if (want.size) {
     const have = frequencyFamilies(firm)
     // Daily use covers "regularly" and "weekly"; nothing covers daily but daily.

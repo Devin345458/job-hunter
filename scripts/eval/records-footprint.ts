@@ -40,6 +40,8 @@ const summary = { kind: 'knowledge' as const, text: 'Professional Summary\nSoftw
 // Counts across his commits are a script's: they pick the stories and never support a claim
 // (Devin, 2026-11-05). A count, a "since", or a frequency stands only on his words or his knowledge base.
 const kbDocker = { kind: 'knowledge' as const, text: 'Docker\nSince 2022 I have written or changed the Docker setup in more than 50 projects.' }
+const dailyCommit = { kind: 'commit' as const, text: 'Stop runs cleanly when Claude is out of credit\nA credit error stops the run the way the daily budget does.' }
+const capCommit = { kind: 'commit' as const, text: 'Subscription limit: this app\'s own daily and 7-day cap on Claude subscription use' }
 const cases: Array<[string, any[], boolean]> = [
   [`Since ${f.firstYear} I have set up or changed the Docker setup in more than ${roundDown} projects.`, [A], false],
   [`I have changed the Docker setup in more than ${f.projects + 8} projects.`, [A], false],
@@ -66,6 +68,12 @@ const cases: Array<[string, any[], boolean]> = [
   ['I have over 8 years of experience.', [summary], true],
   ['I regularly upgrade PHP base images.', [S], true],
   [`I have made more than ${fp.roundedDown(f.commits) ?? 1} commits.`, [A], false],
+  // A system's daily budget is a feature, not how often he works, when the cited commit says it too.
+  ['Its background Claude steps stop cleanly at a daily budget or when credit runs out.', [dailyCommit], true],
+  ['A daily and 7-day cap on subscription use puts stopped items back in the queue for later.', [capCommit], true],
+  ['Its background Claude steps stop cleanly at a daily budget.', [A], false],
+  ['I use Docker daily.', [dailyCommit], false],
+  ['I check the daily reports every day.', [dailyCommit], false],
 ]
 let failed = 0
 
