@@ -4,7 +4,7 @@ import { useDisplay } from 'vuetify'
 import type { QuestionView } from '#shared/types/pipeline'
 import { plainKnowledgeRefs, plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, recordsDraftLabel, takesExample, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
+import { checkAutoDraft, draftsFromRecords, EXAMPLE_LEVELS, chatThreadKey, recordsDraftLabel, takesExample, useAutoDraftHost, useQuestionChat, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Open questions answered in place. Yes or no and choices are one tap; numbers take one short
 // field and written answers a growing box, each with Save. Answers go through
@@ -14,6 +14,9 @@ import { EXAMPLE_LEVELS, recordsDraftLabel, takesExample, type ChatQuestion, typ
 // same item; nothing saves until Save or Save without an example. The parents forward the answer
 // string untouched, so the example rides on the lines after the answer ("Yes\n<example>") and
 // the server splits it (answerQuestion in server/utils/questions.ts).
+// Yes or Some experience on an empty example box starts Draft from my records by itself: the box
+// shows the progress, and the draft fills it with its sources, or, when he typed meanwhile, waits
+// under "A draft from your records is ready" (Use it, Dismiss). The answer he picked stays picked.
 const props = defineProps<{
   questions: QuestionView[]
   /** Question id currently saving. */
@@ -68,16 +71,97 @@ const examples = useState<Record<number, string>>('review-question-examples', ()
 /** Which example button was pressed per question, so only it spins. */
 const exampleAction = reactive<Record<number, 'save' | 'without' | null>>({})
 
+// ── The automatic draft from his records ──
+const chat = useQuestionChat()
+/** This list's id for automatic drafts: a draft started here lands here while the list is on screen. */
+const autoHost = useAutoDraftHost()
+/** A finished draft he typed over, waiting on Use it or Dismiss, per question. */
+const readyFor = useState<Record<number, { draft: RecordsDraft; note: string | null } | undefined>>('review-question-records-ready', () => ({})).value
+/** The nothing-found line, or why it could not draft, under the box, per question. */
+const recordsMessage = useState<Record<number, string | undefined>>('review-question-records-message', () => ({})).value
+
+function draftingNow(q: QuestionView) {
+  return !!chat.drafting.value[chatThreadKey(q.id)]
+}
+
+/** "Drafting from your records: Searching your GitHub, 12 seconds" in the box while its draft runs. */
+const tick = ref(Date.now())
+let tickTimer: ReturnType<typeof setInterval> | null = null
+const anyDrafting = computed(() => props.questions.some(draftingNow))
+watch(anyDrafting, (on) => {
+  tick.value = Date.now()
+  if (on && !tickTimer && import.meta.client) tickTimer = setInterval(() => (tick.value = Date.now()), 1000)
+  if (!on && tickTimer) {
+    clearInterval(tickTimer)
+    tickTimer = null
+  }
+}, { immediate: true })
+onBeforeUnmount(() => {
+  if (tickTimer) clearInterval(tickTimer)
+})
+
+function draftingLine(q: QuestionView): string | null {
+  if (!draftingNow(q)) return null
+  const st = chat.draftStep.value[chatThreadKey(q.id)]
+  const secs = st?.startedAt ? Math.max(0, Math.round((tick.value - Date.parse(st.startedAt)) / 1000)) : 0
+  return `Drafting from your records: ${st?.label ?? 'Starting'}, ${secs} ${secs === 1 ? 'second' : 'seconds'}`
+}
+
+function autoDraft(q: QuestionView, level: string) {
+  if (!draftsFromRecords(toChatQuestion(q)) || exampleText(q) || draftingNow(q)) return
+  if (chat.startAutoDraft(q.id, level, autoHost)) {
+    recordsMessage[q.id] = undefined
+    readyFor[q.id] = undefined
+  }
+}
+
+function fillDraft(q: QuestionView, d: RecordsDraft, note: string | null) {
+  readyFor[q.id] = undefined
+  recordsFor[q.id] = { draft: d, note }
+  examples[q.id] = d.text
+  exampleOpen[q.id] = true
+}
+
+function landAutoDraft(q: QuestionView) {
+  checkAutoDraft(chat, q.id, {
+    applies: () => !!exampleOpen[q.id] && isExampleLevel(levels[q.id]) && props.savingId !== q.id,
+    text: () => examples[q.id] ?? '',
+    canRestore: () => takesExample(q) && q.status === 'pending' && !levels[q.id] && !exampleOpen[q.id],
+    restore: (level) => {
+      levels[q.id] = level
+      exampleOpen[q.id] = true
+    },
+    land: (o) => {
+      recordsMessage[q.id] = undefined
+      if (o.kind === 'message') recordsMessage[q.id] = o.text
+      else if (o.kind === 'offer') readyFor[q.id] = { draft: o.draft, note: o.note }
+      else fillDraft(q, o.draft, o.note)
+    },
+  }, autoHost)
+}
+
+// A draft that finishes lands in its box, also on a card that mounted after it started (another
+// page, or a reload): that card shows the answer picked again and the progress.
+watch(() => props.questions.map((q) => {
+  const run = chat.autoDrafts.value[q.id]
+  return [q.id, run, draftingNow(q), !!(run?.host && chat.liveHosts.value[run.host]), exampleOpen[q.id], levels[q.id], props.savingId]
+}), () => {
+  for (const q of props.questions) landAutoDraft(q)
+}, { immediate: true })
+
 function tapYesNo(q: QuestionView, opt: string) {
   if (props.savingId !== null) return
   if (!takesExample(q) || !isExampleLevel(opt)) {
     levels[q.id] = null
     exampleOpen[q.id] = false
+    readyFor[q.id] = undefined
+    chat.settleAutoDraft(q.id)
     emit('answer', q.id, opt)
     return
   }
   levels[q.id] = opt
   exampleOpen[q.id] = true
+  autoDraft(q, opt)
 }
 
 function exampleText(q: QuestionView) {
@@ -91,6 +175,8 @@ function canSaveExample(q: QuestionView) {
 
 function saveExample(q: QuestionView) {
   if (!canSaveExample(q) || props.savingId !== null) return
+  chat.settleAutoDraft(q.id)
+  readyFor[q.id] = undefined
   exampleAction[q.id] = 'save'
   emit('answer', q.id, `${levels[q.id]}\n${exampleText(q)}`)
 }
@@ -98,6 +184,8 @@ function saveExample(q: QuestionView) {
 function saveWithoutExample(q: QuestionView) {
   const level = levels[q.id]
   if (!level || props.savingId !== null) return
+  chat.settleAutoDraft(q.id)
+  readyFor[q.id] = undefined
   exampleAction[q.id] = 'without'
   emit('answer', q.id, level)
 }
@@ -178,6 +266,8 @@ function useDraft(text: string, level: string | null = null, meta?: DraftMeta) {
   const q = chatQuestion.value
   if (!q) return
   recordsFor[q.id] = meta?.records ? { draft: meta.records, note: meta.memoryNote ?? null } : undefined
+  readyFor[q.id] = undefined
+  recordsMessage[q.id] = undefined
   if (takesExample(q)) {
     if (level && isExampleLevel(level)) levels[q.id] = level
     examples[q.id] = text
@@ -254,6 +344,10 @@ const chatBoxText = computed(() => {
           <label :id="`qs-example-${q.id}-label`" :for="`qs-example-${q.id}`" class="qs__example-label">Where did you do it?</label>
           <p class="qs__example-hint">The job or project, what you did, and the result if there was one. It is saved exactly as you write it.</p>
           <p v-if="!levels[q.id]" class="qs__example-pick">Tap Yes or Some experience above, then save.</p>
+          <p v-if="draftingLine(q)" class="qs__drafting" role="status">
+            <v-progress-circular indeterminate size="14" width="2" color="primary" />
+            <span>{{ draftingLine(q) }}</span>
+          </p>
           <p v-if="shownRecords(q)" class="qs__records-label">{{ recordsDraftLabel(shownRecords(q)?.draft) }}</p>
           <v-textarea
             :id="`qs-example-${q.id}`"
@@ -290,6 +384,18 @@ const chatBoxText = computed(() => {
               Save without an example
             </v-btn>
           </div>
+          <!-- Ready after he typed: Use it replaces his text, Dismiss keeps it -->
+          <div v-if="readyFor[q.id]" class="qs__records-ready" role="alert">
+            <span>A draft from your records is ready.</span>
+            <div class="qs__records-ready-actions">
+              <v-btn color="primary" variant="flat" height="44" @click="fillDraft(q, readyFor[q.id]!.draft, readyFor[q.id]!.note)">Use it</v-btn>
+              <v-btn variant="text" height="44" @click="readyFor[q.id] = undefined">Dismiss</v-btn>
+            </div>
+          </div>
+          <p v-if="recordsMessage[q.id]" class="qs__records-message" role="status">
+            <v-icon icon="mdi-information-outline" size="16" />
+            <span>{{ recordsMessage[q.id] }}</span>
+          </p>
           <QuestionsRecordsSources v-if="shownRecords(q)" :draft="shownRecords(q)!.draft" :memory-note="shownRecords(q)!.note" />
         </div>
       </template>
@@ -533,6 +639,54 @@ const chatBoxText = computed(() => {
     font-size: 0.875rem;
     font-weight: 500;
     color: rgb(var(--v-theme-primary));
+  }
+
+  &__drafting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: rgb(var(--v-theme-primary));
+  }
+
+  &__records-ready {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
+  }
+
+  &__records-ready-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    :deep(.v-btn) {
+      text-transform: none;
+      letter-spacing: normal;
+    }
+  }
+
+  &__records-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    line-height: 1.45;
+
+    .v-icon {
+      margin-top: 2px;
+      flex: 0 0 auto;
+      color: rgb(var(--v-theme-info));
+    }
   }
 
   &__example-pick {

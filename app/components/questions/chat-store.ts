@@ -118,11 +118,8 @@ function toTurn(m: ChatMessage): QuestionChatTurn {
   return { role: 'assistant', content: parts.join('\n\n') }
 }
 
-/**
- * The step line under a records draft's spinner, "Searching your GitHub (12 seconds)", ticking each
- * second while the thread's draft runs; null when none runs.
- */
-export function useDraftStepLine(key: Ref<string>) {
+/** The step a thread's records draft is on and its seconds so far, ticking each second; null when none runs. */
+function useDraftClock(key: Ref<string>) {
   const chat = useQuestionChat()
   const now = ref(Date.now())
   let timer: ReturnType<typeof setInterval> | null = null
@@ -142,8 +139,96 @@ export function useDraftStepLine(key: Ref<string>) {
     if (!active.value) return null
     const st = chat.draftStep.value[key.value]
     const secs = st?.startedAt ? Math.max(0, Math.round((now.value - Date.parse(st.startedAt)) / 1000)) : 0
-    return `${st?.label ?? 'Starting the draft'} (${secs} ${secs === 1 ? 'second' : 'seconds'})`
+    return { label: st?.label ?? null, secs, seconds: `${secs} ${secs === 1 ? 'second' : 'seconds'}` }
   })
+}
+
+/**
+ * The step line under a records draft's spinner, "Searching your GitHub (12 seconds)", ticking each
+ * second while the thread's draft runs; null when none runs.
+ */
+export function useDraftStepLine(key: Ref<string>) {
+  const clock = useDraftClock(key)
+  return computed(() => clock.value && `${clock.value.label ?? 'Starting the draft'} (${clock.value.seconds})`)
+}
+
+/** The line inside an example box while its draft runs: "Drafting from your records: Searching your GitHub, 12 seconds". */
+export function useDraftingLine(key: Ref<string>) {
+  const clock = useDraftClock(key)
+  return computed(() => clock.value && `Drafting from your records: ${clock.value.label ?? 'Starting'}, ${clock.value.seconds}`)
+}
+
+/**
+ * A draft from his records that started by itself when Devin picked Yes or Some experience on an
+ * empty example box. It lives app-wide (and in sessionStorage), so a card that mounts later, after
+ * a page change or a reload, shows the same answer picked and fills its box when the draft is done.
+ */
+export interface AutoDraftRun {
+  /** The answer he picked when it started. */
+  level: string
+  /**
+   * The card that started it (useAutoDraftHost). While that card is on screen only it takes the
+   * draft: the same question can show twice at once (a review card's Skills to confirm under the
+   * skill panel opened from it).
+   */
+  host?: string | null
+  /** When it started (ms since the epoch). */
+  startedAt: number
+  /** The finished response, once it came back. */
+  result: RecordsDraftResponse | null
+  /** A card used it, offered it, showed its message, or dropped it (No, a save, Dismiss): it never fills a box again. */
+  settled: boolean
+}
+
+/** What a finished automatic draft does on its card. */
+export type AutoDraftOutcome =
+  | { kind: 'fill'; draft: RecordsDraft; note: string | null }
+  /** He typed in the box while it ran: "A draft from your records is ready", Use it or Dismiss. */
+  | { kind: 'offer'; draft: RecordsDraft; note: string | null }
+  /** No draft (nothing found, or why it could not draft): the line under the box, the box stays as it is. */
+  | { kind: 'message'; text: string }
+
+/**
+ * The outcome of an automatic draft on a box holding `boxText`. Nothing about the subject found
+ * (no draft, or only the nearest work) leaves the box empty and shows the nothing-found line; the
+ * "Draft from my records" button still fills the nearest work as before.
+ */
+export function autoDraftOutcome(res: RecordsDraftResponse, boxText: string): AutoDraftOutcome {
+  if (!res.ok) return { kind: 'message', text: res.message }
+  if (!res.draft || res.draft.adjacentOnly) return { kind: 'message', text: [res.memoryNote, res.reply].filter(Boolean).join(' ') }
+  const typed = boxText.trim()
+  if (typed && typed !== res.draft.text.trim()) return { kind: 'offer', draft: res.draft, note: res.memoryNote }
+  return { kind: 'fill', draft: res.draft, note: res.memoryNote }
+}
+
+const AUTO_KEY = 'job-hunter:question-chat:auto-drafts:v1'
+/** A finished automatic draft waits this long for its card to show it. */
+const AUTO_KEEP_MS = 2 * 60 * 60 * 1000
+/** Past this, a draft that had not come back before a reload is gone from the server (it keeps a result 5 minutes). */
+const AUTO_REJOIN_MS = 10 * 60 * 1000
+
+/** The status GET for a question's records draft; null when the server could not be read. */
+function readRecordsStatus(questionId: number) {
+  return $fetch<RecordsDraftStatus>(`/api/questions/${questionId}/draft`).catch(() => null)
+}
+
+/**
+ * Waits for a records draft the server is still running (the POST handed it off, the request was
+ * cut off, or the page reloaded), reading its status every two seconds. Null once the server has
+ * no run for it three reads in a row.
+ */
+async function pollRecordsDraft(questionId: number, onStatus: (st: RecordsDraftStatus) => void): Promise<RecordsDraftResponse | null> {
+  for (let misses = 0; misses < 3;) {
+    await new Promise(r => setTimeout(r, 2000))
+    const st = await readRecordsStatus(questionId)
+    if (st?.result) return st.result
+    if (st?.running) {
+      onStatus(st)
+      continue
+    }
+    misses++
+  }
+  return null
 }
 
 export function useQuestionChat() {
@@ -154,6 +239,11 @@ export function useQuestionChat() {
   /** The step a draft from records is on ("Searching your GitHub"), and when it started, per thread. */
   const draftStep = useState<Record<string, { label: string | null; startedAt: string | null }>>('question-chat-draft-step', () => ({}))
   const restored = useState('question-chat-restored', () => false)
+  /** Automatic drafts by question id (AutoDraftRun). */
+  const autoDrafts = useState<Record<number, AutoDraftRun>>('question-chat-auto-drafts', () => ({}))
+  const autoRestored = useState('question-chat-auto-restored', () => false)
+  /** Cards on screen now that can take an automatic draft (useAutoDraftHost), by host id. */
+  const liveHosts = useState<Record<string, boolean>>('question-chat-auto-hosts', () => ({}))
 
   function persist() {
     try {
@@ -178,6 +268,9 @@ export function useQuestionChat() {
   }
 
   function push(key: string, message: ChatMessage) {
+    // A draft can start before the chat panel ever mounts (a card's own draft): read the saved
+    // conversations first, so this write never drops them.
+    restore()
     threads.value = { ...threads.value, [key]: [...(threads.value[key] ?? []), message] }
     persist()
   }
@@ -230,26 +323,15 @@ export function useQuestionChat() {
     draftStep.value = { ...draftStep.value, [key]: { label: null, startedAt: new Date().toISOString() } }
     // The step line: the server says which step the draft is on (GET .../draft) every two seconds.
     let polling = true
-    const readStatus = () => $fetch<RecordsDraftStatus>(`/api/questions/${questionId}/draft`).catch(() => null)
     const showStatus = (st: RecordsDraftStatus | null) => {
       if (polling && st?.running) draftStep.value = { ...draftStep.value, [key]: { label: st.label, startedAt: st.startedAt } }
     }
-    const timer = setInterval(() => readStatus().then(showStatus), 2000)
+    const timer = setInterval(() => readRecordsStatus(questionId).then(showStatus), 2000)
     /** A draft the request handed off (still running at its wait, or the request was cut off): wait for it here. */
-    const collect = async (): Promise<RecordsDraftResponse | null> => {
+    const collect = (): Promise<RecordsDraftResponse | null> => {
       // This loop reads the status itself from here on.
       clearInterval(timer)
-      for (let misses = 0; misses < 3;) {
-        await new Promise(r => setTimeout(r, 2000))
-        const st = await readStatus()
-        if (st?.result) return st.result
-        if (st?.running) {
-          showStatus(st)
-          continue
-        }
-        misses++
-      }
-      return null
+      return pollRecordsDraft(questionId, showStatus)
     }
     try {
       // Only what he typed counts as "you said", never the button's own words.
@@ -266,19 +348,7 @@ export function useQuestionChat() {
         if (!res) throw e
       }
       if (!res) throw new Error('The draft stopped before it finished.')
-      if (res.ok) {
-        if (res.memoryNote) push(key, { id: newId(), role: 'notice', content: res.memoryNote })
-        push(key, {
-          id: newId(),
-          role: 'assistant',
-          content: res.reply,
-          draft: res.draft?.text ?? null,
-          suggestedAnswer: res.draft?.level ?? null,
-          records: res.draft,
-          memory: null,
-        })
-      }
-      else push(key, { id: newId(), role: 'notice', content: res.message })
+      pushRecordsResult(key, res)
       return res
     }
     catch (e: any) {
@@ -289,11 +359,139 @@ export function useQuestionChat() {
     finally {
       polling = false
       clearInterval(timer)
-      sending.value = { ...sending.value, [key]: false }
-      drafting.value = { ...drafting.value, [key]: false }
-      const next = { ...draftStep.value }
-      delete next[key]
-      draftStep.value = next
+      endDrafting(key)
+    }
+  }
+
+  /** The finished draft in the thread: the memory line, then the draft with its sources, or why there is none. */
+  function pushRecordsResult(key: string, res: RecordsDraftResponse) {
+    if (res.ok) {
+      if (res.memoryNote) push(key, { id: newId(), role: 'notice', content: res.memoryNote })
+      push(key, {
+        id: newId(),
+        role: 'assistant',
+        content: res.reply,
+        draft: res.draft?.text ?? null,
+        suggestedAnswer: res.draft?.level ?? null,
+        records: res.draft,
+        memory: null,
+      })
+    }
+    else push(key, { id: newId(), role: 'notice', content: res.message })
+  }
+
+  function endDrafting(key: string) {
+    sending.value = { ...sending.value, [key]: false }
+    drafting.value = { ...drafting.value, [key]: false }
+    const next = { ...draftStep.value }
+    delete next[key]
+    draftStep.value = next
+  }
+
+  /**
+   * After a reload: waits for the records draft the server is still running for this question (or
+   * takes the one it finished in the last few minutes), with the same step line as a fresh one.
+   * Null when the server has none (it restarted, or the result is older than its five minutes).
+   */
+  async function joinRecordsDraft(questionId: number): Promise<RecordsDraftResponse | null> {
+    const key = chatThreadKey(questionId)
+    if (sending.value[key]) return null
+    const first = await readRecordsStatus(questionId)
+    if (!first || (!first.running && !first.result) || sending.value[key]) return null
+    sending.value = { ...sending.value, [key]: true }
+    drafting.value = { ...drafting.value, [key]: true }
+    draftStep.value = { ...draftStep.value, [key]: { label: first.label, startedAt: first.startedAt } }
+    try {
+      const res = first.result ?? await pollRecordsDraft(questionId, (st) => {
+        draftStep.value = { ...draftStep.value, [key]: { label: st.label, startedAt: st.startedAt } }
+      })
+      if (res) pushRecordsResult(key, res)
+      return res
+    }
+    finally {
+      endDrafting(key)
+    }
+  }
+
+  // ── Automatic drafts (Yes or Some experience on an empty example box) ──
+  function persistAuto() {
+    try {
+      sessionStorage.setItem(AUTO_KEY, JSON.stringify(autoDrafts.value))
+    }
+    catch {
+      // Private mode or full storage: the draft still fills the box on this page view.
+    }
+  }
+
+  function setAuto(questionId: number, run: AutoDraftRun | null) {
+    const next = { ...autoDrafts.value }
+    if (run) next[questionId] = run
+    else delete next[questionId]
+    autoDrafts.value = next
+    persistAuto()
+  }
+
+  /**
+   * Picking Yes or Some experience on an empty example box drafts from his records with no further
+   * click. Once per question in this tab: after that the "Draft from my records" button gives a
+   * fresh draft. False when nothing started (one already ran here, or one or a chat reply for this
+   * question is under way).
+   */
+  function startAutoDraft(questionId: number, level: string, host: string | null = null): boolean {
+    const key = chatThreadKey(questionId)
+    if (!import.meta.client || sending.value[key] || drafting.value[key] || autoDrafts.value[questionId]) return false
+    setAuto(questionId, { level, host, startedAt: Date.now(), result: null, settled: false })
+    draftFromRecords(questionId).then((res) => {
+      const run = autoDrafts.value[questionId]
+      if (!run) return
+      setAuto(questionId, res ? { ...run, result: res } : null)
+    })
+    return true
+  }
+
+  /**
+   * The card is done with this question's automatic draft: it filled the box, offered it, showed
+   * its message, or the draft no longer applies (No, a save, Dismiss). A failed one is forgotten,
+   * so picking Yes again tries again.
+   */
+  function settleAutoDraft(questionId: number) {
+    const run = autoDrafts.value[questionId]
+    if (!run || run.settled) return
+    setAuto(questionId, run.result && !run.result.ok ? null : { ...run, settled: true })
+  }
+
+  /** Reads the automatic drafts saved in this tab once, and rejoins any the page reloaded in the middle of. */
+  function restoreAutoDrafts() {
+    if (autoRestored.value || !import.meta.client) return
+    autoRestored.value = true
+    let saved: Record<string, AutoDraftRun> = {}
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem(AUTO_KEY) || 'null')
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) saved = parsed
+    }
+    catch {
+      // Unreadable storage: nothing to rejoin.
+    }
+    const now = Date.now()
+    const next = { ...autoDrafts.value }
+    for (const [k, run] of Object.entries(saved)) {
+      const id = Number(k)
+      if (!Number.isInteger(id) || id <= 0 || next[id] || !run || typeof run.startedAt !== 'number' || typeof run.level !== 'string') continue
+      if (now - run.startedAt > AUTO_KEEP_MS) continue
+      if (!run.result && !run.settled && now - run.startedAt > AUTO_REJOIN_MS) continue
+      next[id] = run
+    }
+    autoDrafts.value = next
+    persistAuto()
+    for (const [k, run] of Object.entries(next)) {
+      const id = Number(k)
+      if (run.result || run.settled || drafting.value[chatThreadKey(id)]) continue
+      joinRecordsDraft(id).then((res) => {
+        const cur = autoDrafts.value[id]
+        if (!cur) return
+        // Gone from the server: nothing to wait for.
+        setAuto(id, res ? { ...cur, result: res } : null)
+      })
     }
   }
 
@@ -313,7 +511,77 @@ export function useQuestionChat() {
     persist()
   }
 
-  return { threads, sending, drafting, draftStep, restore, send, draftFromRecords, markDraftUsed, clear }
+  return { threads, sending, drafting, draftStep, autoDrafts, liveHosts, restore, send, draftFromRecords, joinRecordsDraft, startAutoDraft, settleAutoDraft, restoreAutoDrafts, markDraftUsed, clear }
+}
+
+/** How a card answers the automatic draft watcher for one question. */
+export interface AutoDraftBox {
+  /** The example box is open on a picked Yes or Some experience and nothing is saving: a finished draft can land. */
+  applies: () => boolean
+  /** What the box holds now. */
+  text: () => string
+  /** Nothing picked, the box closed, the question still waiting: the card can show the answer picked again. */
+  canRestore: () => boolean
+  /** Picks the level and opens the box, on a card that mounted after its draft started. */
+  restore: (level: string) => void
+  /** Puts the finished draft in the box, offers it, or shows the line under the box. */
+  land: (outcome: AutoDraftOutcome) => void
+}
+
+/**
+ * One pass of the automatic draft watcher for a card's question. A draft started on another card
+ * that is still on screen is that card's; this one leaves it alone.
+ */
+export function checkAutoDraft(chat: ReturnType<typeof useQuestionChat>, questionId: number, box: AutoDraftBox, host: string) {
+  const run = chat.autoDrafts.value[questionId]
+  if (!run || run.settled) return
+  if (run.host && run.host !== host && chat.liveHosts.value[run.host]) return
+  if (!run.result && !chat.drafting.value[chatThreadKey(questionId)]) return
+  if (box.canRestore()) box.restore(run.level)
+  if (!run.result || !box.applies()) return
+  box.land(autoDraftOutcome(run.result, box.text()))
+  chat.settleAutoDraft(questionId)
+}
+
+let hostSeq = 0
+
+/**
+ * This card's id for automatic drafts, counted as on screen while it is mounted and `active` holds
+ * (a dialog only while it is open). It also reads the drafts saved in this tab once.
+ */
+export function useAutoDraftHost(active: () => boolean = () => true): string {
+  const chat = useQuestionChat()
+  const host = `h${++hostSeq}${Math.random().toString(36).slice(2, 6)}`
+  const set = (on: boolean) => {
+    const next = { ...chat.liveHosts.value }
+    if (on) next[host] = true
+    else delete next[host]
+    chat.liveHosts.value = next
+  }
+  onMounted(() => {
+    chat.restoreAutoDrafts()
+    watch(active, on => set(on), { immediate: true })
+  })
+  onBeforeUnmount(() => set(false))
+  return host
+}
+
+/**
+ * A card with one question: fills its example box when the automatic draft for it finishes, and
+ * shows the answer picked again when it mounts while that draft runs or after it finished.
+ */
+export function useAutoDraft(questionId: () => number | null | undefined, box: AutoDraftBox, active?: () => boolean) {
+  const chat = useQuestionChat()
+  const host = useAutoDraftHost(active)
+  watch(() => {
+    const id = questionId()
+    const run = id ? chat.autoDrafts.value[id] : null
+    return id ? [id, run, !!chat.drafting.value[chatThreadKey(id)], !!(run?.host && chat.liveHosts.value[run.host]), box.applies(), box.canRestore()] : null
+  }, () => {
+    const id = questionId()
+    if (id) checkAutoDraft(chat, id, box, host)
+  }, { immediate: true })
+  return { chat, host }
 }
 
 /** A yes or no question about a skill or past work: Yes and Some experience open the example box. */
