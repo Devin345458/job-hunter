@@ -27,6 +27,8 @@ export default defineTask({
       const folds = applySkillFoldsOnce(APPROVED_LLM_SKILL_FOLDS, log)
       const tidy = await tidyFactQuestions(log)
       const released = await releaseMisreadFactFields(log)
+      // When his minimum or target pay changed since the last pass: salary fields answered again per job.
+      const pay = await refreshPayAnswersWhenChanged(log)
       const learned = await runDailyLearning(log)
       return {
         ...learned,
@@ -35,6 +37,7 @@ export default defineTask({
         ...(catalog.applied ? { catalogSkills: catalog.applied.entries, catalogMerged: catalog.applied.merged.length, catalogReworded: catalog.applied.reworded.length, catalogSkipped: catalog.applied.skipped.length } : {}),
         ...(folds.result ? { skillsFolded: folds.result.folded.length, foldQuestionsMerged: folds.result.rows.filter(r => r.action === 'merge').length, foldsSkipped: folds.result.skipped.length } : {}),
         misreadFieldsReleased: released.length,
+        ...(pay.ran ? { payFieldsChanged: pay.changes.length, payApplicationsRefreshed: pay.refreshed.length } : {}),
         factQuestionsMerged: tidy.merged.length,
         factQuestionsAnswered: tidy.derived.length,
         factQuestionsReworded: tidy.reworded.length,

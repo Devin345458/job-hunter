@@ -1,10 +1,10 @@
 import { z } from 'zod'
 import { and, eq, inArray, like, ne } from 'drizzle-orm'
 import type { InferSelectModel } from 'drizzle-orm'
-import { applications, jobs, questions } from '../../db/schema'
-import type { FormAnswer, FormField, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
+import { applications, appSettings, jobs, questions } from '../../db/schema'
+import type { CompensationBreakdown, FormAnswer, FormField, FormSnapshot, TailoredResume } from '#shared/types/pipeline'
 import { aiStructured, cachedPrompt } from '../ai'
-import { cleanStoredAnswer, factForQuestion, factStatements, isHistoryDate, matchFact, resolveFacts, resolveField, type FactValues } from '../facts'
+import { cleanStoredAnswer, factForQuestion, factStatements, inBandQuestionSubject, isApplicationOnlySubject, isHistoryDate, matchFact, payBasis, postedPayText, resolveFacts, resolveField, type FactDef, type FactValues } from '../facts'
 import { loadKnowledge, type KnowledgeEntry } from '../knowledge'
 import { ADDRESS_CONTEXT, answeredValue, askOrReuse, askQuestion, appSkipNote, canonicalQuestion, labelTiedTo, skipForApp, type AskInput, type AskOutcome, type QuestionRow } from '../questions'
 import { nowSql, parseJson, setApplicationStatus } from '../review'
@@ -361,9 +361,184 @@ function valueFromAnswerText(field: FormField, text: string): FormAnswer['value'
   return t
 }
 
-/** Every fact the knowledge base states or implies, with answered questions as the fallback. */
-function currentFacts(entries: KnowledgeEntry[]): FactValues {
-  return resolveFacts(entries, { answered: answeredValue })
+/**
+ * Every fact the knowledge base states or implies, with answered questions as the fallback. With
+ * the job's posted pay, the facts that depend on the job too (whether his minimum is within it).
+ */
+function currentFacts(entries: KnowledgeEntry[], comp?: CompensationBreakdown | null): FactValues {
+  return resolveFacts(entries, { answered: answeredValue, ...(comp !== undefined ? { comp } : {}) })
+}
+
+// ── Pay fields ───────────────────────────────────────────────
+// The salary expectation (work.salary) and "do you accept the posted range" (work.salary_in_band)
+// are answered per job from his minimum (resolveFacts). The posted range question is never a
+// shared answer: when the posted pay cannot say Yes, it is asked for that one application, and an
+// answer to the same label on another form (question #335 for Samsara) never fills it.
+
+const PAY_FACTS = new Set(['work.salary', 'work.salary_in_band'])
+
+/** The pay fact a field asks for, or null. */
+function payFactOf(field: FormField, fields: FormField[]): FactDef | null {
+  const def = matchFact(field, fields)
+  return def && PAY_FACTS.has(def.key) ? def : null
+}
+
+/** The job's posted pay (jobs.comp_json), or null when it was never read. */
+function jobComp(compJson: string | null | undefined): CompensationBreakdown | null {
+  return parseJson<CompensationBreakdown | null>(compJson, null)
+}
+
+interface PayJob {
+  id: number
+  company: string
+  title: string
+  compJson: string | null
+}
+
+function usd(n: number) {
+  return `$${Math.round(n).toLocaleString('en-US')}`
+}
+
+/** The question for the posted range field of one application, when the posted pay cannot answer it. */
+function inBandAskInput(field: FormField, job: PayJob, applicationId: number, entries: KnowledgeEntry[]): AskInput {
+  const floor = payBasis(entries, { answered: answeredValue }).floor
+  const posted = postedPayText(jobComp(job.compJson))
+  const options = field.options ?? []
+  const yesNo = options.length === 0 || options.every(o => /^(yes|no)$/i.test(o.trim()))
+  const why = !floor
+    ? 'Your minimum pay is not in your knowledge base, so the app cannot tell whether the posted range works.'
+    : posted
+      ? `${job.company} posts ${posted} for ${job.title}, under your minimum of ${usd(floor.value)}.`
+      : `The posting gives no pay range, so the app cannot tell whether it reaches your minimum of ${usd(floor.value)}.`
+  return {
+    question: cleanFieldLabel(field.label),
+    kind: 'form_field',
+    subject: inBandQuestionSubject(cleanFieldLabel(field.label), job.company, applicationId),
+    answerType: field.type === 'checkbox' || yesNo ? 'yes_no' : 'choice',
+    choices: yesNo ? undefined : options.slice(0, 50),
+    context: `${why} Asked for this application only: your answer fills this form and no other.`,
+    applicationId,
+    jobId: job.id,
+    blocking: field.required,
+    category: 'preference',
+  }
+}
+
+/** The posted range field when the posted pay cannot say Yes: the application's own question, asked once. */
+function inBandFromQuestion(field: FormField, job: PayJob, applicationId: number, entries: KnowledgeEntry[]): { answer: FormAnswer; question: QuestionRow } {
+  const input = inBandAskInput(field, job, applicationId, entries)
+  const q = askQuestion(input)
+  return { answer: answerFromQuestion(field, q, { field, input, optional: !field.required, registry: false }), question: q }
+}
+
+/** The question a stored answer waits on, or the one an optional field was asked as. */
+function storedQuestionId(a: FormAnswer): number | null {
+  return a.needsQuestionId ?? (a.source === 'skipped' && a.sourceDetail ? Number(a.sourceDetail.match(OPTIONAL_ASKED)?.[1]) || null : null)
+}
+
+/** A pay field's new answer in the stored answer's key order. A stage-1 note, a mapping, or a shortened note no longer applies. */
+function withPay(original: FormAnswer, patch: Pick<FormAnswer, 'value' | 'source' | 'sourceDetail' | 'confidence' | 'needsQuestionId' | 'fillError'>): FormAnswer {
+  const { atApply: _atApply, mappedFrom: _mappedFrom, shortened: _shortened, ...rest } = original
+  const same = JSON.stringify(original.value) === JSON.stringify(patch.value)
+  return { ...rest, ...patch, filled: same ? original.filled : false }
+}
+
+/**
+ * True when a stored pay answer is not what the field answers now: the value differs, or it waits
+ * on a question the posted pay settles, or the posted range field is not on its own application's
+ * question. No question is asked and nothing is written.
+ */
+function payAnswerOutOfDate(field: FormField, fields: FormField[], def: FactDef, stored: FormAnswer | undefined, facts: FactValues, applicationId: number): boolean {
+  if (!stored) return false
+  const qid = storedQuestionId(stored)
+  const q = qid ? canonicalQuestion(qid) : null
+  if (def.key === 'work.salary' && q?.kind === 'form_field' && q.status === 'answered') return false
+  const { res } = resolveField(def, field, facts, fields)
+  if (res.kind === 'value') {
+    const value = valueFromFact(field, res)
+    return value !== null && (JSON.stringify(value) !== JSON.stringify(stored.value) || stored.needsQuestionId != null || !!stored.atApply || stored.source === 'question')
+  }
+  if (def.key !== 'work.salary_in_band') return false
+  return !(q && isApplicationOnlySubject(q.subject) && q.applicationId === applicationId)
+}
+
+/** app_settings key: the minimum and target the waiting applications' pay fields were last answered from. */
+const PAY_BASIS_KEY = 'salary_answers_basis'
+/** Bump when the pay field rules change, so every waiting application is checked again once. */
+const PAY_RULES = 1
+
+export interface PayFieldChange {
+  applicationId: number
+  company: string
+  label: string
+  before: FormAnswer['value']
+  after: FormAnswer['value']
+  /** Where the old value came from, and the new one (or the question it now waits on). */
+  beforeDetail: string | null
+  afterDetail: string | null
+}
+
+/**
+ * Answers the pay fields of every waiting application again, through refreshStoredAnswers(), when
+ * his minimum or target changed since the last pass (and once after the deploy that added it).
+ * Only applications with a pay field whose stored answer is out of date are refreshed. Each
+ * change is logged with the application, the field, and the old and new value. No Claude call is
+ * needed for a pay field; a refresh still runs the rest of that application's usual refresh.
+ */
+export async function refreshPayAnswersWhenChanged(log: (m: string) => void = () => {}): Promise<{ ran: boolean; refreshed: number[]; failed: number[]; changes: PayFieldChange[] }> {
+  const db = useDb()
+  const result = { ran: false, refreshed: [] as number[], failed: [] as number[], changes: [] as PayFieldChange[] }
+  const entries = loadKnowledge()
+  const pay = payBasis(entries, { answered: answeredValue })
+  const basis = JSON.stringify({ rules: PAY_RULES, floor: pay.floor?.value ?? null, figure: pay.figure?.value ?? null, from: pay.figure?.from ?? null })
+  if (db.select().from(appSettings).where(eq(appSettings.key, PAY_BASIS_KEY)).get()?.valueJson === basis) return result
+  result.ran = true
+
+  const apps = db.select({ id: applications.id, jobId: applications.jobId, answersJson: applications.answersJson, formSnapshotJson: applications.formSnapshotJson })
+    .from(applications).where(inArray(applications.status, ['to_decide', 'needs_input', 'proposed'])).all()
+  for (const app of apps) {
+    const snapshot = parseJson<FormSnapshot | null>(app.formSnapshotJson, null)
+    if (!snapshot) continue
+    const payFields = snapshot.fields.map(f => ({ field: f, def: payFactOf(f, snapshot.fields) })).filter((x): x is { field: FormField; def: FactDef } => !!x.def)
+    if (!payFields.length) continue
+    const before = parseJson<FormAnswer[]>(app.answersJson, [])
+    const job = db.select({ company: jobs.company, compJson: jobs.compJson }).from(jobs).where(eq(jobs.id, app.jobId)).get()
+    const facts = currentFacts(entries, jobComp(job?.compJson))
+    if (!payFields.some(p => payAnswerOutOfDate(p.field, snapshot.fields, p.def, before.find(a => a.fieldId === p.field.id), facts, app.id))) continue
+    try {
+      await refreshStoredAnswers(app.id)
+      result.refreshed.push(app.id)
+    }
+    catch (e) {
+      result.failed.push(app.id)
+      console.error(`[answers] pay field refresh of application ${app.id} failed`, e)
+      continue
+    }
+    const after = parseJson<FormAnswer[]>(db.select({ answersJson: applications.answersJson }).from(applications).where(eq(applications.id, app.id)).get()?.answersJson, [])
+    for (const { field } of payFields) {
+      const b = before.find(a => a.fieldId === field.id)
+      const a = after.find(x => x.fieldId === field.id)
+      if (JSON.stringify([b?.value, b?.needsQuestionId ?? null]) === JSON.stringify([a?.value, a?.needsQuestionId ?? null])) continue
+      result.changes.push({
+        applicationId: app.id,
+        company: job?.company ?? '',
+        label: cleanFieldLabel(field.label),
+        before: b?.value ?? null,
+        after: a?.value ?? null,
+        beforeDetail: b?.sourceDetail ?? null,
+        afterDetail: a?.sourceDetail ?? null,
+      })
+    }
+  }
+  // A failed refresh is tried again on the next pass.
+  if (!result.failed.length) {
+    db.insert(appSettings).values({ key: PAY_BASIS_KEY, valueJson: basis, updatedAt: nowSql() })
+      .onConflictDoUpdate({ target: appSettings.key, set: { valueJson: basis, updatedAt: nowSql() } }).run()
+  }
+  const show = (v: FormAnswer['value']) => v === null || v === undefined || v === '' ? '(blank)' : JSON.stringify(v)
+  for (const c of result.changes) log(`pay fields: #${c.applicationId} ${c.company} "${truncate(c.label, 80)}": ${show(c.before)} -> ${show(c.after)} (${c.afterDetail ?? ''})`)
+  log(`pay fields: refreshed ${result.refreshed.length} application(s)${result.failed.length ? `, failed ${result.failed.join(', ')}` : ''}; ${result.changes.length} field(s) changed`)
+  return result
 }
 
 /** The note on a stage-1 field that Claude answers once Devin taps Apply. */
@@ -388,7 +563,7 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext, 
   const factMaps: Array<{ field: FormField; fact: string; detail: string }> = []
   const free: FormField[] = []
   const asks: PendingAsk[] = []
-  const facts = currentFacts(ctx.entries)
+  const facts = currentFacts(ctx.entries, jobComp(ctx.job.compJson))
   const formFieldAsk = (field: FormField, prompt: string | null, blocking = field.required) =>
     asks.push({ field, input: { ...formFieldQuestion(field, prompt), blocking }, optional: false, registry: false })
 
@@ -418,6 +593,10 @@ export async function deriveAnswers(snapshot: FormSnapshot, ctx: AnswerContext, 
       else if (res.kind === 'map') {
         // Pick the option, or derive the short answer (a city's time zone), from the fact.
         factMaps.push({ field, fact: res.statement, detail: res.detail })
+      }
+      else if (res.kind === 'blank' && def.key === 'work.salary_in_band') {
+        // The posted pay cannot say Yes (under his minimum, or no range): his call, for this application only.
+        results.set(field.id, inBandFromQuestion(field, ctx.job, ctx.applicationId, ctx.entries).answer)
       }
       else if (res.kind === 'blank') {
         results.set(field.id, answer(field, { value: null, source: 'skipped', sourceDetail: res.detail, confidence: 'high', fillError: field.required ? `Required, but ${res.detail.replace(/^Left blank: /, '')}` : null }))
@@ -684,7 +863,9 @@ async function refreshStoredAnswersNow(applicationId: number): Promise<{ updated
   const rows = ids.length ? db.select().from(questions).where(inArray(questions.id, ids)).all() : []
   // A duplicate the tidy merged points at its canonical question from here on.
   const qById = new Map(rows.map(r => [r.id, canonicalQuestion(r.id) ?? r] as const))
-  const facts = currentFacts(loadKnowledge())
+  const entries = loadKnowledge()
+  const payJob = db.select({ id: jobs.id, company: jobs.company, title: jobs.title, compJson: jobs.compJson }).from(jobs).where(eq(jobs.id, app.jobId)).get()
+  const facts = currentFacts(entries, jobComp(payJob?.compJson))
   let updated = 0
   const needModel: Array<{ field: FormField; fact: string; index: number; source: 'knowledge' | 'question'; detail: string; answerText: string | null }> = []
   /** Fact questions a field let go of because the field is not that fact. */
@@ -692,7 +873,39 @@ async function refreshStoredAnswersNow(applicationId: number): Promise<{ updated
   /** Required fields that let go of a misread fact question and need their own question. */
   const reask: number[] = []
 
+  // A pay field is answered again from his minimum and this job's posted pay whatever it holds now
+  // (the old Target Salary text, an answer to the same label on another form, a stage-1 field left
+  // for Apply). Devin's own answer to a salary field's form question stays, as for every fact. The
+  // posted range field takes his answer only from its own application's question, and only while
+  // the posted pay cannot say Yes. Null: the field takes the usual path below.
+  const payAnswer = (original: FormAnswer, field: FormField, def: FactDef): FormAnswer | null => {
+    const qid = storedQuestionId(original)
+    const q = qid ? qById.get(qid) ?? canonicalQuestion(qid) : null
+    if (def.key === 'work.salary' && q?.kind === 'form_field' && q.status === 'answered') return null
+    const { res } = resolveField(def, field, facts, snapshot.fields)
+    if (res.kind === 'value') {
+      const value = valueFromFact(field, res)
+      if (value === null) return null
+      const detail = typeof value === 'string' && value !== res.value ? `${res.detail}, as the option "${value}"` : res.detail
+      return withPay(original, { value, source: factSource(res.detail), sourceDetail: detail, confidence: res.confidence, needsQuestionId: null, fillError: null })
+    }
+    if (def.key !== 'work.salary_in_band' || !payJob) return null
+    const asked = inBandFromQuestion(field, payJob, applicationId, entries)
+    qById.set(asked.question.id, asked.question)
+    const a = asked.answer
+    return withPay(original, { value: a.value, source: a.source, sourceDetail: a.sourceDetail ?? null, confidence: a.confidence, needsQuestionId: a.needsQuestionId ?? null, fillError: null })
+  }
+
   let next = answers.map((original, index) => {
+    const payField = snapshot.fields.find(f => f.id === original.fieldId)
+    const payDef = payField ? payFactOf(payField, snapshot.fields) : null
+    if (payField && payDef) {
+      const redone = payAnswer(original, payField, payDef)
+      if (redone) {
+        if (JSON.stringify(redone) !== JSON.stringify(original)) updated++
+        return redone
+      }
+    }
     const qid = questionIdOf(original)
     if (!qid) return original
     const field = snapshot.fields.find(f => f.id === original.fieldId)
