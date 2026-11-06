@@ -3,7 +3,7 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import type { QuestionListItem } from '#shared/types/learning'
 import { plainQuestionContext } from '#shared/utils/plain-text'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { draftsFromRecords, EXAMPLE_LEVELS, chatThreadKey, recordsDraftLabel, useDraftStepLine, useQuestionChat } from '~/components/questions/chat-store'
+import { draftsFromRecords, EXAMPLE_LEVELS, chatThreadKey, recordsDraftLabel, useAutoDraft, useDraftingLine, useDraftStepLine, useQuestionChat } from '~/components/questions/chat-store'
 
 // One question on the /questions page. Yes or no questions answer in one tap; choices are one
 // tap; numbers and short facts take a field; open-ended questions from the original tailoring
@@ -13,6 +13,10 @@ import { draftsFromRecords, EXAMPLE_LEVELS, chatThreadKey, recordsDraftLabel, us
 // "Draft from my records" fills the example box (or the answer box) with a draft from Devin's
 // knowledge base, GitHub, and past Claude sessions, picks the level, and lists the source of every
 // sentence under the box. It is still only a draft: nothing is saved until Save.
+// Picking Yes or Some experience on an empty example box (or Add an example) starts that draft by
+// itself (Devin: "I always want you to take the first stab at filling out my examples"). The box
+// shows its progress, and the finished draft fills the box unless he typed in it meanwhile; then
+// "A draft from your records is ready" offers it. The answer he picked stays picked.
 
 const props = defineProps<{
   question: QuestionListItem
@@ -133,11 +137,13 @@ const recordsDraft = ref<RecordsDraft | null>(null)
 const recordsNote = ref<string | null>(null)
 /** The server's sentence when there was no draft, or why it could not draft. */
 const recordsMessage = ref<string | null>(null)
-/** A draft waiting on "Replace what you typed?". */
-const pendingRecords = ref<{ draft: RecordsDraft; note: string | null } | null>(null)
+/** A finished draft waiting on "A draft from your records is ready": he typed in the box while it ran. keepLevel: an automatic draft, which leaves his pick alone. */
+const pendingRecords = ref<{ draft: RecordsDraft; note: string | null; keepLevel?: boolean } | null>(null)
 const recordsBusy = computed(() => !!chat.drafting.value[chatThreadKey(props.question.id)])
 /** "Searching your GitHub (12 seconds)" while a draft from records runs. */
 const recordsStepLine = useDraftStepLine(computed(() => chatThreadKey(props.question.id)))
+/** "Drafting from your records: Searching your GitHub, 12 seconds", inside the open example box. */
+const draftingLine = useDraftingLine(computed(() => chatThreadKey(props.question.id)))
 const canDraftRecords = computed(() => {
   if (!draftsFromRecords(props.question)) return false
   if (props.mode === 'pending') return true
@@ -149,14 +155,14 @@ function boxNow(): string {
   return (takesExample.value ? exampleText.value : draft.value).trim()
 }
 
-function fillFromRecords(d: RecordsDraft, note: string | null) {
+function fillFromRecords(d: RecordsDraft, note: string | null, keepLevel = false) {
   pendingRecords.value = null
   if (takesExample.value) {
     if (props.mode === 'answered' && !editing.value) {
       if (!answeredWithLevel.value) return
       exampleOnly.value = true
     }
-    if (props.mode === 'pending' && d.level && isExampleLevel(d.level)) level.value = d.level
+    if (props.mode === 'pending' && d.level && isExampleLevel(d.level) && !(keepLevel && level.value)) level.value = d.level
     exampleText.value = d.text
     exampleOpen.value = true
   }
@@ -199,6 +205,8 @@ function clearRecords() {
 }
 
 function closeExample() {
+  // The box is gone: a draft still running for it never opens it again.
+  chat.settleAutoDraft(props.question.id)
   level.value = null
   exampleOpen.value = false
   exampleOnly.value = false
@@ -242,13 +250,51 @@ function tap(opt: string) {
   if (!exampleOpen.value && !exampleText.value && props.mode === 'answered') exampleText.value = props.question.example ?? ''
   level.value = opt
   exampleOpen.value = true
+  autoDraft(opt)
+}
+
+/** The first stab at the example: an empty box on a picked Yes or Some experience drafts from his records by itself. */
+function autoDraft(lv: string) {
+  if (!canDraftRecords.value || exampleText.value.trim() || recordsBusy.value) return
+  if (chat.startAutoDraft(props.question.id, lv, autoHost)) {
+    recordsMessage.value = null
+    pendingRecords.value = null
+  }
 }
 
 function startExample() {
   exampleText.value = props.question.example ?? ''
   exampleOnly.value = true
   exampleOpen.value = true
+  if (props.question.answer) autoDraft(props.question.answer)
 }
+
+/** The example box is on screen. */
+const exampleShown = computed(() => exampleOpen.value && (showInput.value || exampleOnly.value))
+
+// The automatic draft lands here when it finishes, also on a card that mounted after it started
+// (another page, or a reload): that card shows the answer picked again and the progress.
+const { host: autoHost } = useAutoDraft(() => props.question.id, {
+  applies: () => exampleShown.value && (exampleOnly.value || isExampleLevel(level.value)) && !busy.value,
+  text: () => exampleText.value,
+  canRestore: () => props.mode === 'pending' && takesExample.value && !level.value && !exampleOpen.value,
+  restore: (lv) => {
+    level.value = lv
+    exampleOpen.value = true
+  },
+  land: (o) => {
+    recordsMessage.value = null
+    if (o.kind === 'message') {
+      recordsMessage.value = o.text
+      return
+    }
+    if (o.kind === 'offer') {
+      pendingRecords.value = { draft: o.draft, note: o.note, keepLevel: true }
+      return
+    }
+    fillFromRecords(o.draft, o.note, true)
+  },
+})
 
 const exampleChanged = computed(() => exampleText.value.trim() !== (props.question.example ?? '').trim())
 const canSaveExample = computed(() => !!exampleText.value.trim()
@@ -257,6 +303,7 @@ const canSaveExample = computed(() => !!exampleText.value.trim()
 
 function saveExample() {
   if (!canSaveExample.value || busy.value) return
+  chat.settleAutoDraft(props.question.id)
   exampleAction.value = 'save'
   const text = exampleText.value.trim()
   if (exampleOnly.value) emit('example', text)
@@ -265,6 +312,7 @@ function saveExample() {
 
 function saveWithoutExample() {
   if (!level.value || busy.value) return
+  chat.settleAutoDraft(props.question.id)
   exampleAction.value = 'without'
   emit('answer', level.value, null)
 }
@@ -535,6 +583,10 @@ watch(() => props.pick?.nonce, () => {
         <p v-if="!level && !exampleOnly" class="question-card__example-pick text-body-2">
           Tap Yes or Some experience above, then save.
         </p>
+        <p v-if="draftingLine" class="question-card__drafting text-body-2" role="status">
+          <v-progress-circular indeterminate size="14" width="2" color="primary" />
+          <span>{{ draftingLine }}</span>
+        </p>
         <div v-if="recordsDraft" class="question-card__records-label text-body-2">
           <v-icon icon="mdi-file-document-edit-outline" size="16" />{{ recordsDraftLabel(recordsDraft) }}
         </div>
@@ -577,19 +629,19 @@ watch(() => props.pick?.nonce, () => {
         <QuestionsRecordsSources v-if="recordsDraft" :draft="recordsDraft" :memory-note="recordsNote" />
       </div>
 
-      <!-- Draft from my records: replace what he typed, or why there is no draft -->
+      <!-- Draft from my records, ready after he typed: Use it replaces his text, Dismiss keeps it; or why there is no draft -->
       <div v-if="pendingRecords" class="question-card__records-confirm" role="alert">
-        <span class="text-body-2">The draft from your records is ready. Replace what you typed with it?</span>
+        <span class="text-body-2">A draft from your records is ready.</span>
         <div class="question-card__records-actions">
-          <v-btn color="primary" variant="flat" height="44" @click="fillFromRecords(pendingRecords.draft, pendingRecords.note)">Replace</v-btn>
-          <v-btn variant="text" height="44" @click="pendingRecords = null">Keep mine</v-btn>
+          <v-btn color="primary" variant="flat" height="44" @click="fillFromRecords(pendingRecords.draft, pendingRecords.note, pendingRecords.keepLevel)">Use it</v-btn>
+          <v-btn variant="text" height="44" @click="pendingRecords = null">Dismiss</v-btn>
         </div>
       </div>
       <p v-if="recordsMessage" class="question-card__records-message text-body-2" role="status">
         <v-icon icon="mdi-information-outline" size="16" />
         <span>{{ recordsMessage }}</span>
       </p>
-      <p v-if="recordsStepLine" class="question-card__records-step text-body-2 text-medium-emphasis" role="status">
+      <p v-if="recordsStepLine && !(exampleShown && takesExample)" class="question-card__records-step text-body-2 text-medium-emphasis" role="status">
         <v-progress-circular indeterminate size="14" width="2" color="primary" />
         <span>{{ recordsStepLine }}</span>
       </p>
@@ -862,6 +914,15 @@ watch(() => props.pick?.nonce, () => {
       flex: 0 0 auto;
       color: rgb(var(--v-theme-info));
     }
+  }
+
+  &__drafting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+    line-height: 1.45;
+    color: rgb(var(--v-theme-primary));
   }
 
   &__records-step {

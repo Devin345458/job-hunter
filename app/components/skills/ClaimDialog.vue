@@ -3,7 +3,7 @@ import { EXAMPLE_MAX_CHARS } from '#shared/utils/limits'
 import { useDisplay } from 'vuetify'
 import type { JobRescoreResult, QuestionView, SkillClaimAnswer, SkillClaimPreview, SkillClaimResult, SkillClaimSource } from '#shared/types/pipeline'
 import type { RecordsDraft } from '#shared/types/question-chat'
-import { EXAMPLE_LEVELS, recordsDraftLabel, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
+import { chatThreadKey, draftsFromRecords, EXAMPLE_LEVELS, recordsDraftLabel, useAutoDraft, useDraftingLine, type ChatQuestion, type DraftMeta } from '~/components/questions/chat-store'
 
 // Tap a Missing skill or a requirement that is not Have, and say whether you have it.
 // The panel shows what the knowledge base says today, asks the same Yes, Some experience, or No
@@ -12,6 +12,10 @@ import { EXAMPLE_LEVELS, recordsDraftLabel, type ChatQuestion, type DraftMeta } 
 // the new score. Claude never suggests an answer here: the chat explains, and drafts only from what
 // Devin types. The one suggestion is Found in your GitHub, built from commits he authored, which
 // fills the example box only when he taps Use this.
+// Since 2026-11-06 Yes or Some experience on an empty example box starts Draft from my records by
+// itself, as on /questions (Devin: "I always want you to take the first stab at filling out my
+// examples"), for a question that already exists; a skill with no question yet, and a sandbox
+// card, start nothing. Every sentence of that draft rests on his records, and nothing saves until Save.
 const props = defineProps<{
   modelValue: boolean
   jobId: number
@@ -86,6 +90,8 @@ function reset() {
   exampleOpen.value = false
   exampleText.value = ''
   records.value = null
+  readyRecords.value = null
+  recordsMessage.value = null
   saving.value = null
   saveError.value = null
   result.value = null
@@ -133,12 +139,65 @@ function tap(a: SkillClaimAnswer) {
   if (isExampleLevel(a)) {
     level.value = a
     exampleOpen.value = true
+    autoDraft(a)
     return
   }
   level.value = null
   exampleOpen.value = false
+  readyRecords.value = null
+  settleDraft()
   save('No', undefined, 'no')
 }
+
+// ── The automatic draft from his records ──
+/** The question this panel answers, once one exists (a sandbox card never has one). */
+const questionId = computed(() => (preview.value && !preview.value.isSandbox ? preview.value.question.id : null))
+/** A finished draft he typed over, waiting on Use it or Dismiss. */
+const readyRecords = ref<{ draft: RecordsDraft; note: string | null } | null>(null)
+/** The nothing-found line, or why it could not draft, under the box. */
+const recordsMessage = ref<string | null>(null)
+/** "Drafting from your records: Searching your GitHub, 12 seconds", inside the box. */
+const draftingLine = useDraftingLine(computed(() => chatThreadKey(questionId.value)))
+
+function settleDraft() {
+  if (questionId.value) chat.settleAutoDraft(questionId.value)
+}
+
+function autoDraft(a: SkillClaimAnswer) {
+  const p = preview.value
+  const id = questionId.value
+  if (!p || !id || trimmedExample.value) return
+  if (!draftsFromRecords({ id, question: p.question.text, status: p.question.status ?? 'pending', answer: p.question.answer ?? null, answerType: 'yes_no', choices: null, kind: p.question.kind, legacy: false })) return
+  if (chat.startAutoDraft(id, a, autoHost)) {
+    recordsMessage.value = null
+    readyRecords.value = null
+  }
+}
+
+function fillDraft(d: RecordsDraft, note: string | null) {
+  readyRecords.value = null
+  records.value = { draft: d, note }
+  exampleText.value = d.text
+  exampleOpen.value = true
+}
+
+// The draft lands in the box when it finishes, also after the panel closed and opened again.
+const { chat, host: autoHost } = useAutoDraft(() => questionId.value, {
+  applies: () => view.value === 'ask' && exampleOpen.value && isExampleLevel(level.value) && !busy.value,
+  text: () => exampleText.value,
+  canRestore: () => view.value === 'ask' && preview.value?.question.status === 'pending' && !level.value && !exampleOpen.value,
+  restore: (lv) => {
+    if (!isExampleLevel(lv)) return
+    level.value = lv
+    exampleOpen.value = true
+  },
+  land: (o) => {
+    recordsMessage.value = null
+    if (o.kind === 'message') recordsMessage.value = o.text
+    else if (o.kind === 'offer') readyRecords.value = { draft: o.draft, note: o.note }
+    else fillDraft(o.draft, o.note)
+  },
+}, () => open.value)
 
 /** "Use this" on Found in your GitHub: picks the suggested level and fills the example box. Nothing saves until Save. */
 function useRepoSuggestion() {
@@ -156,11 +215,15 @@ const canSaveExample = computed(() => !!level.value && !!trimmedExample.value &&
 
 function saveExample() {
   if (!canSaveExample.value || busy.value || !level.value) return
+  settleDraft()
+  readyRecords.value = null
   save(level.value, trimmedExample.value, 'save')
 }
 
 function saveWithoutExample() {
   if (!level.value || busy.value) return
+  settleDraft()
+  readyRecords.value = null
   // Absent keeps an example saved earlier, as on /questions.
   save(level.value, undefined, 'without')
 }
@@ -337,6 +400,8 @@ function answerFromChat(value: string) {
 /** "Use this draft": the example goes into the box, and on a pending question its level is picked too. */
 function useDraft(text: string, draftLevel: string | null = null, meta?: DraftMeta) {
   records.value = meta?.records ? { draft: meta.records, note: meta.memoryNote ?? null } : null
+  readyRecords.value = null
+  recordsMessage.value = null
   if (isExampleLevel(draftLevel)) level.value = draftLevel
   else if (!level.value && isExampleLevel(previousAnswer.value)) level.value = previousAnswer.value
   exampleText.value = text
@@ -489,6 +554,10 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
             <div v-if="exampleOpen" class="sc__example" role="group" aria-labelledby="sc-example-label">
               <label id="sc-example-label" for="sc-example" class="sc__example-label">Where did you do it?</label>
               <p class="sc__example-hint">The job or project, what you did, and the result if there was one. It is saved exactly as you write it.</p>
+              <p v-if="draftingLine" class="sc__drafting" role="status">
+                <v-progress-circular indeterminate size="14" width="2" color="primary" />
+                <span>{{ draftingLine }}</span>
+              </p>
               <p v-if="shownRecords" class="sc__records-label">{{ recordsDraftLabel(shownRecords.draft) }}</p>
               <v-textarea
                 id="sc-example"
@@ -525,6 +594,18 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
                   Save without an example
                 </v-btn>
               </div>
+              <!-- Ready after he typed: Use it replaces his text, Dismiss keeps it -->
+              <div v-if="readyRecords" class="sc__records-ready" role="alert">
+                <span>A draft from your records is ready.</span>
+                <div class="sc__records-ready-actions">
+                  <v-btn color="primary" variant="flat" height="44" @click="fillDraft(readyRecords.draft, readyRecords.note)">Use it</v-btn>
+                  <v-btn variant="text" height="44" @click="readyRecords = null">Dismiss</v-btn>
+                </div>
+              </div>
+              <p v-if="recordsMessage" class="sc__records-message" role="status">
+                <v-icon icon="mdi-information-outline" size="16" />
+                <span>{{ recordsMessage }}</span>
+              </p>
               <QuestionsRecordsSources v-if="shownRecords" :draft="shownRecords.draft" :memory-note="shownRecords.note" />
             </div>
             <p v-if="saveError" class="sc__save-error" role="alert">{{ saveError }}</p>
@@ -798,6 +879,54 @@ watch(() => [props.modelValue, props.target?.text, props.target?.source] as cons
     font-size: 0.9375rem;
     font-weight: 600;
     line-height: 1.4;
+  }
+
+  &__drafting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 8px;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: rgb(var(--v-theme-primary));
+  }
+
+  &__records-ready {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    background: rgba(var(--v-theme-warning), 0.1);
+    border: 1px solid rgba(var(--v-theme-warning), 0.3);
+  }
+
+  &__records-ready-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    .v-btn {
+      text-transform: none;
+      letter-spacing: normal;
+    }
+  }
+
+  &__records-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 10px 0 0;
+    font-size: 0.875rem;
+    line-height: 1.45;
+
+    .v-icon {
+      margin-top: 2px;
+      flex: 0 0 auto;
+      color: rgb(var(--v-theme-info));
+    }
   }
 
   &__records-label {
