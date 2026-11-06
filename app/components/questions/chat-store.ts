@@ -433,13 +433,21 @@ export function useQuestionChat() {
 
   /**
    * Picking Yes or Some experience on an empty example box drafts from his records with no further
-   * click. Once per question in this tab: after that the "Draft from my records" button gives a
-   * fresh draft. False when nothing started (one already ran here, or one or a chat reply for this
-   * question is under way).
+   * click. One draft per question in this tab: picking again on an empty box (the panel reopened,
+   * or he cleared the box) shows the same draft again without a new one; the "Draft from my
+   * records" button gives a fresh draft. False when nothing started (a draft or a chat reply for
+   * this question is under way).
    */
   function startAutoDraft(questionId: number, level: string, host: string | null = null): boolean {
     const key = chatThreadKey(questionId)
-    if (!import.meta.client || sending.value[key] || drafting.value[key] || autoDrafts.value[questionId]) return false
+    if (!import.meta.client || sending.value[key] || drafting.value[key]) return false
+    const existing = autoDrafts.value[questionId]
+    if (existing) {
+      // Still running: it lands on its own. Finished and used once: it lands again here.
+      if (!existing.settled || !existing.result?.ok) return false
+      setAuto(questionId, { ...existing, level, host, settled: false })
+      return true
+    }
     setAuto(questionId, { level, host, startedAt: Date.now(), result: null, settled: false })
     draftFromRecords(questionId).then((res) => {
       const run = autoDrafts.value[questionId]
