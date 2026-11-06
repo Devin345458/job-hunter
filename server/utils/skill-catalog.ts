@@ -85,6 +85,12 @@ export interface SkillEntry {
   core: boolean
   source: 'seed' | 'distill' | 'bootstrap' | 'approved'
   createdAt: string
+  /**
+   * Folded into another skill (applySkillFolds): its phrasings map to that one, it leaves the
+   * prompts and the Knowledge base page, and a read by its slug returns that skill. The row stays.
+   */
+  mergedInto?: string | null
+  mergedAt?: string | null
 }
 
 /** Devin's split of the AI questions (2026-11-05); the catalog starts from these. */
@@ -99,9 +105,19 @@ export const SEED_SKILLS: Array<Pick<SkillEntry, 'name' | 'kind' | 'question' | 
     name: 'Using AI in unsupervised processes',
     kind: 'has_done',
     question: 'Have you built agents or LLM steps that run without a person in the loop, in a product or in operations?',
-    scope: 'Covers LLM calls and agents that run on their own inside a product or an operational process, and the agent frameworks and platforms they run on. Does not cover using AI tools to write his own code.',
+    scope: 'Covers building AI into software: LLM calls, LLM APIs, AI SDKs, agents, agentic workflows, tool calling, and RAG that run inside a product, a pipeline, or an operational process, and the agent frameworks and platforms they run on. Does not cover using AI tools to write his own code.',
   },
 ]
+
+/**
+ * The seed skills' scope comes from SEED_SKILLS, whatever the stored row says: the prompts list it,
+ * and the approved catalog stored the first wording, which read "run on their own" so narrowly
+ * that the distill made a new skill for every posting about integrating an LLM (2026-11-06).
+ */
+function withSeedScope(e: SkillEntry): SkillEntry {
+  const seed = SEED_SKILLS.find(s => slugOf(s.name) === e.slug)
+  return seed && seed.scope !== e.scope ? { ...e, scope: seed.scope } : e
+}
 
 // ── Storage ──
 
@@ -114,19 +130,32 @@ export function phrasingKey(subject: string): string {
   return skillCore(subject).toLowerCase().replace(/[^a-z0-9+#.]+/g, ' ').trim()
 }
 
-/** Every entry, in the order they were added (the order the prompt lists them, so its start is cached). */
-export function loadCatalog(): SkillEntry[] {
+/** Every stored entry, folded ones too, in the order they were added. */
+function allEntries(): SkillEntry[] {
   return useDb().select().from(appSettings).where(like(appSettings.key, `${ENTRY_PREFIX}%`)).all()
     .map(r => parseJson<SkillEntry | null>(r.valueJson, null))
     .filter((e): e is SkillEntry => !!e?.slug)
-    .map(e => ({ ...e, core: e.core ?? false }))
+    .map(e => withSeedScope({ ...e, core: e.core ?? false }))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slug.localeCompare(b.slug))
 }
 
-export function catalogEntry(slug: string): SkillEntry | null {
+/** Every entry not folded into another, in the order they were added (the order the prompt lists them, so its start is cached). */
+export function loadCatalog(): SkillEntry[] {
+  return allEntries().filter(e => !e.mergedInto)
+}
+
+/** The stored entry under a slug, folded or not. */
+function storedEntry(slug: string): SkillEntry | null {
   const row = useDb().select().from(appSettings).where(eq(appSettings.key, `${ENTRY_PREFIX}${slug}`)).get()
   const e = parseJson<SkillEntry | null>(row?.valueJson, null)
-  return e ? { ...e, core: e.core ?? false } : null
+  return e ? withSeedScope({ ...e, core: e.core ?? false }) : null
+}
+
+/** The entry under a slug, or the skill it was folded into. */
+export function catalogEntry(slug: string): SkillEntry | null {
+  let e = storedEntry(slug)
+  for (let hops = 0; e?.mergedInto && hops < 5; hops++) e = storedEntry(e.mergedInto)
+  return e?.mergedInto ? null : e
 }
 
 export function saveEntry(e: SkillEntry) {
@@ -137,10 +166,12 @@ export function saveEntry(e: SkillEntry) {
 
 /** A new entry, or the existing one with the same name. */
 function addEntry(fields: Pick<SkillEntry, 'name' | 'kind' | 'question' | 'scope'>, source: SkillEntry['source'], at = nowSql()): SkillEntry {
-  const same = loadCatalog().find(e => normName(e.name) === normName(fields.name))
-  if (same) return same
+  // A skill folded into another is that one: a proposal named "AI/LLM applications" again gets the skill it was folded into.
+  const same = allEntries().find(e => normName(e.name) === normName(fields.name))
+  const sameNow = same ? catalogEntry(same.slug) : null
+  if (sameNow) return sameNow
   let slug = slugOf(fields.name)
-  for (let n = 2; catalogEntry(slug); n++) slug = `${slugOf(fields.name)}-${n}`
+  for (let n = 2; storedEntry(slug); n++) slug = `${slugOf(fields.name)}-${n}`
   const entry: SkillEntry = { slug, ...fields, phrasings: [], questionId: null, core: false, source, createdAt: at }
   saveEntry(entry)
   return entry
@@ -334,7 +365,8 @@ export function catalogCandidates(): QuestionRow[] {
 
 const RULES = `How to find the skill behind a requirement:
 - Name the general skill the employer wants to know he has, the way a recruiter would, not the posting's words. Many wordings check one skill: "AI-first", "AI-collaborative", "AI-native", "AI coding", "AI-powered coding", "AI-augmented engineering", "Proficiency using AI-powered development tools", "Experience leveraging AI in software development", "AI tools like Claude, ChatGPT, or Copilot", "modern agentic coding tools like Codex or Claude Code", "Bringing AI into day-to-day development", and "Productively leverage AI tools" all check "Using AI for supervised coding": he drives AI coding tools and agents and reviews what they produce.
-- "Using AI in unsupervised processes" is a different skill: agents or LLM steps that run without a person in the loop, inside a product or an operational process. Using AI to write his own code is never that skill, and running AI inside a product is never supervised coding.
+- "Using AI in unsupervised processes" is the other AI skill: building AI into software. Integrating an LLM or an LLM API into a project, product, or pipeline; building LLM-powered features or applications; building agents, agentic workflows, tool calling, or RAG; using AI SDKs or foundation model APIs in production software: each of these checks it, whether or not the posting says the AI runs without a person in the loop. "Integrating with large language models", "LLM APIs", "Experience building AI/LLM applications, agents, RAG", "Built agents that people use", "Develop custom agentic solutions using OpenAI or Anthropic models", "Used AI SDKs with production software", and "LLM infrastructure, model gateways, or foundation model APIs" all check "Using AI in unsupervised processes". Using AI to write his own code is never that skill, and running AI inside a product is never supervised coding.
+- A requirement about building AI into software maps to "Using AI in unsupervised processes", never to a new skill, unless an existing skill is about the same narrower thing it checks: a named framework (LangGraph), protocol (MCP), model or vendor (Anthropic Claude), pattern (LLM tool use and function calling), use (AI in product features: "Built LLM-powered features into a SaaS product"), or kind of work of its own (concurrent agent runs, AI-driven code migrations, vector databases and model serving, fine-tuning models). A requirement that lists AI coding tools beside building AI ("AI-powered development tools, LLM APIs, agentic workflow automation") checks building AI.
 - One tool written different ways is one skill: "Python3", "Expert-level Python", and "Python"; "Docker" and "Docker containerization"; "IaC" and "Infrastructure-as-code". Two general wordings of one kind of work are one skill: "Startup experience" and "Fast-paced startups"; "ML frameworks" and "modern ML libraries"; "Emerging AI frameworks" and "Modern AI frameworks".
 - A requirement that names one specific tool, protocol, or pattern checks that one, not the broad skill around it: "Terraform" is not infrastructure as code in general, "PyTorch" is not machine learning in general, "Temporal" is not workflow orchestration in general, "Anthropic Claude" is not AI coding in general, and "used AI to drive a large code migration" or "run several agent workflows at once" are narrower than the AI skills. A Yes to the broad skill would not answer them.
 - Ordinary work with one tool checks that tool: "Writing reusable Terraform modules" is Terraform, "Building React components" is React. Only a part of a tool that is a specialty of its own ("Spring WebFlux", "React Native") is a skill of its own.
@@ -343,8 +375,8 @@ const RULES = `How to find the skill behind a requirement:
 - Interest in something ("Interest in fintech") is never the skill of having done it.
 - Read every requirement by its full posting sentence. Some subjects are fragments cut from a posting ("AI-powered", "leveraging AI", "AI in day-to-day"): judge a fragment by what its sentence means, never by the fragment alone. Two questions can share asked wording because it was copied from one to the other; judge each by its own posting sentence.
 - For an engineering job, using AI tools or AI workflows at work without saying for what means using them to build software: "Using AI tools/workflows", "AI in day-to-day", and "leveraging AI" are supervised coding. Building tooling for AI is not using it: "AI tooling", "agentic AI tooling", and "AI agentic frameworks" are about building agents and their tooling, never supervised coding.
-- A subject that names LLMs or AI without saying whether he uses them or builds them into something, and whose posting sentence does not say either ("LLM", "Leveraging LLM systems"), gets its own skill rather than a guess.
-- When unsure between an existing skill and a new one, propose the new one: the review decides, and a wrong match records a claim Devin never made.`
+- A subject that only names LLMs or AI, whose posting sentence does not say what he does with them ("Leveraging LLM systems"), gets its own skill rather than a guess. Integrating, building with, shipping, or calling LLMs, LLM APIs, agents, or RAG says what he does: that is building AI into software.
+- When unsure between an existing skill and a new one, propose the new one: the review decides, and a wrong match records a claim Devin never made. The two AI skills are the exception: building AI into software is "Using AI in unsupervised processes", and coding with AI tools is "Using AI for supervised coding".`
 
 const DISTILL_SYSTEM = `You keep Devin, a job seeker, from being asked the same thing twice. Job postings check for skills in many wordings. For each REQUIREMENT, decide which skill it is checking that Devin has.
 
@@ -952,6 +984,154 @@ export function applyApprovedCatalogOnce(plan: CatalogPlan | null, log: (m: stri
   return { ran: true, reason: null, applied }
 }
 
+// ── Folding a duplicate skill into the one it repeats ──
+// After the approved catalog applied (2026-11-05), the ask-time distill kept proposing new LLM
+// skills ("AI/LLM applications", "LLM API and agentic workflow building", "LLM platforms and model
+// APIs") instead of mapping to "Using AI in unsupervised processes", so Devin saw two cards that
+// ask the same thing (#391 and #427). A fold re-maps a duplicate's phrasings to the skill it
+// repeats and merges its open questions into that skill's question, through the same merge path
+// as the catalog (mergeQuestionInto, repointMergedQuestions). It folds only skills the distill
+// made, never merges an answered or blocking question, and never deletes a row: the folded entry
+// stays, marked mergedInto, and leaves the prompts and the Knowledge base page.
+
+export interface SkillFold {
+  /** The distill-made skill that repeats another. */
+  from: string
+  /** The skill it repeats. */
+  to: string
+}
+
+export interface SkillFoldPlan {
+  name: string
+  /** Nothing applies while this is false. */
+  approved: boolean
+  folds: SkillFold[]
+}
+
+export interface SkillFoldRow {
+  /** The question, or null for a phrasing alone. */
+  id: number | null
+  wording: string
+  fromSkill: string
+  toSkill: string
+  /** merge: the open question is merged into toQuestion; phrasing: the wording maps to toSkill; keep: left as it is (reason). */
+  action: 'merge' | 'phrasing' | 'keep'
+  toQuestion: number | null
+  reason: string | null
+}
+
+export interface SkillFoldResult {
+  folded: string[]
+  rows: SkillFoldRow[]
+  skipped: Array<{ slug: string; reason: string }>
+  repointed: number[]
+}
+
+/** A question's status when the fold reads it, for the keep reasons. */
+function foldKeepReason(q: QuestionRow, canon: QuestionRow): string | null {
+  if (q.status === 'answered') return 'answered; stays as it is'
+  if (q.status !== 'pending') return mergedIntoId(q) != null ? `already merged into #${mergedIntoId(q)}` : `now ${q.status}`
+  if (q.blocking) return 'an application waits on it'
+  if (inferenceUndoneQuestionIds().has(q.id)) return 'you undid an answer the app carried to it'
+  const guard = meaningGuard(q, canon)
+  return guard ? `kept apart: ${guard}` : null
+}
+
+/**
+ * What the folds do, or (write true) does them: per fold, every wording mapped to the duplicate
+ * (its name, its phrasings, every stored phrasing that maps to it) maps to the skill it repeats,
+ * its phrasings join that skill's, and each open question of the duplicate (its own question, and
+ * any open question whose subject maps to it) merges into that skill's question. A fold is skipped
+ * whole when the duplicate is gone, already folded, not made by the distill, or its own question is
+ * answered, when the skill it repeats has no open or answered question, or when the never-merge
+ * rules (meaningGuard) keep the two skills apart.
+ */
+export function applySkillFolds(plan: Pick<SkillFoldPlan, 'folds'>, write = false): SkillFoldResult {
+  const db = useDb()
+  const out: SkillFoldResult = { folded: [], rows: [], skipped: [], repointed: [] }
+  const mergeMap = new Map<number, number>()
+  const decisions = phrasingDecisions()
+  for (const f of plan.folds) {
+    const from = storedEntry(f.from)
+    const to = catalogEntry(f.to)
+    const why = !from ? 'not in this catalog'
+      : from.mergedInto ? `already folded into ${from.mergedInto}`
+        : from.source !== 'distill' ? `made by ${from.source}, not by the distill`
+          : !to ? `${f.to} is not in this catalog`
+            : to.slug === from.slug ? 'folds into itself'
+              : guardSkill({ subject: from.name, question: from.question }, to)
+    if (why) {
+      out.skipped.push({ slug: f.from, reason: why })
+      continue
+    }
+    const canon = skillQuestion(to!)
+    const own = from!.questionId != null ? canonicalQuestion(from!.questionId) : null
+    if (!canon) {
+      out.skipped.push({ slug: f.from, reason: `"${to!.name}" has no open or answered question` })
+      continue
+    }
+    if (own?.status === 'answered' && own.id !== canon.id) {
+      out.skipped.push({ slug: f.from, reason: `its question #${own.id} is answered; answered questions stay as they are` })
+      continue
+    }
+    // Every wording that maps to the duplicate now, as written where the entry has it.
+    const written = new Map([from!.name, ...from!.phrasings].map(p => [phrasingKey(p), p] as const).filter(([k]) => !!k))
+    const keys = new Set(written.keys())
+    for (const [key, d] of Object.entries(decisions)) if (d.slug === from!.slug) keys.add(key)
+    // Its open questions: its own, and any whose subject maps to it. Never another skill's own question.
+    const otherSkills = new Set(loadCatalog().filter(e => e.slug !== from!.slug && e.questionId != null).map(e => e.questionId!))
+    const members = db.select().from(questions)
+      .where(and(inArray(questions.kind, ['knows', 'has_done']), inArray(questions.status, ['pending', 'answered'])))
+      .all()
+      .filter(q => q.id !== canon.id && !otherSkills.has(q.id) && (q.id === from!.questionId || (!!q.subject && keys.has(phrasingKey(q.subject)))))
+    const merging: QuestionRow[] = []
+    for (const q of members) {
+      const keep = foldKeepReason(q, canon)
+      out.rows.push({ id: q.id, wording: q.subject ?? q.question, fromSkill: from!.name, toSkill: to!.name, action: keep ? 'keep' : 'merge', toQuestion: canon.id, reason: keep })
+      if (!keep) merging.push(q)
+    }
+    const listed = new Set(members.map(q => phrasingKey(q.subject ?? '')))
+    for (const key of keys) {
+      if (!listed.has(key)) out.rows.push({ id: null, wording: written.get(key) ?? key, fromSkill: from!.name, toSkill: to!.name, action: 'phrasing', toQuestion: null, reason: null })
+    }
+    out.folded.push(from!.slug)
+    if (!write) continue
+    for (const q of merging) {
+      mergeQuestionInto(q, canon)
+      mergeMap.set(q.id, canon.id)
+    }
+    savePhrasings([...keys].map(k => [k, to!.slug] as [string, string]))
+    const target = catalogEntry(to!.slug)!
+    const fresh = [...target.phrasings]
+    for (const p of [from!.name, ...from!.phrasings]) if (!fresh.some(x => normName(x) === normName(p))) fresh.push(p)
+    saveEntry({ ...target, phrasings: fresh })
+    saveEntry({ ...from!, mergedInto: to!.slug, mergedAt: nowSql() })
+  }
+  if (write) out.repointed = repointMergedQuestions(mergeMap)
+  return out
+}
+
+/** app_settings key: set once the approved LLM skill folds have been applied. */
+const FOLDS_KEY = 'skill_catalog_llm_folds'
+
+/**
+ * Runs once (an app_settings marker), in learn:daily: applies the folds Devin approved
+ * (APPROVED_LLM_SKILL_FOLDS in skill-catalog-folds.ts). Does nothing while that plan is not
+ * approved.
+ */
+export function applySkillFoldsOnce(plan: SkillFoldPlan | null, log: (m: string) => void = () => {}): { ran: boolean; reason: string | null; result: SkillFoldResult | null } {
+  const db = useDb()
+  if (db.select().from(appSettings).where(eq(appSettings.key, FOLDS_KEY)).get()) return { ran: false, reason: 'already applied', result: null }
+  if (!plan || !plan.approved) return { ran: false, reason: 'no approved folds yet', result: null }
+  const result = applySkillFolds(plan, true)
+  const merged = result.rows.filter(r => r.action === 'merge')
+  const valueJson = JSON.stringify({ plan: plan.name, folded: result.folded, merged: merged.map(r => ({ id: r.id, into: r.toQuestion })), skipped: result.skipped })
+  db.insert(appSettings).values({ key: FOLDS_KEY, valueJson, updatedAt: nowSql() })
+    .onConflictDoUpdate({ target: appSettings.key, set: { valueJson, updatedAt: nowSql() } }).run()
+  log(`skill folds: ${result.folded.join(', ') || 'none'}; merged ${merged.map(r => `#${r.id} into #${r.toQuestion}`).join(', ') || 'none'}${result.skipped.length ? `; skipped ${result.skipped.map(s => `${s.slug} (${s.reason})`).join(', ')}` : ''}`)
+  return { ran: true, reason: null, result }
+}
+
 // ── The core flag ──
 
 export interface SkillCatalogItem {
@@ -999,6 +1179,25 @@ export function skillForQuestion(q: Pick<QuestionRow, 'id' | 'kind' | 'subject'>
   if (merged) return merged
   const match = q.subject?.trim() ? skillMatch(q.subject) : null
   return match?.decided ? match.entry : null
+}
+
+/** The wordings in a context's "Asked as: ..." note, or an empty list. */
+export function askedAsWordings(context: string | null | undefined): string[] {
+  const m = (context ?? '').match(/ ?Asked as: ([^\n]*?)\.?$/)
+  return m?.[1]?.trim() ? [m[1].trim()] : []
+}
+
+/**
+ * The wordings a question was asked as, beside its subject: its own "Asked as:" note and its
+ * catalog skill's name and phrasings. The gate for this app's own repo reads them with the subject
+ * (appRepoScopeOf in repos/search.ts): the catalog renamed "Integrating with LLMs" and "Internal
+ * agents and agent platforms" to "Using AI in unsupervised processes", which names none of its
+ * topics, so without them Devin's core LLM skill could never cite this app.
+ */
+export function appRepoScopeTexts(q: Pick<QuestionRow, 'id' | 'kind' | 'subject' | 'context'> | null | undefined): string[] {
+  if (!q || (q.kind !== 'knows' && q.kind !== 'has_done')) return []
+  const skill = skillForQuestion(q)
+  return [...new Set([...askedAsWordings(q.context), ...(skill ? [skill.name, ...skill.phrasings] : [])].map(s => s.trim()).filter(Boolean))]
 }
 
 /**

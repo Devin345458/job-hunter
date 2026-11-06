@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull } from 'drizzle-orm'
 import { repoCommits, repoSources } from '../db/schema'
 import type { KnowledgeEntry } from './knowledge'
-import { anchorPattern, appRepoAnchors, appRepoMessage, appRepoPath, appRepoScope, messageBody, pathMatches, subjectAnchors, subjectParts, type TermSet } from './repos/search'
+import { anchorPattern, appRepoAnchors, appRepoMessage, appRepoPath, appRepoScopeOf, messageBody, pathMatches, subjectAnchors, subjectParts, type TermSet } from './repos/search'
 import { APP_REPO_DESCRIPTION, isAppRepo } from './repos/settings'
 
 // Where Devin's own work on a subject sits: how much of it touches the subject, counted by code over
@@ -91,13 +91,15 @@ export function roundedDown(n: number): number | null {
 /**
  * Counts Devin's own commits in switched-on, indexed repos that match the anchors the way the chat
  * search does: a message (trailers left out) naming an anchor word, or a changed path matching an
- * anchor path. This app's own repo counts only for a subject that names one of its topics, by its
- * own anchors (appRepoScope, appRepoAnchors in repos/search.ts). Null when none match.
+ * anchor path. This app's own repo counts only for a subject that names one of its topics, or
+ * whose question was asked as wording that does (scopeTexts, appRepoScopeTexts() in
+ * skill-catalog.ts), by its own anchors (appRepoScopeOf, appRepoAnchors in repos/search.ts). Null
+ * when none match.
  */
-export function subjectFootprint(subject: string, anchors: TermSet): SubjectFootprint | null {
+export function subjectFootprint(subject: string, anchors: TermSet, scopeTexts: string[] = []): SubjectFootprint | null {
   const words = [...anchors.code, ...anchors.packages]
   const wordRe = words.length ? new RegExp(words.map(anchorPattern).join('|'), 'i') : null
-  const app = appRepoScope(subject)
+  const app = appRepoScopeOf([subject, ...scopeTexts])
   const appAnchors = app ? appRepoAnchors(app) : null
   const appWords = appAnchors ? [...appAnchors.code, ...appAnchors.packages] : []
   const appRe = appWords.length ? new RegExp(appWords.map(anchorPattern).join('|'), 'i') : null

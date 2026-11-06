@@ -35,7 +35,7 @@ import { fieldForQuestion } from './apply/field-text'
 import { githubChatSearch, githubPromptSection, githubSearchAvailable } from './repos/chat-search'
 import { cleanTerms, type TermSet } from './repos/search'
 import { withoutRecordNames } from './repos/describe'
-import { answerDepthFor } from './skill-catalog'
+import { answerDepthFor, appRepoScopeTexts } from './skill-catalog'
 
 // The chat panel on /questions. Devin asks what a generated question means, or asks for help
 // writing a free-text answer. Every fact the prompt holds is built here from the database; the
@@ -816,7 +816,7 @@ export async function questionChatReply(input: { questionId?: number | null; mes
   const skillQuestion = !!ctx && (ctx.question.kind === 'knows' || ctx.question.kind === 'has_done')
   const searchContext = [ctx?.question.subject, ctx?.question.question, latest].filter(Boolean).join('\n')
   // Signatures (search.ts) follow the subject and what Devin typed, not the question text.
-  const searchOpts = { subject: ctx?.question.subject ?? null, signatureText: [ctx?.question.subject || ctx?.question.question, latest].filter(Boolean).join('\n') }
+  const searchOpts = { subject: ctx?.question.subject ?? null, signatureText: [ctx?.question.subject || ctx?.question.question, latest].filter(Boolean).join('\n'), scopeTexts: appRepoScopeTexts(ctx?.question) }
   const searchLog = (m: string) => console.info(`[question-chat] github: ${m}`)
   let github: GithubChatSearch | null = null
   /** He asked for a search but nothing says what to look for, so there was none to run. */

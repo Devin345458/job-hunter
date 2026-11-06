@@ -65,10 +65,12 @@ function repoCommitCount(r: RepoRow, found: Record<string, number> | null): numb
 /**
  * Searches Devin's GitHub for the terms (Claude's, plus the file and package signatures of what
  * `context` names). opts.subject is the question's subject: with `context`, it decides which terms
- * can make a commit a hit (subjectAnchors in search.ts). Never throws for GitHub trouble: what
- * could not be searched is in coverage.
+ * can make a commit a hit (subjectAnchors in search.ts). opts.scopeTexts are the wordings the
+ * question was asked as (appRepoScopeTexts in skill-catalog.ts), which open this app's repo when
+ * they name one of its topics. Never throws for GitHub trouble: what could not be searched is in
+ * coverage.
  */
-export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}, opts: { subject?: string | null; signatureText?: string } = {}): Promise<GithubChatSearch> {
+export async function githubChatSearch(rawTerms: TermSet, context: string, log: (m: string) => void = () => {}, opts: { subject?: string | null; signatureText?: string; scopeTexts?: string[] } = {}): Promise<GithubChatSearch> {
   // Signatures follow the subject and Devin's own message (opts.signatureText), never the question text.
   const signatureText = opts.signatureText ?? (opts.subject?.trim() || context)
   const terms = withSignatures(cleanTerms(rawTerms, 20), signatureText)
@@ -95,7 +97,7 @@ export async function githubChatSearch(rawTerms: TermSet, context: string, log: 
   }
 
   // 1 and 2: his indexed commits (messages and paths) and the repo facts.
-  const evidence = await searchEvidence(terms, log, { diffs: false, anchors: { subject: opts.subject ?? null, text: context, signatureText } })
+  const evidence = await searchEvidence(terms, log, { diffs: false, anchors: { subject: opts.subject ?? null, text: context, signatureText, scopeTexts: opts.scopeTexts } })
   // This app's repo was looked at only when the subject named one of its topics.
   result.coverage.indexed = indexed.map(r => r.fullName).filter(n => !isAppRepo(n) || !!evidence.appRepo)
   // Strongest first, taken in turn from each repo so one busy repo does not fill the list.

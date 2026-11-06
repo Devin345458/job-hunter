@@ -22,11 +22,11 @@ import { ANSWER_DEPTH_LIMITS, EXAMPLE_MAX_CHARS, type AnswerDepth } from '#share
 import { findKnowledgeEntry, isLegacyQuestion, isNegativeKnowledge, knowledgeCovers, knowledgeTargetFor, parseYesNo, questionExample, takesExample, type QuestionRow } from './questions'
 import { githubChatSearch, githubSearchAvailable } from './repos/chat-search'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './repos/describe'
-import { appRepoLevel, appRepoScope, cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
+import { appRepoLevel, appRepoScopeOf, cleanTerms, messageBody, subjectParts, type TermSet } from './repos/search'
 import { APP_REPO_FACT, APP_REPO_FRAMING_SENTENCE, APP_REPO_HOW_TO_SAY, isAppRepo, saysDirected } from './repos/settings'
 import { repoSuggestionsFor } from './repos/suggest-store'
 import { draftAnchors, roleMentions, subjectFootprint, unsupportedScope, type RoleMention, type SubjectFootprint } from './records-footprint'
-import { answerDepthFor, loadCatalog, skillQuestion, type SkillEntry } from './skill-catalog'
+import { answerDepthFor, appRepoScopeTexts, loadCatalog, skillQuestion, type SkillEntry } from './skill-catalog'
 
 // "Draft from my records": a first-person draft for a skill, experience, or written question,
 // built live from Devin's own records:
@@ -1250,10 +1250,10 @@ function withAppRepoFraming<T extends RecordsDraftSentence>(kept: T[]): Array<T 
   return [...kept.slice(0, i + 1), { text: APP_REPO_FRAMING_SENTENCE, sources }, ...kept.slice(i + 1)]
 }
 
-/** How many of his commits the counts read: switched-on, indexed repos, this app's repo only for a subject that names one of its topics. */
-function searchedCommitCount(subject: string): number {
+/** How many of his commits the counts read: switched-on, indexed repos, this app's repo only for a subject (or a wording it was asked as) that names one of its topics. */
+function searchedCommitCount(subject: string, scopeTexts: string[] = []): number {
   const db = useDb()
-  const app = !!appRepoScope(subject)
+  const app = !!appRepoScopeOf([subject, ...scopeTexts])
   const repos = db.select({ fullName: repoSources.fullName }).from(repoSources)
     .where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
     .map(r => r.fullName).filter(n => !isAppRepo(n) || app)
@@ -1303,6 +1303,9 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     const memTarget = memoryTarget()
     const context = [q.subject, q.question, withAliases(saidText)].filter(Boolean).join('\n')
     const signatureText = [q.subject || q.question, withAliases(saidText)].filter(Boolean).join('\n')
+    // The wordings it was asked as (its catalog skill's phrasings, its "Asked as:" note): this
+    // app's repo is read when any of them names one of its topics.
+    const scopeTexts = appRepoScopeTexts(q)
     // Both searches run at once; the step line says which one is still going.
     const going = { sessions: !!memTarget.url, github: githubSearchAvailable() }
     const searching = () => step('searching', going.sessions && going.github
@@ -1317,7 +1320,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
           })
         : Promise.resolve(null),
       going.github
-        ? githubChatSearch(plan.terms, context, m => console.info(`[draft-from-records] github: ${m}`), { subject: q.subject ?? null, signatureText }).finally(() => {
+        ? githubChatSearch(plan.terms, context, m => console.info(`[draft-from-records] github: ${m}`), { subject: q.subject ?? null, signatureText, scopeTexts }).finally(() => {
             going.github = false
             if (going.sessions) searching()
           })
@@ -1328,7 +1331,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     // Counts across all his commits, from the subject's own anchors (the same every run), and the roles that name it.
     const subject = q.subject?.trim() || q.question
     const anchors = draftAnchors(q.subject ?? null, q.question)
-    const footprint = githubSearchAvailable() ? subjectFootprint(subject, anchors) : null
+    const footprint = githubSearchAvailable() ? subjectFootprint(subject, anchors, scopeTexts) : null
     const roles = roleMentions(entries, subject, anchors)
     const suggestion = repoSuggestionsFor([q.id]).get(q.id) ?? null
     const commits = draftCommits(github, footprint, suggestion)
@@ -1519,8 +1522,8 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
       // and offer the nearest work as sentences he can use if he picks Some experience or No.
       const bridge = draft.kept.filter(k => k.part === 'bridge').map(({ text, sources }) => ({ text, sources }))
       const line = suggestion
-        ? `Your records show ${q.subject?.trim() || 'this'} only in the GitHub lead on this question, and I could not write an answer from it (searched: ${searchedText(searchedCommitCount(subject), memoryUse)}).`
-        : `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(subject), memoryUse)}).`
+        ? `Your records show ${q.subject?.trim() || 'this'} only in the GitHub lead on this question, and I could not write an answer from it (searched: ${searchedText(searchedCommitCount(subject, scopeTexts), memoryUse)}).`
+        : `I found nothing about ${q.subject?.trim() || 'this'} in your records (searched: ${searchedText(searchedCommitCount(subject, scopeTexts), memoryUse)}).`
       console.info(`[draft-from-records] question ${q.id}: nothing found, ${bridge.length} sentences of nearest work offered, no level picked`)
       return {
         ok: true,
@@ -1571,7 +1574,7 @@ export async function draftFromRecords(questionId: number, said: string[] = [], 
     ].filter(Boolean).join(' ')
     return {
       ok: true,
-      draft: { text, level: levelOf(appRepoLevel(draft.out.level, appRepoScope(subject), appOnly)), sentences: kept, box, coach, depth },
+      draft: { text, level: levelOf(appRepoLevel(draft.out.level, appRepoScopeOf([subject, ...scopeTexts]), appOnly)), sentences: kept, box, coach, depth },
       reply,
       memory: memoryUse,
       memoryNote,

@@ -21,6 +21,10 @@ export default defineTask({
       // experience question asked before it is filed under the skill it checks, and each skill's
       // other questions are merged into its one question. Nothing happens until it is approved.
       const catalog = applyApprovedCatalogOnce(APPROVED_SKILL_CATALOG, log)
+      // Once, after Devin approves the folds (skill-catalog-folds.ts): the LLM skills the distill
+      // made after the catalog applied fold into "Using AI in unsupervised processes", and their
+      // open questions merge into its question. Nothing happens until it is approved.
+      const folds = applySkillFoldsOnce(APPROVED_LLM_SKILL_FOLDS, log)
       const tidy = await tidyFactQuestions(log)
       const released = await releaseMisreadFactFields(log)
       const learned = await runDailyLearning(log)
@@ -29,6 +33,7 @@ export default defineTask({
         ...(sections.ran ? { sectionEntriesMoved: sections.entries.length, sectionQuestionsRefiled: sections.questions.length, sectionAnswersCarried: sections.answered.length } : {}),
         ...(repair.ran ? { skipRepairLabeled: repair.labeled.length, skipRepairMerged: repair.merged.length, skipRepairReopened: repair.reopened.length } : {}),
         ...(catalog.applied ? { catalogSkills: catalog.applied.entries, catalogMerged: catalog.applied.merged.length, catalogReworded: catalog.applied.reworded.length, catalogSkipped: catalog.applied.skipped.length } : {}),
+        ...(folds.result ? { skillsFolded: folds.result.folded.length, foldQuestionsMerged: folds.result.rows.filter(r => r.action === 'merge').length, foldsSkipped: folds.result.skipped.length } : {}),
         misreadFieldsReleased: released.length,
         factQuestionsMerged: tidy.merged.length,
         factQuestionsAnswered: tidy.derived.length,

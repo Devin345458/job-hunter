@@ -107,6 +107,27 @@ const open = rows.map(r => ({ r, scope: search.appRepoScope((r.subject ?? r.ques
 console.log(`\n${open.length} of ${rows.length} knows and has_done questions name a topic:`)
 for (const { r, scope } of open) console.log(`  #${r.id} ${r.status} "${r.subject ?? r.question}": ${scope!.topics.map(t => `${t.name} (${t.cap})`).join(', ')}`)
 
+// The catalog's generic names hold no topic word ("Using AI in unsupervised processes"); the
+// wordings each question was asked as (its skill's phrasings, its "Asked as:" note) open the gate.
+const catalog = await import('../../server/utils/skill-catalog')
+const full = sqlite.prepare(`SELECT id, kind, status, subject, question, context FROM questions WHERE kind IN ('knows', 'has_done') ORDER BY id`).all() as Array<{ id: number; kind: string; status: string; subject: string | null; question: string; context: string | null }>
+const viaWordings = full.map(r => ({ r, texts: catalog.appRepoScopeTexts(r as any) }))
+  .map(x => ({ ...x, scope: search.appRepoScopeOf([(x.r.subject ?? x.r.question).trim(), ...x.texts], topics) }))
+  .filter(x => x.scope && !search.appRepoScope((x.r.subject ?? x.r.question).trim(), topics))
+console.log(`\n${viaWordings.length} more open the gate through the wordings they were asked as:`)
+for (const { r, scope } of viaWordings) console.log(`  #${r.id} ${r.status} "${r.subject ?? r.question}": ${scope!.topics.map(t => `${t.name} (${t.cap})`).join(', ')}`)
+// Devin's core LLM skill and the two cards he called the same question (2026-11-06).
+for (const id of [153, 391, 427]) {
+  const r = full.find(x => x.id === id)
+  if (!r) {
+    console.log(`  (#${id} is not in this copy)`)
+    continue
+  }
+  const scope = search.appRepoScopeOf([(r.subject ?? r.question).trim(), ...catalog.appRepoScopeTexts(r as any)], topics)
+  if (!scope) bad++
+  console.log(`${scope ? 'ok  ' : 'FAIL'} #${id} "${r.subject}" opens this app's repo: ${scope ? scope.topics.map(t => t.name).join(', ') : 'no'}`)
+}
+
 const indexed = sqlite.prepare('SELECT count(*) AS n FROM repo_commits WHERE repo = ?').get(settings.APP_REPO) as { n: number }
 if (indexed.n && on?.included && on.indexedAt) {
   console.log(`\nThis app's repo: ${indexed.n} commits indexed. Its hits by subject (no diffs, as the chat searches):`)
@@ -120,6 +141,23 @@ if (indexed.n && on?.included && on.indexedAt) {
     const own = found.hits.filter(h => settings.isAppRepo(h.repo))
     console.log(`  ${subject}: ${found.hits.length} hits, ${own.length} from this app's repo${found.appRepo ? ` (topics: ${found.appRepo.topics.map(t => t.name).join(', ')}; cap ${found.appRepo.cap})` : ' (gate closed)'}`)
     for (const h of own) console.log(`    ${h.reasons.join('+')} ${h.date} ${h.subject.slice(0, 100)}${h.paths.length ? ` | ${h.paths.slice(0, 3).join(' ')}` : ''}`)
+  }
+  // #153 as Draft from my records counts it: the candidate stories must include this app.
+  const fp = await import('../../server/utils/records-footprint')
+  const q153 = full.find(x => x.id === 153)
+  if (q153) {
+    const subject = q153.subject ?? q153.question
+    const texts = catalog.appRepoScopeTexts(q153 as any)
+    const anchors = search.appRepoAnchors(search.appRepoScopeOf([subject, ...texts], topics)!)
+    const appCommits = (sqlite.prepare('SELECT message, paths_json AS p FROM repo_commits WHERE repo = ?').all(settings.APP_REPO) as Array<{ message: string; p: string | null }>)
+    const re = new RegExp([...anchors.code, ...anchors.packages].map(search.anchorPattern).join('|'), 'i')
+    const byWord = appCommits.filter(c => re.test(search.appRepoMessage(c.message))).length
+    console.log(`\n#153 "${subject}": this app's anchors match ${byWord} of its ${appCommits.length} commit messages`)
+    const f = fp.subjectFootprint(subject, fp.draftAnchors(subject, q153.question), texts)
+    const stories = f?.stories.map(s => s.repo) ?? []
+    console.log(`  footprint: ${f ? `${f.commits} commits in ${f.projects} projects, ${f.directed} in this app` : 'none'}; candidate stories: ${stories.join(', ') || 'none'}`)
+    if (!stories.some(r => settings.isAppRepo(r))) bad++
+    console.log(`${stories.some(r => settings.isAppRepo(r)) ? 'ok  ' : 'FAIL'} this app is among #153's candidate stories`)
   }
 }
 

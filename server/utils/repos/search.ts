@@ -574,6 +574,31 @@ export function appRepoScope(subject: string | null | undefined, topics: AppRepo
 }
 
 /**
+ * The topics any of the texts names, each text read on its own: the subject first, then the
+ * wordings its question was asked as (its "Asked as:" list and its catalog skill's name and
+ * phrasings, appRepoScopeTexts() in skill-catalog.ts). A catalog skill takes a generic name that
+ * holds none of the topic words ("Using AI in unsupervised processes"), while the postings it
+ * covers say "Integrating with LLMs" and "Internal agents and agent platforms". Null when none
+ * names a topic.
+ */
+export function appRepoScopeOf(texts: Array<string | null | undefined>, topics: AppRepoTopic[] = appRepoTopics()): AppRepoScope | null {
+  const scopes = [...new Set(texts.map(t => String(t ?? '').trim()).filter(Boolean))]
+    .map(t => appRepoScope(t, topics))
+    .filter((s): s is AppRepoScope => !!s)
+  if (!scopes.length) return null
+  if (scopes.length === 1) return scopes[0]!
+  const topicsBy = new Map<string, AppRepoTopic>()
+  for (const s of scopes) for (const t of s.topics) topicsBy.set(t.name.toLowerCase(), t)
+  const list = [...topicsBy.values()]
+  return {
+    parts: [...new Set(scopes.flatMap(s => s.parts))],
+    topicParts: [...new Set(scopes.flatMap(s => s.topicParts))],
+    topics: list,
+    cap: list.some(t => t.cap === 'yes') ? 'yes' : 'some',
+  }
+}
+
+/**
  * The level after this app's repo has its say: a Yes that rests only on its commits, for a subject
  * whose topics all count "Up to Some experience" (the frameworks the agents wrote in), becomes
  * Some experience. Any other record behind the Yes keeps it.
@@ -624,7 +649,60 @@ export function appRepoAnchors(scope: AppRepoScope, terms: TermSet = { code: [],
     const w = topicWords(tp).filter(x => x !== 'ai')
     if (w.length === 1 && w[0]!.length >= 3) code.push(w[0]!, `${w[0]!}s`)
   }
-  return cleanTerms({ code, paths: paths.filter(appRepoPath), packages }, 120, false)
+  // What this repo's own commits say for the AI topics the subject named (APP_REPO_SIGNATURES).
+  const sig = appRepoSignatureTerms(scope.topicParts.join('\n'))
+  code.push(...sig.code)
+  paths.push(...sig.paths)
+  packages.push(...sig.packages)
+  return cleanTerms({ code, paths: paths.filter(p => appRepoPath(p) && !APP_REPO_NOT_PATH_ANCHORS.has(p.toLowerCase())), packages }, 120, false)
+}
+
+/**
+ * Signature paths that mean something else in this repo: its skills/ folders hold the skill
+ * catalog's screens and routes (app/components/skills/), not Claude Code skills.
+ */
+const APP_REPO_NOT_PATH_ANCHORS = new Set(['skills/'])
+
+// What this app's own commits say about its AI work. They name Claude, Anthropic, the Agent SDK,
+// structured output, and agents, and almost never "LLM": on the 2026-11-05 snapshot 1 of its
+// commits says LLM against 57 that say Claude and 18 that say agent, while the trading engine has
+// 204 that say LLM, so the LLM signature alone left this app out of every LLM answer. These anchor
+// only this repo, only for a topic part the subject named (Devin edits the topic names, so each
+// is matched by its words), and every term is specific to the AI work here: a commit that says
+// Claude in this repo is about the Claude calls it makes (trailers are already left out).
+const APP_REPO_SIGNATURES: Signature[] = [
+  {
+    when: /\bllms?\b|large language models?|\bclaude\b|\banthropic\b/i,
+    terms: { code: ['Claude', 'Anthropic', 'Agent SDK', 'structured output', 'structured outputs'], paths: ['server/utils/agent-backend.ts'], packages: ['@anthropic-ai/sdk', '@anthropic-ai/claude-agent-sdk'] },
+  },
+  {
+    when: /\bagents?\b|\bagentic\b/i,
+    terms: { code: ['agent', 'agents', 'Agent SDK', 'subagent', 'subagents'], paths: ['server/utils/agent-backend.ts'], packages: ['@anthropic-ai/claude-agent-sdk'] },
+  },
+  {
+    when: /\bagent sdk\b/i,
+    terms: { code: ['Agent SDK', 'claude-agent-sdk', 'Claude Code'], paths: ['server/utils/agent-backend.ts'], packages: ['@anthropic-ai/claude-agent-sdk'] },
+  },
+  {
+    when: /structured outputs?/i,
+    terms: { code: ['structured output', 'structured outputs', 'json_schema', 'aiStructured'], paths: [], packages: [] },
+  },
+  {
+    when: /prompt caching/i,
+    terms: { code: ['prompt caching', 'cachedPrompt', 'cache breakpoint', 'cache breakpoints'], paths: [], packages: [] },
+  },
+]
+
+/** The app repo signature terms for whatever the topic parts name, or empty lists. */
+function appRepoSignatureTerms(text: string): TermSet {
+  const out: TermSet = { code: [], paths: [], packages: [] }
+  for (const s of APP_REPO_SIGNATURES) {
+    if (!s.when.test(text)) continue
+    out.code.push(...s.terms.code)
+    out.paths.push(...s.terms.paths)
+    out.packages.push(...s.terms.packages)
+  }
+  return out
 }
 
 function depMatches(name: string, terms: string[]): boolean {
@@ -676,14 +754,15 @@ function parseDiffHits(out: string, re: RegExp): Map<string, DiffHit> {
  * hit, and a hit that also matches one of the other terms ranks higher. Without it every term is
  * an anchor.
  */
-export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void = () => {}, opts: { diffs?: boolean; anchors?: { subject: string | null; text: string; signatureText?: string } } = {}): Promise<SearchResult> {
+export async function searchEvidence(rawTerms: TermSet, log: (m: string) => void = () => {}, opts: { diffs?: boolean; anchors?: { subject: string | null; text: string; signatureText?: string; scopeTexts?: string[] } } = {}): Promise<SearchResult> {
   // Already cleaned by whoever built them (withSignatures keeps the curated signature words); this only bounds them.
   const terms = cleanTerms(rawTerms, 80, false)
   const anchors = opts.anchors ? subjectAnchors(terms, opts.anchors.subject, opts.anchors.text, opts.anchors.signatureText) : terms
   const db = useDb()
   // This app's own repo names every skill as data: it is searched only for a subject that names one
-  // of its topics, and never without a subject to check (appRepoScope).
-  const app = opts.anchors ? appRepoScope(opts.anchors.subject?.trim() || opts.anchors.signatureText || opts.anchors.text) : null
+  // of its topics, or whose question was asked as wording that does (scopeTexts: the catalog
+  // skill's phrasings and the "Asked as:" list), and never without a subject to check (appRepoScope).
+  const app = opts.anchors ? appRepoScopeOf([opts.anchors.subject?.trim() || opts.anchors.signatureText || opts.anchors.text, ...(opts.anchors.scopeTexts ?? [])]) : null
   const repos = db.select().from(repoSources).where(and(eq(repoSources.included, true), isNotNull(repoSources.indexedAt))).all()
     .filter(r => !isAppRepo(r.fullName) || !!app)
   const result: SearchResult = {

@@ -7,7 +7,7 @@ import { scrubDashes, splitSentences, unsupportedNumbers } from '../apply/text'
 import { cutToFit } from '../apply/fit'
 import { ANSWER_DEPTH_LIMITS, type AnswerDepth } from '#shared/utils/limits'
 import { unsupportedScope } from '../records-footprint'
-import { answerDepthFor } from '../skill-catalog'
+import { answerDepthFor, appRepoScopeTexts } from '../skill-catalog'
 import { SEARCH_RULES, appRepoLevel, cleanTerms, searchEvidence, withSignatures, type CommitHit, type SearchResult, type TermSet } from './search'
 import { parseEvidence } from './suggest-store'
 import { describeRepos, loadRepoDescriptions, recordNameList, withoutRecordNames } from './describe'
@@ -324,7 +324,7 @@ export async function runRepoSuggest(opts: { questionIds?: number[]; force?: boo
         continue
       }
       // Only the subject's own words, named terms, and signatures make a hit (subjectAnchors).
-      const found = await searchEvidence(searchTerms, log, { anchors: { subject, text: `${subject}\n${q.question}` } })
+      const found = await searchEvidence(searchTerms, log, { anchors: { subject, text: `${subject}\n${q.question}`, scopeTexts: appRepoScopeTexts(q) } })
       stats.errors.push(...found.errors)
       const hitShas = found.hits.map(h => h.sha).sort()
       if (!hitShas.length) {

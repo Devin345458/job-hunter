@@ -1,5 +1,5 @@
 {
-  "about": "Answer key for the skill catalog (scripts/eval/skill-catalog.ts). Question ids are from the 2026-11-04 production snapshot. The hard tier is scored: Devin's approved groups (2026-11-05), adjusted for his split of the AI questions into supervised coding and unsupervised processes. The open tier is reported, not scored: Devin wants to see where these land. Cases are new requirements distilled against a catalog applied from a plan; 'with' names a question whose skill the case must map to, 'not' names questions whose skills it must not map to.",
+  "about": "Answer key for the skill catalog (scripts/eval/skill-catalog.ts). Question ids are from the 2026-11-04 production snapshot. The hard tier is scored: Devin's approved groups (2026-11-05), adjusted for his split of the AI questions into supervised coding and unsupervised processes. The open tier is reported, not scored: Devin wants to see where these land. Cases are new requirements distilled against a catalog applied from a plan; 'with' names a question whose skill the case must map to, 'not' names questions whose skills it must not map to. Cases added 2026-11-06 ('from' names the 2026-11-05 snapshot question the wording came from; ids above 363 are not in the 2026-11-04 snapshot): Devin's two open cards that he called the same question (#391 and #427, both 'Using AI in unsupervised processes', #153), the other wordings the ask-time distill made new LLM skills for, and three production skill names whose postings are not in a snapshot (worded from the skill name). 'with' may list several ids when an existing skill is at least as close: #357 'LLM architecture, RAG, or AI agents' for #427's wording, #199 'LLM tool use and function calling' for tool calling, #195 'Using AI to build product features' for AI in product features. 'llmDuplicates' is the key for the one-time repair (scripts/eval/llm-skill-repair.ts): distill-created skills that fold into #153's skill, and the ones left for Devin.",
   "hard": {
     "together": [
       { "label": "Using AI for supervised coding", "ids": [143, 151, 155, 157, 192, 201, 217, 231, 233, 236, 238, 241, 254, 268, 288, 291, 302, 310, 334] },
@@ -32,8 +32,8 @@
     { "subject": "AI-assisted development", "kind": "knows", "posting": "Hands-on AI-assisted development experience", "with": 143 },
     { "subject": "Claude Code or Cursor", "kind": "has_done", "posting": "You use Claude Code, Cursor, or similar agentic coding tools every day", "with": 143 },
     { "subject": "AI pair programming", "kind": "has_done", "posting": "Experience with AI pair programming tools", "with": 143 },
-    { "subject": "Generative AI features", "kind": "has_done", "posting": "Shipped generative AI features to customers", "not": [143] },
-    { "subject": "LLM-powered product features", "kind": "has_done", "posting": "Built LLM-powered features into a SaaS product", "not": [143] },
+    { "subject": "Generative AI features", "kind": "has_done", "posting": "Shipped generative AI features to customers", "with": [195, 153], "not": [143] },
+    { "subject": "LLM-powered product features", "kind": "has_done", "posting": "Built LLM-powered features into a SaaS product", "with": [195, 153], "not": [143] },
     { "subject": "Autonomous agent workflows", "kind": "has_done", "posting": "Experience building agentic workflows that run unattended", "not": [143] },
     { "subject": "Model Context Protocol", "kind": "knows", "posting": "Familiarity with Model Context Protocol (MCP)", "not": [143] },
     { "subject": "Vue.js", "kind": "knows", "posting": "Strong Vue.js experience", "not": [108] },
@@ -43,9 +43,28 @@
     { "subject": "Payment processing and reconciliation", "kind": "has_done", "posting": "Built payment processing and reconciliation systems", "with": 161 },
     { "subject": "AI products interest", "kind": "has_done", "question": "Are you interested in working on AI products?", "posting": "Genuine interest in AI products", "not": [143, 195, 349] },
     { "subject": "AI-driven code migration", "kind": "has_done", "posting": "Used AI tools to drive a large-scale code migration", "with": 352, "not": [143] },
-    { "subject": "Claude models", "kind": "knows", "posting": "Hands-on experience with Anthropic's Claude models", "with": 267, "not": [143] },
+    { "subject": "Claude models", "kind": "knows", "posting": "Hands-on experience with Anthropic's Claude models", "with": 267, "not": [143, 153] },
     { "subject": "Early-stage startups", "kind": "has_done", "posting": "Experience at early-stage startups", "with": 194 },
     { "subject": "Terraform modules", "kind": "knows", "posting": "Writing reusable Terraform modules", "with": 144, "not": [145] },
-    { "subject": "Parallel agent workflows", "kind": "has_done", "posting": "Running several AI agent workflows in parallel", "with": 202, "not": [143] }
-  ]
+    { "subject": "Parallel agent workflows", "kind": "has_done", "posting": "Running several AI agent workflows in parallel", "with": 202, "not": [143] },
+    { "from": 391, "subject": "AI tools and LLM APIs", "kind": "has_done", "posting": "AI-powered development tools, LLM APIs, agentic workflow automation", "with": 153, "not": [143] },
+    { "from": 427, "subject": "AI/LLM applications", "kind": "has_done", "posting": "Experience building AI/LLM applications, agents, RAG", "with": [153, 357], "not": [143] },
+    { "from": 454, "subject": "Custom agentic solutions with LLMs", "kind": "has_done", "posting": "Develop custom agentic solutions using models such as OpenAI, Anthropic, Gemini", "with": 153, "not": [143] },
+    { "from": 455, "subject": "Building production AI agents", "kind": "has_done", "posting": "Built agents that people use: tool use, structured output, context management, evaluation, orchestration", "with": 153, "not": [143] },
+    { "from": 470, "subject": "AI SDKs in production", "kind": "has_done", "posting": "Used AI SDKs with production software", "with": 153, "not": [143] },
+    { "from": 473, "subject": "LLM infrastructure and model gateways", "kind": "has_done", "posting": "Experience with LLM infrastructure, model gateways, foundation model APIs, or managed AI platforms", "with": 153, "not": [143] },
+    { "from": "production skill name", "subject": "LLM or AI agent hands-on work", "kind": "has_done", "posting": "Hands-on experience building with LLMs or AI agents", "with": 153, "not": [143] },
+    { "from": "production skill name", "subject": "LLM API use", "kind": "knows", "posting": "Experience using LLM APIs in production software", "with": 153, "not": [143] },
+    { "from": "production skill name", "subject": "Agent orchestration and tool-calling systems", "kind": "has_done", "posting": "Built agent orchestration and tool-calling systems", "with": [153, 199], "not": [143] },
+    { "subject": "MCP servers", "kind": "has_done", "posting": "Experience building MCP servers", "with": [354, 119], "not": [153, 143] },
+    { "subject": "LangGraph agents", "kind": "knows", "posting": "Building agents with LangGraph", "with": 303, "not": [153, 143] },
+    { "subject": "Vector databases", "kind": "knows", "posting": "Experience with vector databases such as Pinecone or pgvector", "not": [153, 143] },
+    { "subject": "LLM fine-tuning", "kind": "has_done", "posting": "Fine-tuning large language models on your own data", "not": [153, 143] }
+  ],
+  "llmDuplicates": {
+    "to": "using-ai-in-unsupervised-processes",
+    "fold": ["llm-api-and-agentic-workflow-building", "ai-llm-applications", "llm-platforms-and-model-apis"],
+    "keep": ["ai-infrastructure-tools", "prompt-engineering-or-model-fine-tuning", "postgresql-performance-tuning"],
+    "undecided": ["openai-or-anthropic-apis"]
+  }
 }

@@ -250,9 +250,11 @@ if (mode === 'cases') {
       skill = exact ? (sc.loadCatalog().find(e => e.questionId === exact.id)?.name ?? `question #${exact.id}`) : '(none)'
       how = r.error ? `failed: ${r.error.slice(0, 80)}` : 'exact check'
     }
-    const want = c.with != null ? of.get(c.with) ?? null : null
+    // "with" is one id, or several when another existing skill is at least as close.
+    const wants = [...new Set((Array.isArray(c.with) ? c.with : c.with != null ? [c.with] : []).map((id: number) => of.get(id)).filter(Boolean))] as string[]
+    const want = wants.length ? wants.join(' or ') : null
     const nots = (c.not ?? []).map((id: number) => of.get(id)).filter(Boolean)
-    const ok = (want == null || skill === want) && !nots.includes(skill)
+    const ok = (!wants.length || wants.includes(skill)) && !nots.includes(skill)
     results.push({ subject: c.subject, skill, how, ok, want, not: nots, reason: r.decided[0]?.reason ?? null, seconds, stats })
     console.log(`${ok ? 'ok  ' : 'MISS'} ${c.subject} -> ${skill} (${how}, ${seconds.toFixed(1)} s)${ok ? '' : ` want ${want ? `"${want}"` : `not ${nots.map((n: string) => `"${n}"`).join(', ')}`}`}`)
   }

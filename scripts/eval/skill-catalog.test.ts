@@ -451,3 +451,86 @@ describe('the bootstrap plan', () => {
     assert.ok(plan.error)
   })
 })
+
+describe('folding a duplicate LLM skill into "Using AI in unsupervised processes"', () => {
+  const S2 = 'using-ai-in-unsupervised-processes'
+  /** The #153 shape (the seed skill's question) and a distill-made duplicate with its own open question (#427's shape). */
+  async function duplicate() {
+    m.ensureSeedSkills()
+    respond = stub({ 'Integrating with LLMs': 'S2' })
+    const canon = await askChecked('Integrating with LLMs', 'has_done')
+    respond = stub({ 'AI/LLM applications': { name: 'AI/LLM applications', kind: 'has_done', question: 'Have you built anything using LLMs, agents, or RAG?' } })
+    const dup = await askChecked('AI/LLM applications', 'has_done')
+    const slug = m.skillMatch('AI/LLM applications').entry.slug
+    return { canon, dup, slug, plan: { name: 'test folds', approved: true, folds: [{ from: slug, to: S2 }] } }
+  }
+
+  test('nothing happens while the folds are unapproved; approved, they apply once', async () => {
+    const { dup, plan } = await duplicate()
+    assert.equal(m.applySkillFoldsOnce(null).ran, false)
+    assert.equal(m.applySkillFoldsOnce({ ...plan, approved: false }).ran, false)
+    assert.equal(row(dup.id).status, 'pending')
+    assert.equal(m.applySkillFoldsOnce(plan).ran, true)
+    assert.equal(m.applySkillFoldsOnce(plan).ran, false, 'runs once')
+  })
+
+  test('the duplicate\'s open question merges into the skill\'s question, its wordings map to the skill, and its row stays', async () => {
+    const { canon, dup, slug, plan } = await duplicate()
+    assert.notEqual(dup.id, canon.id)
+    const listed = m.applySkillFolds(plan, false)
+    assert.equal(row(dup.id).status, 'pending', 'listing writes nothing')
+    assert.deepEqual(listed.rows.filter((r: any) => r.action === 'merge').map((r: any) => r.id), [dup.id])
+    m.applySkillFolds(plan, true)
+    assert.equal(row(dup.id).status, 'skipped')
+    assert.match(row(dup.id).context, new RegExp(`^Merged into question #${canon.id} `))
+    assert.equal(m.skillMatch('AI/LLM applications').entry.slug, S2)
+    assert.ok(!m.loadCatalog().some((e: any) => e.slug === slug), 'the folded skill leaves the prompts')
+    assert.equal(m.catalogEntry(slug).slug, S2, 'its slug reads as the skill it was folded into')
+    const stored = db().all(m.sql`select value_json from app_settings where key = ${`skill_catalog:${slug}`}`)
+    assert.equal(stored.length, 1, 'the row stays')
+    assert.equal(JSON.parse(stored[0].value_json).mergedInto, S2)
+    assert.ok(m.catalogEntry(S2).phrasings.includes('AI/LLM applications'))
+    calls.length = 0
+    assert.equal((await askChecked('AI/LLM applications', 'has_done')).id, canon.id, 'the wording is asked as the skill\'s question')
+    assert.equal(calls.length, 0)
+  })
+
+  test('a new proposal with the folded skill\'s name is the skill it was folded into', async () => {
+    const { canon, plan } = await duplicate()
+    m.applySkillFolds(plan, true)
+    respond = stub({ 'Building LLM apps': { name: 'AI/LLM applications', kind: 'has_done' } })
+    assert.equal((await askChecked('Building LLM apps', 'has_done')).id, canon.id)
+    assert.equal(m.loadCatalog().filter((e: any) => e.name === 'AI/LLM applications').length, 0)
+  })
+
+  test('an answered duplicate, a seed skill, and a missing skill are never folded', async () => {
+    const { dup, slug, plan } = await duplicate()
+    answer(dup.id, 'Yes')
+    const r = m.applySkillFolds({ folds: [...plan.folds, { from: 'using-ai-for-supervised-coding', to: S2 }, { from: 'no-such-skill', to: S2 }] }, true)
+    assert.deepEqual(r.folded, [])
+    assert.match(r.skipped.find((s: any) => s.slug === slug).reason, /answered/)
+    assert.match(r.skipped.find((s: any) => s.slug === 'using-ai-for-supervised-coding').reason, /made by seed/)
+    assert.match(r.skipped.find((s: any) => s.slug === 'no-such-skill').reason, /not in this catalog/)
+    assert.equal(row(dup.id).status, 'answered')
+    assert.equal(m.skillMatch('AI/LLM applications').entry.slug, slug, 'nothing re-mapped')
+  })
+
+  test('a blocking duplicate question is kept, and listed with the reason', async () => {
+    const { dup, plan } = await duplicate()
+    db().update(m.questions).set({ blocking: true }).where(m.eq(m.questions.id, dup.id)).run()
+    const r = m.applySkillFolds(plan, true)
+    assert.equal(row(dup.id).status, 'pending')
+    assert.equal(r.rows.find((x: any) => x.id === dup.id).reason, 'an application waits on it')
+  })
+
+  test('the seed skill\'s scope comes from code, and the app repo gate reads the wordings a question was asked as', async () => {
+    const { canon } = await duplicate()
+    const e = m.catalogEntry(S2)
+    m.saveEntry({ ...e, scope: 'an old scope' })
+    assert.match(m.loadCatalog().find((x: any) => x.slug === S2).scope, /^Covers building AI into software/)
+    const texts = m.appRepoScopeTexts(row(canon.id))
+    assert.ok(texts.includes('Integrating with LLMs'), 'its "Asked as" wording')
+    assert.ok(texts.includes('Using AI in unsupervised processes'), 'its skill name')
+    assert.deepEqual(m.appRepoScopeTexts({ ...row(canon.id), kind: 'fact' }), [], 'only skill and experience questions')
+  })
+})
